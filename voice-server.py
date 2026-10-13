@@ -8,6 +8,8 @@ Start:  ~/.local/share/uv/tools/mlx-audio/bin/python "voice-server.py"   (port 8
   GET /voices               the voice list as JSON
   POST /ocr                 a picture (PNG) -> its text, word by word with places (Apple's Vision, ocr/ocr.swift)
   GET /speak?text=&voice=   one sentence as a WAV file (24 kHz); recent ones are kept, so replay and read-ahead are instant
+  GET /times?text=&voice=   when each word of that sentence starts, in seconds of the WAV (Kokoro's own timings), as
+                            {"starts": [...]}, one per space-separated word; null where Kokoro gave none
                             &ahead=1|2|3 marks read-ahead (3 next sentences, 2 under the mouse, 1 on screen, with &batch=):
                             it waits while someone waits to hear a sentence; higher and newer go first
 
@@ -48,20 +50,41 @@ def model():
     return _model
 
 
+def word_starts(text, tokens, shift):
+    """Kokoro's per-token start times, moved onto the space-separated words of text (what the reader highlights)."""
+    spans = [(m.start(), m.end()) for m in re.finditer(r'\S+', text)]
+    starts = [None] * len(spans)
+    pos = 0
+    for t in tokens:
+        if getattr(t, 'start_ts', None) is None or not t.text:
+            continue
+        k = text.find(t.text, pos)
+        if k < 0:
+            continue
+        pos = k + len(t.text)
+        for i, (a, b) in enumerate(spans):
+            if a <= k < b:
+                if starts[i] is None:
+                    starts[i] = round(max(0.0, t.start_ts - shift), 3)
+                break
+    return starts
+
+
 def trim(audio, text, sr=24000):
     """Kokoro leaves about 0.3 s of silence before and 0.5 s after each piece. Keep a short natural pause instead:
     0.18 s after a full stop, 0.12 s after a comma, almost none where a sentence was cut to start sooner."""
     loud = np.where(np.abs(audio) > 0.01)[0]
     if not len(loud):
-        return audio
+        return audio, 0.0
     t = text.rstrip(' "\'”’)]')
     tail = 0.18 if t[-1:] in '.!?…' else 0.12 if t[-1:] in ',;:' else 0.03
-    a = audio[max(0, loud[0] - int(0.03 * sr)): min(len(audio), loud[-1] + int(tail * sr))].copy()
+    cut = max(0, loud[0] - int(0.03 * sr))
+    a = audio[cut: min(len(audio), loud[-1] + int(tail * sr))].copy()
     fade = min(len(a) // 4, int(0.005 * sr))  # 5 ms fades: no click at the cut
     if fade:
         a[:fade] *= np.linspace(0, 1, fade)
         a[-fade:] *= np.linspace(1, 0, fade)
-    return a
+    return a, cut / sr
 
 
 def speak(text, voice, ahead=False, prio=1, batch=0):
@@ -79,6 +102,28 @@ def speak(text, voice, ahead=False, prio=1, batch=0):
             with _turn:
                 _urgent[0] -= 1
                 _turn.notify_all()
+
+
+def synth(text, voice):
+    """Audio and Kokoro's tokens (with start times). English goes through the pipeline directly, which keeps
+    the timings; other languages use the plain path (no timings: the reader estimates them)."""
+    m = model()
+    if LANG[voice] in ('a', 'b'):
+        pipe = m._get_pipeline(LANG[voice])
+        parts, tokens, offset = [], [], 0.0
+        for r in pipe(text, voice=voice, speed=1, split_pattern=r'\n+'):
+            if r.audio is None:
+                continue
+            a = np.array(r.audio).reshape(-1)
+            for t in r.tokens or []:
+                if getattr(t, 'start_ts', None) is not None:
+                    t.start_ts += offset
+            tokens += list(r.tokens or [])
+            parts.append(a)
+            offset += len(a) / 24000
+        return (np.concatenate(parts) if parts else np.zeros(2400)), tokens
+    parts = [np.array(r.audio) for r in m.generate(text=text, voice=voice, speed=1.0, lang_code=LANG[voice])]
+    return (np.concatenate(parts) if parts else np.zeros(2400)), []
 
 
 def _take(ahead, prio, batch):
@@ -118,10 +163,11 @@ def _make(key, text, voice, ahead=False, prio=1, batch=0):
             return _cache[key]
         if os.environ.get('VOICE_LOG'):
             print(time.strftime('%H:%M:%S'), 'ahead' if ahead else 'NOW  ', voice, repr(text[:70]), flush=True)
-        parts = [np.array(r.audio) for r in model().generate(text=text, voice=voice, speed=1.0, lang_code=LANG[voice])]
+        audio, tokens = synth(text, voice)
+        wav, shift = trim(audio, text)
         buf = io.BytesIO()
-        sf.write(buf, trim(np.concatenate(parts) if parts else np.zeros(2400), text), 24000, format='WAV', subtype='PCM_16')
-        _cache[key] = buf.getvalue()
+        sf.write(buf, wav, 24000, format='WAV', subtype='PCM_16')
+        _cache[key] = (buf.getvalue(), word_starts(text, tokens, shift))
         while len(_cache) > 300:
             _cache.popitem(last=False)
         return _cache[key]
@@ -168,7 +214,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if url.path == '/voices':
             data = [{'id': v, 'accent': a, 'label': l} for v, a, c, l in VOICES if c not in _broken]
             return self.reply(json.dumps({'voices': data, 'ready': _model is not None}).encode(), 'application/json')
-        if url.path == '/speak':
+        if url.path in ('/speak', '/times'):
             text = re.sub(r'\s+', ' ', q.get('text', '')).strip()[:MAX_CHARS]
             voice = q.get('voice', 'af_heart')
             if not text or voice not in LANG or LANG[voice] in _broken:
@@ -176,11 +222,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return None
             try:
                 ahead = q.get('ahead', '0')
-                wav = speak(text, voice, ahead=ahead != '0', prio=int(ahead) if ahead.isdigit() else 1, batch=int(q.get('batch', '0') or 0))
-                if wav is None:
+                got = speak(text, voice, ahead=ahead != '0', prio=int(ahead) if ahead.isdigit() else 1, batch=int(q.get('batch', '0') or 0))
+                if got is None:
                     self.send_error(409, 'Skipped: you scrolled on')
                     return None
-                return self.reply(wav, 'audio/wav')
+                if url.path == '/times':
+                    return self.reply(json.dumps({'starts': got[1]}).encode(), 'application/json')
+                return self.reply(got[0], 'audio/wav')
             except Exception as e:
                 self.send_error(500, str(e)[:200])
                 return None

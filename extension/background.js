@@ -58,7 +58,7 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     } else if (m.cmd === 'voices') { voices().then(reply); return true; }
     else if (m.cmd === 'myTab') reply(tab);
   } else if (m.to === 'bg-evt') {  // from the offscreen page
-    if (owner && owner.id === m.id) tell(m.tab, { evt: m.evt, id: m.id, t: m.t, d: m.d, why: m.why });
+    if (owner && owner.id === m.id) tell(m.tab, { evt: m.evt, id: m.id, t: m.t, d: m.d, why: m.why, starts: m.starts });
   }
 });
 

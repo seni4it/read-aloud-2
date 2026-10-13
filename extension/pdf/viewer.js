@@ -180,11 +180,13 @@ export class PdfViewer {
       textLayer.style.height = Math.floor(viewport.height) + 'px';
 
       const content = await page.getTextContent();
-      const spans = this.buildTextLayer(content, viewport, textLayer);
 
+      // Read Aloud 2: on the page first, then build: buildTextLayer measures each span, and a span that is not
+      // in the document measures 0 wide, so it was never stretched to the PDF's width (the shading came out short).
       entry.el.textContent = '';
       entry.el.appendChild(canvas);
       entry.el.appendChild(textLayer);
+      const spans = this.buildTextLayer(content, viewport, textLayer);
 
       entry.canvas = canvas;
       entry.textLayer = textLayer;

@@ -213,8 +213,13 @@ function playBuffer(ctx, buffer, sentence, rate, handle, { onWord, onEnd }) {
   source.connect(ctx.destination);
 
   const voiced = voicedSpan(buffer);
-  const schedule = scheduleWords(sentence.text, voiced.duration / rate)
+  let schedule = scheduleWords(sentence.text, voiced.duration / rate)
     .map(w => ({ ...w, at: w.at + voiced.start / rate }));
+  // Read Aloud 2: Kokoro's own word times from the Mac's voice server, when it gave them (English voices)
+  const starts = sentence.starts;
+  if (Array.isArray(starts) && starts.length === schedule.length && starts.some(s => s !== null)) {
+    schedule = schedule.map((w, i) => (starts[i] === null ? null : { ...w, at: starts[i] / rate })).filter(Boolean);
+  }
   const startedAt = ctx.currentTime;
   let cursor = 0;
 
@@ -432,9 +437,10 @@ export class ServerEngine extends KokoroEngine {
     if (this.inflight.has(key)) return this.inflight.get(key);
     const url = `${ServerEngine.SERVER}/speak?voice=${encodeURIComponent(voiceId)}&text=${encodeURIComponent(sentence.text)}${ahead ? '&ahead=3' : ''}`;
     const job = fetch(url).then(r => { if (!r.ok) throw new Error('voice server: ' + r.status); return r.arrayBuffer(); })
-      .then(buf => new OfflineAudioContext(1, 1, 24000).decodeAudioData(buf))
-      .then(b => {
-        const data = { audio: b.getChannelData(0), sampleRate: b.sampleRate };
+      .then(buf => Promise.all([new OfflineAudioContext(1, 1, 24000).decodeAudioData(buf),
+        fetch(url.replace('/speak?', '/times?')).then(r => r.json()).catch(() => ({}))]))
+      .then(([b, t]) => {
+        const data = { audio: b.getChannelData(0), sampleRate: b.sampleRate, starts: t.starts || null };
         this.cache.set(key, data);
         if (this.cache.size > 60) this.cache.delete(this.cache.keys().next().value);
         this.inflight.delete(key);
@@ -467,12 +473,12 @@ export class ServerEngine extends KokoroEngine {
     if (this.ctx.state === 'suspended') this.ctx.resume();
     try {
       for (let k = 0; k < parts.length; k++) {
-        const { audio, sampleRate } = await jobs[k];
+        const { audio, sampleRate, starts } = await jobs[k];
         if (token !== this.token) return;
         const buffer = this.ctx.createBuffer(1, audio.length, sampleRate);
         buffer.copyToChannel(audio, 0);
         const at = parts[k].at;
-        await new Promise((done) => playBuffer(this.ctx, buffer, parts[k], rate, this.handle,
+        await new Promise((done) => playBuffer(this.ctx, buffer, { ...parts[k], starts }, rate, this.handle,
           { onWord: (start, len) => onWord?.(start + at, len), onEnd: done }));
         if (token !== this.token) return;
       }

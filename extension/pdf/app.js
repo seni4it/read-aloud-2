@@ -146,8 +146,12 @@ function engineLabel(eng) {
 }
 
 function speakCurrent() {
-  const sentence = state.sentences[state.index];
-  if (!sentence) { stop(); return; }
+  const full = state.sentences[state.index];
+  if (!full) { stop(); return; }
+  // Read Aloud 2: a click on a word starts there, not at the top of its paragraph
+  const from = state.from || 0;
+  state.from = 0;
+  const sentence = from ? { ...full, text: full.text.slice(from) } : full;
 
   const readyLabel = engineLabel(engine);
   if (engine.id !== 'system') setStatus('generating…');
@@ -159,7 +163,7 @@ function speakCurrent() {
     onWord: (charIndex, charLength) => {
       if (!state.playing) return;
       if (!spoke) { spoke = true; setStatus(readyLabel); }
-      const parts = wordPartsAt(sentence, charIndex, charLength);
+      const parts = wordPartsAt(full, charIndex + from, charLength);
       if (parts.length) viewer.highlightWord(parts);
     },
     onEnd: () => {
@@ -610,11 +614,22 @@ els.pages.addEventListener('click', e => {
   const entry = viewer.pages.get(pageNumber);
   if (!entry) return;
 
+  // the character under the pointer, inside this span
+  const caret = document.caretPositionFromPoint ? document.caretPositionFromPoint(e.clientX, e.clientY) : null;
+  const offset = caret && span.contains(caret.offsetNode) ? caret.offset : 0;
   for (const [item, node] of entry.spans) {
     if (node !== span) continue;
     const target = state.itemToSentence.get(`${pageNumber}:${item}`);
     if (target !== undefined) {
+      // Read Aloud 2: find that character in the paragraph's text, then step back to the start of its word
+      const owners = state.sentences[target].charOwners || [];
+      let at = owners.findIndex(o => o && o.page === pageNumber && o.item === item && o.offset >= offset);
+      if (at < 0) at = owners.findIndex(o => o && o.page === pageNumber && o.item === item);
+      const text = state.sentences[target].text;
+      if (at > 0) while (at > 0 && !/\s/.test(text[at - 1])) at--;
+      if (state.playing) stop();
       jumpTo(target, { resume: false });
+      state.from = Math.max(0, at);
       play();
     }
     break;

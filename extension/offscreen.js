@@ -36,6 +36,8 @@ chrome.runtime.onMessage.addListener((m) => {
     stop(); cur = m;
     audio.src = url(m.text, m.voice); audio.playbackRate = m.rate;  // the sentence to hear goes first
     audio.onloadeddata = () => early(m.next, m.voice);  // then the next ones are prepared while this one plays
+    fetch(url(m.text, m.voice).replace('/speak?', '/times?')).then((r) => r.json())  // when each word starts (Kokoro's own timings)
+      .then(({ starts }) => { if (cur === m) send('times', { starts }); }).catch(() => {});
     audio.onended = () => { clearInterval(timer); send('end'); };
     audio.onerror = () => { clearInterval(timer); send('error', { why: 'The voice server on this Mac did not answer.' }); };
     audio.play().then(() => {

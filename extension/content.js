@@ -155,7 +155,7 @@
   function play(i, w = 0) {
     const seg = S.segs[i];
     if (!seg) { finish(); return; }
-    S.i = i; S.w = w; S.base = w; S.playing = true; S.paused = false; S.id++; cur = voiceFor(seg.say);
+    S.i = i; S.w = w; S.base = w; S.playing = true; S.paused = false; S.id++; cur = voiceFor(seg.say); S.starts = null;
     const words = seg.words.slice(w);
     const text = seg.b.text.slice(words[0].start, seg.end).replace(/\s+/g, ' ').trim();
     // where each word starts in the spoken text, and how long it roughly lasts (for voices without word events)
@@ -197,7 +197,12 @@
   function onEvent(m) {
     if (m.evt === 'stopped') { if (S.playing) { S.playing = false; S.paused = false; hlWord && hlWord.clear(); hlSent && hlSent.clear(); ui(); } return; }
     if (m.id !== S.id) return;
-    if (m.evt === 'tick' && m.d > 0 && !S.paused) {  // natural voice: move the highlight by how far the audio has played
+    if (m.evt === 'times') { S.starts = Array.isArray(m.starts) && m.starts.length === S.weights.length ? m.starts : null; return; }
+    if (m.evt === 'tick' && S.starts && !S.paused) {  // natural voice with Kokoro's own word times: exact
+      let k = 0;
+      for (let j = 0; j < S.starts.length; j++) if (S.starts[j] !== null && S.starts[j] <= m.t + 0.04) k = j;
+      if (S.base + k !== S.w) mark(S.base + k);
+    } else if (m.evt === 'tick' && m.d > 0 && !S.paused) {  // no times (Italian): move the highlight by how far the audio has played
       let goal = (m.t / m.d) * S.total, k = 0;
       while (k < S.weights.length - 1 && goal > S.weights[k]) goal -= S.weights[k++];
       if (S.base + k !== S.w) mark(S.base + k);
