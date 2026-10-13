@@ -140,13 +140,22 @@
 
   // ---------- speaking ----------
   const send = (m) => chrome.runtime.sendMessage({ to: 'bg', ...m }).catch(() => {});
-  const engine = () => (cfg.voice.startsWith('kokoro:') ? 'kokoro' : 'system');
-  const voiceId = () => cfg.voice.replace(/^(kokoro|system):/, '');
+  // The voice follows the text: Russian (Cyrillic) is read by the Mac's Russian voice, an Italian page by Sara,
+  // everything else by the voice you chose.
+  const PAGE_IT = /^it/i.test(document.documentElement.lang || '');
+  function voiceFor(text) {
+    if (/[\u0400-\u04FF]/.test(text || '')) return 'system:Milena';
+    if (PAGE_IT && /^kokoro:(a|b)/.test(cfg.voice)) return 'kokoro:if_sara';
+    return cfg.voice;
+  }
+  let cur = cfg.voice;  // the voice of the sentence being read
+  const engine = () => (cur.startsWith('kokoro:') ? 'kokoro' : 'system');
+  const voiceId = () => cur.replace(/^(kokoro|system):/, '');
 
   function play(i, w = 0) {
     const seg = S.segs[i];
     if (!seg) { finish(); return; }
-    S.i = i; S.w = w; S.base = w; S.playing = true; S.paused = false; S.id++;
+    S.i = i; S.w = w; S.base = w; S.playing = true; S.paused = false; S.id++; cur = voiceFor(seg.say);
     const words = seg.words.slice(w);
     const text = seg.b.text.slice(words[0].start, seg.end).replace(/\s+/g, ' ').trim();
     // where each word starts in the spoken text, and how long it roughly lasts (for voices without word events)
@@ -197,7 +206,7 @@
       mark(S.base + k);
     } else if (m.evt === 'end') play(S.i + 1);
     else if (m.evt === 'error') {
-      if (engine() === 'kokoro') { ui('The natural voice is off. Using the Mac voice.'); cfg.voice = 'system:'; play(S.i, S.w); }
+      if (engine() === 'kokoro') { ui('The natural voice is off. Using the Mac voice.'); cfg.voice = 'system:'; cur = 'system:'; play(S.i, S.w); }
       else { stop(); ui(m.why || 'The voice stopped.'); }
     }
   }
@@ -225,6 +234,7 @@
   }
   // the mouse rests on a paragraph or the listen button: prepare its first sentence, so reading starts at once
   function warm(blocks, at, given, prio = 2) {
+    cur = voiceFor(document.body ? document.body.innerText.slice(0, 400) : '');
     if (engine() !== 'kokoro' || S.playing || hiddenHere()) return;
     const segs = given || segments(blocks); const i = segs.length ? Math.max(0, at(segs)) : -1;
     if (i < 0) return;
@@ -346,6 +356,7 @@
   // everything on screen, top first: each paragraph's opening is cut short the same way a start would cut it
   let screenNo = 0;
   function warmScreen() {
+    cur = voiceFor('');
     if (document.visibilityState !== 'visible' || engine() !== 'kokoro' || S.playing || hiddenHere()) return;
     const texts = [];
     for (const s of pageSegs(root())) {
@@ -381,15 +392,15 @@
       m.append(Object.assign(document.createElement('h4'), { textContent: title }));
       for (const x of list) {
         const b = document.createElement('button'); const id = prefix + x.id;
-        b.textContent = x.label + (x.accent ? ' · ' + x.accent : x.lang ? ' · ' + x.lang : ''); b.className = cfg.voice === id ? 'on' : '';
+        b.textContent = x.label; b.className = cfg.voice === id ? 'on' : '';
         b.addEventListener('click', () => { cfg.voice = id; save(); m.querySelectorAll('button.on').forEach((q) => q.classList.remove('on')); b.classList.add('on'); if (S.playing && !S.paused) play(S.i, S.w); });
         m.append(b);
       }
     };
     if (v) {
-      add('Natural voices (on your Mac)', v.natural, 'kokoro:');
+      add('Voices', v.natural, 'kokoro:');
       if (!v.server) m.append(Object.assign(document.createElement('p'), { textContent: 'Natural voices are off: the voice server is not running.' }));
-      add('Built-in voices', v.system, 'system:');
+      add('Russian', v.system, 'system:');
     }
   }
 
@@ -444,6 +455,7 @@
 
   // settings, shared with the popup
   const save = () => chrome.storage.sync.set({ ra2: cfg }).catch(() => {});
-  chrome.storage.sync.get('ra2').then((r) => { cfg = { ...DEFAULTS, ...(r.ra2 || {}) }; ui(); }).catch(() => ui());
+  const KNOWN = /^kokoro:(af_heart|am_michael|bf_emma|if_sara)$|^system:/;  // a voice removed from the list falls back to Heart
+  chrome.storage.sync.get('ra2').then((r) => { cfg = { ...DEFAULTS, ...(r.ra2 || {}) }; if (!KNOWN.test(cfg.voice)) cfg.voice = DEFAULTS.voice; cur = cfg.voice; ui(); }).catch(() => ui());
   chrome.storage.onChanged.addListener((c) => { if (c.ra2) { cfg = { ...DEFAULTS, ...c.ra2.newValue }; ui(); } });
 })();

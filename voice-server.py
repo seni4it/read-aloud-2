@@ -25,17 +25,9 @@ ALLOWED = {f'localhost:{PORT}', f'127.0.0.1:{PORT}', f'[::1]:{PORT}'}
 MAX_CHARS = 1500  # a sentence, or a paragraph from the PDF viewer
 
 # name, accent, language code, label. Kokoro grades: heart and bella are its best English voices.
-VOICES = [
-    ('af_heart', 'American', 'a', 'Heart, warm female (best)'), ('af_bella', 'American', 'a', 'Bella, bright female'),
-    ('af_nicole', 'American', 'a', 'Nicole, soft female'), ('af_sarah', 'American', 'a', 'Sarah, calm female'),
-    ('af_nova', 'American', 'a', 'Nova, clear female'), ('af_sky', 'American', 'a', 'Sky, light female'),
-    ('am_michael', 'American', 'a', 'Michael, deep male'), ('am_fenrir', 'American', 'a', 'Fenrir, strong male'),
-    ('am_puck', 'American', 'a', 'Puck, lively male'), ('am_eric', 'American', 'a', 'Eric, plain male'),
-    ('am_liam', 'American', 'a', 'Liam, young male'), ('am_onyx', 'American', 'a', 'Onyx, low male'),
-    ('bf_emma', 'British', 'b', 'Emma, female'), ('bf_isabella', 'British', 'b', 'Isabella, female'),
-    ('bf_alice', 'British', 'b', 'Alice, female'), ('bm_george', 'British', 'b', 'George, male'),
-    ('bm_fable', 'British', 'b', 'Fable, male'), ('bm_daniel', 'British', 'b', 'Daniel, male'),
-    ('if_sara', 'Italian', 'i', 'Sara, female'), ('im_nicola', 'Italian', 'i', 'Nicola, male'),
+VOICES = [  # his choice (13 Oct 2026): a few good ones, not twenty. Russian is the Mac's own voice (Milena), in the add-on.
+    ('af_heart', 'American', 'a', 'Heart, warm female'), ('am_michael', 'American', 'a', 'Michael, deep male'),
+    ('bf_emma', 'British', 'b', 'Emma, female'), ('if_sara', 'Italian', 'i', 'Sara, Italian female'),
 ]
 LANG = {v[0]: v[2] for v in VOICES}
 

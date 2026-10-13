@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Read Aloud 2",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Listen to web pages and PDFs with natural voices that run on your Mac. Word highlighting, speed up to 4x, play from any paragraph.",
   "icons": {
     "16": "icons/16.png",

@@ -19,11 +19,11 @@ const save = () => chrome.storage.sync.set({ ra2: cfg });
   const group = (label, list, prefix) => {
     if (!list.length) return;
     const g = document.createElement('optgroup'); g.label = label;
-    for (const x of list) g.append(new Option(x.label + (x.accent ? ' · ' + x.accent : ' · ' + (x.lang || '')), prefix + x.id));
+    for (const x of list) g.append(new Option(x.label, prefix + x.id));
     $('voice').append(g);
   };
-  group('Natural voices (on your Mac)', v.natural, 'kokoro:');
-  group('Built-in voices', v.system, 'system:');
+  group('Voices', v.natural, 'kokoro:');
+  group('Russian', v.system, 'system:');
   $('voice').value = cfg.voice;
   $('voice').onchange = () => { cfg.voice = $('voice').value; save(); };
   $('server').innerHTML = v.server ? 'Natural voices: <b>ready</b>.' : 'Natural voices: <b>off</b>. Start the voice server on your Mac (see README).';

@@ -68,7 +68,10 @@ async function voices() {
     const r = await fetch(SERVER + '/voices');
     out.natural = (await r.json()).voices; out.server = true;
   } catch { /* voice server off: system voices only */ }
-  out.system = (await chrome.tts.getVoices()).filter((v) => /^(en|it)/.test(v.lang || '')).map((v) => ({ id: v.voiceName, label: v.voiceName, lang: v.lang, remote: !!v.remote }));
+  // built-in voices: only Russian (Kokoro has none); Milena, the Mac's own, first
+  out.system = (await chrome.tts.getVoices()).filter((v) => /^ru/i.test(v.lang || '') && !v.remote)
+    .sort((a, b) => (b.voiceName === 'Milena') - (a.voiceName === 'Milena')).slice(0, 1)
+    .map((v) => ({ id: v.voiceName, label: v.voiceName + ', Russian', lang: v.lang }));
   return out;
 }
 
