@@ -1,0 +1,38 @@
+/* Read Aloud 2 look for the PDF reader: the same navy player, orange play button and orange word highlight as
+   the player on web pages (content.js). Loaded after Paper Reader's styles.css, which stays as it was. */
+:root {
+  --navy: #10233f;
+  --accent: #FF8C00;
+  --accent-soft: rgba(255, 140, 0, 0.16);
+  --mark: #FF8C00;
+  --mark-line: #FF8C00;
+  --word: #FF8C00;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --accent: #FF8C00; --accent-soft: rgba(255, 140, 0, 0.2); --mark: #FF8C00; --mark-line: #FF8C00; --word: #FF8C00; }
+}
+
+/* top bar */
+.brand svg { color: var(--navy); fill: none; stroke: none; }
+@media (prefers-color-scheme: dark) { .brand svg { color: #fff; } }
+.btn { background: var(--navy); color: #fff; border-radius: 999px; }
+@media (prefers-color-scheme: dark) { .btn { background: #FF8C00; color: #111; } }
+
+/* the sentence being read: light orange; the word: solid orange, as on web pages */
+.text-layer span.speaking { background: rgba(255, 140, 0, 0.18); box-shadow: none; }
+.word-box { background: #FF8C00; mix-blend-mode: multiply; opacity: .75; }
+@media (prefers-color-scheme: dark) { .word-box { mix-blend-mode: screen; opacity: .6; } }
+
+/* player: the navy bar of the web player */
+.player { background: var(--navy); border-top: 0; color: #fff; box-shadow: 0 -6px 24px rgba(0, 0, 0, .18); }
+.now-reading, .now-reading b { color: rgba(255, 255, 255, .85); }
+.player .icon-btn { border: 0; color: #fff; border-radius: 999px; width: 40px; height: 40px; }
+.player .icon-btn:hover { background: rgba(255, 255, 255, .14); }
+.play-btn { background: #FF8C00; color: #111; width: 48px; height: 48px; }
+.play-btn:hover { background: #ffa033; filter: none; }
+.pos, .select-wrap, .engine-status { color: rgba(255, 255, 255, .75); }
+.select-wrap select { background: rgba(255, 255, 255, .1); color: #fff; border: 1px solid rgba(255, 255, 255, .2); border-radius: 999px; padding: 6px 10px; }
+.select-wrap select option { color: #0f172a; }
+.scrub input[type=range] { accent-color: #FF8C00; }
+:focus-visible { outline: 3px solid #6ea8ff; outline-offset: 2px; }
+.play-icon { display: grid; place-items: center; }

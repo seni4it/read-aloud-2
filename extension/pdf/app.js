@@ -17,6 +17,8 @@ try {
 }
 
 const $ = id => document.getElementById(id);
+const ICON_PLAY = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>';
+const ICON_PAUSE = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z" fill="currentColor"/></svg>';
 
 const els = {
   openBtn: $('openBtn'), sampleBtn: $('sampleBtn'), fileInput: $('fileInput'),
@@ -226,7 +228,7 @@ function wordPartsAt(sentence, charIndex, charLength) {
 function play() {
   if (!state.sentences.length) return;
   state.playing = true;
-  els.playIcon.textContent = '\u275A\u275A';
+  els.playIcon.innerHTML = ICON_PAUSE;  // Read Aloud 2: the same icons as the web player
   els.playBtn.setAttribute('aria-label', 'Pause');
   speakCurrent();
 }
@@ -234,7 +236,7 @@ function play() {
 function stop() {
   clearTimeout(state.pauseTimer);
   state.playing = false;
-  els.playIcon.textContent = '\u25B6';
+  els.playIcon.innerHTML = ICON_PLAY;
   els.playBtn.setAttribute('aria-label', 'Play');
   engine.stop();
   viewer.clearWord();
@@ -277,7 +279,7 @@ function jumpTo(i, { resume = state.playing } = {}) {
     speakCurrent();
   } else if (!resume) {
     state.playing = false;
-    els.playIcon.textContent = '\u25B6';
+    els.playIcon.innerHTML = ICON_PLAY;
     saveProgress();
     warmCurrent();
   }
