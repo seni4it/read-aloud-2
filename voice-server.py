@@ -7,11 +7,12 @@ Start:  ~/.local/share/uv/tools/mlx-audio/bin/python "voice-server.py"   (port 8
   GET /                     the voice sampler page (voices.html)
   GET /voices               the voice list as JSON
   GET /speak?text=&voice=   one sentence as a WAV file (24 kHz); recent ones are kept, so replay and read-ahead are instant
-                            &ahead=1 marks read-ahead: it waits while someone waits to hear a sentence
+                            &ahead=1|2|3 marks read-ahead (3 next sentences, 2 under the mouse, 1 on screen, with &batch=):
+                            it waits while someone waits to hear a sentence; higher and newer go first
 
 Version 1 (~/.claude/read-aloud, port 8791) is not touched.
 """
-import collections, functools, http.server, io, json, os, re, sys, threading, time, urllib.parse
+import collections, functools, itertools, http.server, io, json, os, re, sys, threading, time, urllib.parse
 
 import numpy as np
 import soundfile as sf
@@ -41,6 +42,7 @@ _model = None
 _gen = threading.Lock()  # MLX runs one generation at a time
 _turn = threading.Condition()
 _urgent = [0]  # sentences someone is waiting to hear; read-ahead waits while there are any
+_waiting, _seq, _batch = set(), itertools.count(), [0]
 _cache = collections.OrderedDict()
 _broken = set()  # languages that failed to load (Italian needs espeak-ng)
 
@@ -53,18 +55,32 @@ def model():
     return _model
 
 
-def speak(text, voice, ahead=False):
+def trim(audio, text, sr=24000):
+    """Kokoro leaves about 0.3 s of silence before and 0.5 s after each piece. Keep a short natural pause instead:
+    0.18 s after a full stop, 0.12 s after a comma, almost none where a sentence was cut to start sooner."""
+    loud = np.where(np.abs(audio) > 0.01)[0]
+    if not len(loud):
+        return audio
+    t = text.rstrip(' "\'”’)]')
+    tail = 0.18 if t[-1:] in '.!?…' else 0.12 if t[-1:] in ',;:' else 0.03
+    a = audio[max(0, loud[0] - int(0.03 * sr)): min(len(audio), loud[-1] + int(tail * sr))].copy()
+    fade = min(len(a) // 4, int(0.005 * sr))  # 5 ms fades: no click at the cut
+    if fade:
+        a[:fade] *= np.linspace(0, 1, fade)
+        a[-fade:] *= np.linspace(1, 0, fade)
+    return a
+
+
+def speak(text, voice, ahead=False, prio=1, batch=0):
     key = (voice, text)
     if key in _cache:
         _cache.move_to_end(key)
         return _cache[key]
-    with _turn:
-        if ahead:
-            _turn.wait_for(lambda: _urgent[0] == 0, timeout=30)
-        else:
+    if not ahead:
+        with _turn:
             _urgent[0] += 1
     try:
-        return _make(key, text, voice)
+        return _make(key, text, voice, ahead, prio, batch)
     finally:
         if not ahead:
             with _turn:
@@ -72,31 +88,66 @@ def speak(text, voice, ahead=False):
                 _turn.notify_all()
 
 
-def _make(key, text, voice):
-    with _gen:  # stored before the lock opens, so a second ask for the same sentence finds it ready
+def _take(ahead, prio, batch):
+    """Wait for the engine. A sentence someone waits to hear goes first; then read-ahead by priority
+    (3 = next sentences while reading, 2 = where the mouse rests, 1 = what is on screen), newest first.
+    Screen requests from an older screen give up (False): you scrolled away."""
+    if not ahead:
+        _gen.acquire()
+        return True
+    me = (prio, next(_seq))
+    with _turn:
+        _waiting.add(me)
+        if prio == 1:
+            _batch[0] = max(_batch[0], batch)
+    try:
+        while True:
+            with _turn:
+                _turn.wait_for(lambda: _urgent[0] == 0 and me == max(_waiting), timeout=0.5)
+                if prio == 1 and batch < _batch[0]:
+                    return False
+                mine = _urgent[0] == 0 and me == max(_waiting)
+            if mine and _gen.acquire(timeout=0.05):
+                if _urgent[0] == 0:
+                    return True
+                _gen.release()
+    finally:
+        with _turn:
+            _waiting.discard(me)
+            _turn.notify_all()
+
+
+def _make(key, text, voice, ahead=False, prio=1, batch=0):
+    if not _take(ahead, prio, batch):
+        return None
+    try:  # stored before the lock opens, so a second ask for the same sentence finds it ready
         if key in _cache:
             return _cache[key]
         if os.environ.get('VOICE_LOG'):
-            print(time.strftime('%H:%M:%S'), voice, repr(text[:70]), flush=True)
+            print(time.strftime('%H:%M:%S'), 'ahead' if ahead else 'NOW  ', voice, repr(text[:70]), flush=True)
         parts = [np.array(r.audio) for r in model().generate(text=text, voice=voice, speed=1.0, lang_code=LANG[voice])]
         buf = io.BytesIO()
-        sf.write(buf, np.concatenate(parts) if parts else np.zeros(2400), 24000, format='WAV', subtype='PCM_16')
+        sf.write(buf, trim(np.concatenate(parts) if parts else np.zeros(2400), text), 24000, format='WAV', subtype='PCM_16')
         _cache[key] = buf.getvalue()
-        while len(_cache) > 200:
+        while len(_cache) > 300:
             _cache.popitem(last=False)
         return _cache[key]
+    finally:
+        _gen.release()
+        with _turn:
+            _turn.notify_all()
 
 
 def warm_up():
     for lang, voice in (('a', 'af_heart'), ('b', 'bf_emma'), ('i', 'if_sara')):
         try:
-            speak('Ready.', voice, ahead=True)
+            speak('Ready.', voice, ahead=True, prio=0)
         except Exception:
             _broken.add(lang)
     for v, _, lang, _ in VOICES:  # load every voice once, so the first use of any voice is quick
         if lang not in _broken:
             try:
-                speak('Ready.', v, ahead=True)
+                speak('Ready.', v, ahead=True, prio=0)
             except Exception:
                 pass
 
@@ -118,7 +169,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_error(400, 'Bad text or voice')
                 return None
             try:
-                return self.reply(speak(text, voice, ahead=q.get('ahead') == '1'), 'audio/wav')
+                ahead = q.get('ahead', '0')
+                wav = speak(text, voice, ahead=ahead != '0', prio=int(ahead) if ahead.isdigit() else 1, batch=int(q.get('batch', '0') or 0))
+                if wav is None:
+                    self.send_error(409, 'Skipped: you scrolled on')
+                    return None
+                return self.reply(wav, 'audio/wav')
             except Exception as e:
                 self.send_error(500, str(e)[:200])
                 return None

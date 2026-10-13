@@ -7,7 +7,7 @@
   "action": { "default_popup": "popup.html", "default_title": "Read Aloud 2" },
   "background": { "service_worker": "background.js" },
   "permissions": ["storage", "contextMenus", "offscreen", "tts"],
-  "host_permissions": ["http://127.0.0.1:8793/*"],
+  "host_permissions": ["http://127.0.0.1:8793/*", "http://localhost:8793/*"],
   "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content.js"], "css": ["content.css"], "run_at": "document_idle" }],
   "commands": {
     "play-pause": { "description": "Play or pause" },

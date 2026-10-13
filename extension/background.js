@@ -52,7 +52,7 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     const tab = sender.tab ? sender.tab.id : m.tab;
     if (m.cmd === 'speak') speak(tab, m);
     else if (m.cmd === 'stop') { if (owner && owner.tab === tab) stopOwner(tab); }
-    else if (m.cmd === 'warm') offscreen().then(() => chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'warm', texts: m.texts, voice: m.voice })).catch(() => {});
+    else if (m.cmd === 'warm') offscreen().then(() => chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'warm', texts: m.texts, voice: m.voice, prio: m.prio, batch: m.batch })).catch(() => {});
     else if (['pause', 'resume', 'rate'].includes(m.cmd) && owner && owner.tab === tab && owner.engine === 'kokoro') {
       chrome.runtime.sendMessage({ to: 'offscreen', cmd: m.cmd, rate: m.rate });
     } else if (m.cmd === 'voices') { voices().then(reply); return true; }
