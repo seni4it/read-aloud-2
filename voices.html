@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Voice Sampler</title>
+<style>
+  :root { --bg:#ffffff; --fg:#0f172a; --muted:#475569; --line:#e2e8f0; --card:#f8fafc; --acc:#FF8C00; --acc-fg:#111; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0e141b; --fg:#e8eef4; --muted:#a9b8c6; --line:#223140; --card:#18222d; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 18px/1.6 -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 80px; }
+  h1 { font-size: 28px; margin: 0 0 6px; } h2 { font-size: 20px; margin: 32px 0 4px; }
+  p.lead, .hint { color: var(--muted); margin: 0 0 14px; }
+  textarea { width: 100%; min-height: 90px; font: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); }
+  .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin: 10px 0 0; color: var(--muted); font-size: 15px; }
+  .row input[type=range] { width: 180px; accent-color: var(--acc); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+  button.voice { display: flex; align-items: center; gap: 10px; text-align: left; padding: 10px 12px; min-height: 56px; border: 1px solid var(--line);
+                 border-radius: 6px; background: var(--card); color: var(--fg); font: inherit; font-size: 16px; cursor: pointer; }
+  button.voice:hover { border-color: var(--acc); }
+  button.voice small { display: block; color: var(--muted); font-size: 13px; }
+  button.voice .ic { flex: none; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--line); }
+  button.voice.playing { border-color: var(--acc); } button.voice.playing .ic { background: var(--acc); color: var(--acc-fg); }
+  button.voice.loading .ic { animation: pulse 1s infinite; }
+  button.voice.picked { outline: 3px solid var(--acc); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  #status { min-height: 1.6em; color: var(--muted); font-size: 15px; }
+  @media (prefers-reduced-motion: reduce) { button.voice.loading .ic { animation: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Voice Sampler</h1>
+  <p class="lead">Press a voice to hear it. The natural voices run on your Mac. They need no internet and no account.</p>
+  <textarea id="sample">Hello Semion. This is how I sound when I read your work out loud. Root canal treatment removes the infected pulp, cleans the canals, and seals them.</textarea>
+  <div class="row">
+    <label>Speed <b id="rateVal">1.0×</b> <input id="rate" type="range" min="0.5" max="3" step="0.1" value="1"></label>
+    <span id="status" role="status"></span>
+  </div>
+
+  <h2>Natural voices (Kokoro)</h2>
+  <p class="hint">The first voice may take 10 seconds while the engine wakes up. After that each one starts in about 1 second.</p>
+  <div class="grid" id="natural"></div>
+
+  <h2>Voices built into your Mac and Chrome</h2>
+  <p class="hint">This is the kind of voice Read Aloud version 1 uses now, for comparison.</p>
+  <div class="grid" id="system"></div>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const audio = new Audio(); audio.preservesPitch = true;
+  let current = null;
+  const status = (t) => { $('status').textContent = t; };
+  const rate = () => Number($('rate').value);
+  $('rate').addEventListener('input', () => { $('rateVal').textContent = rate().toFixed(1) + '×'; audio.playbackRate = rate(); });
+
+  function stopAll() { audio.pause(); speechSynthesis.cancel(); if (current) current.classList.remove('playing', 'loading'); current = null; }
+  function card(title, sub, onPlay) {
+    const b = document.createElement('button'); b.className = 'voice'; b.type = 'button';
+    b.innerHTML = '<span class="ic" aria-hidden="true">▶</span><span></span>';
+    b.lastChild.append(title, Object.assign(document.createElement('small'), { textContent: sub }));
+    b.addEventListener('click', () => { const again = current === b; stopAll(); if (!again) { current = b; onPlay(b); } });
+    return b;
+  }
+
+  // natural voices: one sentence at a time, the next one fetched while this one plays
+  const sentences = () => $('sample').value.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+  const url = (text, voice) => `/speak?voice=${voice}&text=${encodeURIComponent(text)}`;
+  async function playNatural(b, voice) {
+    const list = sentences(); b.classList.add('loading'); status('Preparing the voice…');
+    for (let i = 0; i < list.length; i++) {
+      if (current !== b) return;
+      if (list[i + 1]) fetch(url(list[i + 1], voice));  // read ahead
+      audio.src = url(list[i], voice); audio.playbackRate = rate();
+      try { await audio.play(); } catch { if (current === b) status('This voice did not start. Is the voice server running?'); stopAll(); return; }
+      b.classList.remove('loading'); b.classList.add('playing'); status('Playing ' + b.querySelector('span:last-child').firstChild.textContent);
+      await new Promise((ok) => { audio.onended = ok; audio.onpause = ok; });
+    }
+    if (current === b) { stopAll(); status('Finished.'); }
+  }
+  fetch('/voices').then((r) => r.json()).then(({ voices }) => {
+    for (const v of voices) $('natural').append(card(v.label, v.accent + ' · ' + v.id, (b) => playNatural(b, v.id)));
+  }).catch(() => { $('natural').textContent = 'The voice server is not running.'; });
+
+  // system voices
+  function listSystem() {
+    const vs = speechSynthesis.getVoices().filter((v) => /^en|^it/.test(v.lang) && !/Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Wobble|Good News|Jester|Organ|Superstar|Whisper|Zarvox|Trinoids|Albert|Fred|Junior|Ralph|Kathy|Grandma|Grandpa|Rocko|Eddy|Flo|Reed|Sandy|Shelley/.test(v.name));
+    $('system').replaceChildren(...vs.slice(0, 24).map((v) => card(v.name, v.lang + (v.localService ? ' · on this Mac' : ' · Google, online'), (b) => {
+      b.classList.add('playing'); status('Playing ' + v.name);
+      const u = new SpeechSynthesisUtterance($('sample').value); u.voice = v; u.rate = rate();
+      u.onend = () => { if (current === b) { stopAll(); status('Finished.'); } }; speechSynthesis.speak(u);
+    })));
+  }
+  listSystem(); speechSynthesis.onvoiceschanged = listSystem;
+})();
+</script>
+</body>
+</html>

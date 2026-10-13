@@ -1,0 +1,85 @@
+// Read Aloud 2, background: speaks one piece of text at a time for the tab that asked, and tells that tab
+// what is happening (start, word, tick, end), so the page can highlight the word being spoken.
+// Two engines: "kokoro" = natural voices from voice-server.py on this Mac (played in an offscreen page),
+// "system" = the voices built into the Mac and Chrome (chrome.tts).
+const SERVER = 'http://127.0.0.1:8793';
+let owner = null;  // { tab, id, engine }: who is speaking now
+
+let made = null;
+async function offscreen() {  // one offscreen page plays the audio; asking twice only finds the one already there
+  made = made || chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: ['AUDIO_PLAYBACK'], justification: 'Play the natural voice' })
+    .catch((e) => { if (!/single offscreen/i.test(String(e && e.message))) { made = null; throw e; } });
+  await made;
+}
+
+async function tell(tab, msg) {
+  msg.to = 'page';
+  chrome.tabs.sendMessage(tab, msg).catch(() => {});
+  chrome.runtime.sendMessage({ ...msg, tab }).catch(() => {});  // the paste page is an extension page, not a content script
+}
+
+function stopOwner(except) {
+  if (!owner) return;
+  if (owner.engine === 'system') chrome.tts.stop();
+  else chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'stop' }).catch(() => {});
+  if (owner.tab !== except) tell(owner.tab, { evt: 'stopped' });
+  owner = null;
+}
+
+async function speak(tab, m) {
+  if (owner && (owner.tab !== tab || owner.engine !== m.engine)) stopOwner(tab);
+  owner = { tab, id: m.id, engine: m.engine };
+  if (m.engine === 'system') {
+    chrome.tts.stop();
+    chrome.tts.speak(m.text, {
+      voiceName: m.voice || undefined, rate: m.rate, enqueue: false,
+      onEvent: (e) => {
+        if (!owner || owner.id !== m.id) return;
+        if (e.type === 'word') tell(tab, { evt: 'word', id: m.id, char: e.charIndex });
+        else if (e.type === 'start') tell(tab, { evt: 'start', id: m.id });
+        else if (e.type === 'end') tell(tab, { evt: 'end', id: m.id });
+        else if (e.type === 'error') tell(tab, { evt: 'error', id: m.id, why: e.errorMessage || 'voice error' });
+      },
+    });
+    return;
+  }
+  try { await offscreen(); } catch (e) { tell(tab, { evt: 'error', id: m.id, why: 'Audio player did not open: ' + (e && e.message) }); return; }
+  chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'speak', tab, id: m.id, text: m.text, voice: m.voice, rate: m.rate, next: m.next || [] });
+}
+
+chrome.runtime.onMessage.addListener((m, sender, reply) => {
+  if (m.to === 'bg') {
+    const tab = sender.tab ? sender.tab.id : m.tab;
+    if (m.cmd === 'speak') speak(tab, m);
+    else if (m.cmd === 'stop') { if (owner && owner.tab === tab) stopOwner(tab); }
+    else if (['pause', 'resume', 'rate'].includes(m.cmd) && owner && owner.tab === tab && owner.engine === 'kokoro') {
+      chrome.runtime.sendMessage({ to: 'offscreen', cmd: m.cmd, rate: m.rate });
+    } else if (m.cmd === 'voices') { voices().then(reply); return true; }
+    else if (m.cmd === 'myTab') reply(tab);
+  } else if (m.to === 'bg-evt') {  // from the offscreen page
+    if (owner && owner.id === m.id) tell(m.tab, { evt: m.evt, id: m.id, t: m.t, d: m.d, why: m.why });
+  }
+});
+
+async function voices() {
+  const out = { natural: [], system: [], server: false };
+  try {
+    const r = await fetch(SERVER + '/voices');
+    out.natural = (await r.json()).voices; out.server = true;
+  } catch { /* voice server off: system voices only */ }
+  out.system = (await chrome.tts.getVoices()).filter((v) => /^(en|it)/.test(v.lang || '')).map((v) => ({ id: v.voiceName, label: v.voiceName, lang: v.lang, remote: !!v.remote }));
+  return out;
+}
+
+// right-click menu and keyboard shortcuts (no keys are set by default: choose them at chrome://extensions/shortcuts)
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.create({ id: 'sel', title: 'Listen to the selected text', contexts: ['selection'] });
+  chrome.contextMenus.create({ id: 'here', title: 'Listen from here', contexts: ['page', 'link', 'image'] });
+});
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  chrome.tabs.sendMessage(tab.id, { to: 'page', cmd: info.menuItemId === 'sel' ? 'readSelection' : 'readHere' }).catch(() => {});
+});
+chrome.commands.onCommand.addListener(async (cmd) => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab) chrome.tabs.sendMessage(tab.id, { to: 'page', cmd }).catch(() => {});
+});

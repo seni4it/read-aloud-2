@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --bg:#fff; --fg:#0f172a; --muted:#475569; --line:#e2e8f0; --acc:#FF8C00; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0e141b; --fg:#e8eef4; --muted:#a9b8c6; --line:#223140; } }
+  body { margin: 0; width: 320px; background: var(--bg); color: var(--fg); font: 15px/1.5 -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; }
+  main { padding: 14px; display: grid; gap: 12px; }
+  h1 { font-size: 17px; margin: 0; }
+  .big { height: 48px; border: 0; border-radius: 999px; background: var(--acc); color: #111; font: inherit; font-weight: 700; font-size: 16px; cursor: pointer; }
+  .big:hover { filter: brightness(1.08); }
+  label.f { display: grid; gap: 4px; color: var(--muted); font-size: 13px; }
+  select, input[type=range] { width: 100%; font: inherit; accent-color: var(--acc); }
+  select { padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+  .sw { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .sw input { width: 20px; height: 20px; accent-color: var(--acc); }
+  .links { display: flex; gap: 12px; flex-wrap: wrap; font-size: 14px; } a { color: var(--fg); }
+  #server { font-size: 13px; color: var(--muted); } #server b { color: var(--fg); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Read Aloud 2</h1>
+  <button class="big" id="read" type="button">▶ Listen to this page</button>
+  <label class="f">Voice <select id="voice"></select></label>
+  <label class="f">Speed <b id="rv"></b><input id="rate" type="range" min="0.5" max="4" step="0.1"></label>
+  <div class="sw">Play button beside paragraphs <input type="checkbox" id="hoverPlay"></div>
+  <div class="sw">Round listen button on every page <input type="checkbox" id="launcher"></div>
+  <div class="sw">Page follows the voice <input type="checkbox" id="follow"></div>
+  <div class="sw">Click a word to jump there while reading <input type="checkbox" id="clickJump"></div>
+  <div class="sw" id="siteRow">Hide on this site <input type="checkbox" id="site"></div>
+  <p id="server"></p>
+  <div class="links"><a href="paste.html" target="_blank">Listen to pasted text</a><a href="http://127.0.0.1:8793/" target="_blank">Voice sampler</a>
+    <a href="#" id="keys">Keyboard shortcuts</a></div>
+</main>
+<script src="popup.js"></script>
+</body>
+</html>

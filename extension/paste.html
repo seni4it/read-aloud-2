@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Listen to text · Read Aloud 2</title>
+<link rel="stylesheet" href="content.css">
+<style>
+  :root { --bg:#fff; --fg:#0f172a; --muted:#475569; --line:#e2e8f0; --acc:#FF8C00; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0e141b; --fg:#e8eef4; --muted:#a9b8c6; --line:#223140; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 20px/1.7 -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 140px; }
+  h1 { font-size: 24px; margin: 0 0 8px; }
+  textarea { width: 100%; min-height: 160px; font: 16px/1.5 inherit; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); box-sizing: border-box; }
+  button { margin: 10px 0 20px; height: 44px; padding: 0 20px; border: 0; border-radius: 999px; background: var(--acc); color: #111; font: inherit; font-size: 16px; font-weight: 700; cursor: pointer; }
+  #out p { margin: 0 0 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Listen to text</h1>
+  <textarea id="src" placeholder="Paste any text here."></textarea>
+  <button id="go" type="button">▶ Listen</button>
+  <article id="out"></article>
+</main>
+<script src="paste.js"></script>
+<script src="content.js"></script>
+</body>
+</html>
