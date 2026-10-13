@@ -7,6 +7,7 @@ Start:  ~/.local/share/uv/tools/mlx-audio/bin/python "voice-server.py"   (port 8
   GET /                     the voice sampler page (voices.html)
   GET /voices               the voice list as JSON
   GET /speak?text=&voice=   one sentence as a WAV file (24 kHz); recent ones are kept, so replay and read-ahead are instant
+                            &ahead=1 marks read-ahead: it waits while someone waits to hear a sentence
 
 Version 1 (~/.claude/read-aloud, port 8791) is not touched.
 """
@@ -38,6 +39,8 @@ LANG = {v[0]: v[2] for v in VOICES}
 
 _model = None
 _gen = threading.Lock()  # MLX runs one generation at a time
+_turn = threading.Condition()
+_urgent = [0]  # sentences someone is waiting to hear; read-ahead waits while there are any
 _cache = collections.OrderedDict()
 _broken = set()  # languages that failed to load (Italian needs espeak-ng)
 
@@ -50,29 +53,52 @@ def model():
     return _model
 
 
-def speak(text, voice):
+def speak(text, voice, ahead=False):
     key = (voice, text)
     if key in _cache:
         _cache.move_to_end(key)
         return _cache[key]
-    with _gen:
+    with _turn:
+        if ahead:
+            _turn.wait_for(lambda: _urgent[0] == 0, timeout=30)
+        else:
+            _urgent[0] += 1
+    try:
+        return _make(key, text, voice)
+    finally:
+        if not ahead:
+            with _turn:
+                _urgent[0] -= 1
+                _turn.notify_all()
+
+
+def _make(key, text, voice):
+    with _gen:  # stored before the lock opens, so a second ask for the same sentence finds it ready
         if key in _cache:
             return _cache[key]
+        if os.environ.get('VOICE_LOG'):
+            print(time.strftime('%H:%M:%S'), voice, repr(text[:70]), flush=True)
         parts = [np.array(r.audio) for r in model().generate(text=text, voice=voice, speed=1.0, lang_code=LANG[voice])]
-    buf = io.BytesIO()
-    sf.write(buf, np.concatenate(parts) if parts else np.zeros(2400), 24000, format='WAV', subtype='PCM_16')
-    _cache[key] = buf.getvalue()
-    while len(_cache) > 200:
-        _cache.popitem(last=False)
-    return _cache[key]
+        buf = io.BytesIO()
+        sf.write(buf, np.concatenate(parts) if parts else np.zeros(2400), 24000, format='WAV', subtype='PCM_16')
+        _cache[key] = buf.getvalue()
+        while len(_cache) > 200:
+            _cache.popitem(last=False)
+        return _cache[key]
 
 
 def warm_up():
     for lang, voice in (('a', 'af_heart'), ('b', 'bf_emma'), ('i', 'if_sara')):
         try:
-            speak('Ready.', voice)
+            speak('Ready.', voice, ahead=True)
         except Exception:
             _broken.add(lang)
+    for v, _, lang, _ in VOICES:  # load every voice once, so the first use of any voice is quick
+        if lang not in _broken:
+            try:
+                speak('Ready.', v, ahead=True)
+            except Exception:
+                pass
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -92,7 +118,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_error(400, 'Bad text or voice')
                 return None
             try:
-                return self.reply(speak(text, voice), 'audio/wav')
+                return self.reply(speak(text, voice, ahead=q.get('ahead') == '1'), 'audio/wav')
             except Exception as e:
                 self.send_error(500, str(e)[:200])
                 return None

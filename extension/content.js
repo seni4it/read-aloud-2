@@ -7,7 +7,10 @@
 
   const DEFAULTS = { voice: 'kokoro:af_heart', rate: 1.2, follow: true, launcher: true, hoverPlay: true, clickJump: true, hidden: [] };
   const SKIP = 'script,style,noscript,template,svg,math,canvas,video,audio,iframe,select,option,textarea,input,button,pre,nav,footer,aside,'
-    + '[aria-hidden="true"],[hidden],[role=navigation],[role=banner],[role=contentinfo],[role=complementary],[contenteditable=""],[contenteditable=true],ra2-root';
+    + '[aria-hidden="true"],[hidden],[role=navigation],[role=banner],[role=contentinfo],[role=complementary],[contenteditable=""],[contenteditable=true],ra2-root,'
+    // page clutter Speechify also skips: citation numbers, info boxes, edit links, site notices, share and cookie bars
+    + 'sup.reference,.mw-editsection,#siteSub,#contentSub,.mw-jump-link,.hatnote,.infobox,.navbox,.sidebar,.toc,#toc,.metadata,.mw-indicators,'
+    + '[class*="cookie"],[id*="cookie"],[class*="share"],[class*="breadcrumb"],[class*="advert"],[class*="newsletter"],[class*="related"]';
   const ABBR = /\b(Dr|Mr|Mrs|Ms|Prof|St|Sr|Jr|vs|etc|e\.g|i\.e|Fig|No|Vol|approx|ca)\.$/i;
   const MAX = 280;  // longer sentences are cut at a comma or a space, so the voice starts quickly
 
@@ -93,6 +96,16 @@
       if (words.length && /[\p{L}\p{N}]/u.test(txt)) segs.push({ b, start, end, words, say: txt.replace(/\s+/g, ' ').trim() });
       start = end;
     }
+  }
+
+  // The first piece read is kept short (up to a comma, or about 8 words) so the voice starts sooner.
+  function quick(seg) {
+    const w = seg.words; if (w.length < 12) return [seg];
+    let k = w.findIndex((x, i) => i >= 3 && i < 14 && /[,;:]$/.test(seg.b.text.slice(x.start, x.end)));
+    if (k < 0) { if (w.length < 20) return [seg]; k = 7; }
+    const part = (from, to) => { const words = w.slice(from, to); const s = words[0].start, e = to < w.length ? w[to].start : seg.end;
+      return { b: seg.b, start: s, end: e, words, say: seg.b.text.slice(s, e).replace(/\s+/g, ' ').trim() }; };
+    return [part(0, k + 1), part(k + 1, w.length)];
   }
 
   function rangeOf(b, from, to) {  // block text offsets -> DOM Range
@@ -188,10 +201,23 @@
   function start(blocks, at) {
     S.segs = segments(blocks); S.follow = true;
     if (!S.segs.length) { ui('No text to read here.'); return; }
-    play(Math.max(0, at(S.segs)), 0);
+    const i = Math.max(0, at(S.segs));
+    const first = quick(S.segs[i]); S.segs.splice(i, 1, ...first);
+    if (first.length === 1 && first[0].words.length < 6 && S.segs[i + 1]) S.segs.splice(i + 1, 1, ...quick(S.segs[i + 1]));  // a short title: keep the next sentence short too
+    play(i, 0);
   }
+  // the mouse rests on a paragraph or the listen button: prepare its first sentence, so reading starts at once
+  function warm(blocks, at) {
+    if (engine() !== 'kokoro' || S.playing) return;
+    const segs = segments(blocks); const i = segs.length ? Math.max(0, at(segs)) : -1;
+    if (i < 0) return;
+    const first = quick(segs[i]);
+    const next = first.length === 1 && first[0].words.length < 6 && segs[i + 1] ? quick(segs[i + 1]) : [segs[i + 1]];
+    send({ cmd: 'warm', voice: voiceId(), texts: [...first, ...next].filter(Boolean).map((x) => x.say).slice(0, 2) });
+  }
+  const onScreen = (segs) => segs.findIndex((s) => { const r = rangeOf(s.b, s.start, s.end).getBoundingClientRect(); return r.bottom > 60 && r.height > 0; });
   function readPage() {  // from the first sentence on screen, or the top of the article
-    start(collect(root()), (segs) => segs.findIndex((s) => { const r = rangeOf(s.b, s.start, s.end).getBoundingClientRect(); return r.bottom > 60 && r.height > 0; }));
+    start(collect(root()), onScreen);
   }
   function readBlock(el) { const blocks = collect(root().contains(el) ? root() : document.body); start(blocks, (segs) => segs.findIndex((s) => el.contains(s.b.parts[0].node))); }
   function readSelection() {
@@ -297,6 +323,7 @@
   click('fwd', () => S.playing && play(S.i + 1));
   click('close', () => { stop(); $('menu').hidden = true; });
   click('launch', readPage);
+  $('launch').addEventListener('mouseenter', () => warm(collect(root()), onScreen));
   click('find', () => { S.follow = true; const seg = S.segs[S.i]; const x = seg && seg.words[S.w]; if (x) { const r = rangeOf(seg.b, x.start, x.end).getBoundingClientRect(); scrollTo({ top: scrollY + r.top - innerHeight / 2.5, behavior: 'smooth' }); } $('find').classList.remove('away'); });
   click('speed', () => { $('menu').hidden = !$('menu').hidden; if (!$('menu').hidden) menu(); });
 
@@ -331,11 +358,12 @@
   }
 
   // play button beside the paragraph under the mouse
-  let hoverEl = null;
+  let hoverEl = null, warmTimer = null;
   document.addEventListener('mouseover', (e) => {
     if (!cfg.hoverPlay || hiddenHere() || e.target === host) return;
     const t = e.target.closest && e.target.closest('p,li,h1,h2,h3,h4,h5,h6,blockquote,dd,td,figcaption');
     if (!t || t.closest(SKIP) || (t.innerText || '').trim().length < 25) return;
+    if (hoverEl !== t) { clearTimeout(warmTimer); warmTimer = setTimeout(() => warm(collect(t), () => 0), 350); }
     hoverEl = t; const r = t.getBoundingClientRect();
     Object.assign($('hover').style, { left: Math.max(4, r.left - 34) + 'px', top: Math.max(4, r.top + 2) + 'px' });
     $('hover').hidden = false;
