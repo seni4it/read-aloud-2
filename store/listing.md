@@ -47,4 +47,4 @@ Reads the text of web pages, PDFs and pictures aloud, with word highlighting.
 - Screenshots (1280x800): `screenshot-1-web-page.png`, `screenshot-2-pdf.png`, `screenshot-3-scanned-book.png`
 - Small promo tile (440x280): `promo-tile.png`
 - Icon (128x128): `../extension/icons/128.png`
-- Privacy policy: `privacy-policy.html` (needs a public web address, see below)
+- Privacy policy address: https://gist.github.com/seni4it/14f4bc61a000323b7da62ae00be938e9
