@@ -40,7 +40,25 @@ Without the voice server the add-on still works, with the voices built into the 
 - Keyboard shortcuts: none by default, so no key starts reading by accident. Set them at `chrome://extensions/shortcuts`.
 - Skips menus, footers, side bars, buttons and code blocks.
 
-Not covered: Chrome's own PDF viewer and Google Docs (closed to add-ons). For PDFs use `~/paper-reader`.
+## PDFs, scanned books, other files
+
+- A PDF opened in Chrome switches to the add-on's own reader (`extension/pdf`, Paper Reader's viewer copied from
+  `~/paper-reader` at commit 8ee8a1e), with the natural voice. It finds two columns, skips citations, figure captions
+  and the reference list, and highlights each word on the page. Switch off in the popup ("Open PDFs in Read Aloud 2").
+  Changes from Paper Reader: the Mac voice engine (`tts.js`), scanned pages (`ocr.js`), a paper's title block no
+  longer hides its columns, and a heading no longer swallows the lines after it (`extract.js`, marked "Read Aloud 2").
+- Scanned PDFs (pages that are pictures): the text is read by Apple's Vision on this Mac (`ocr/ocr.swift`, built
+  the first time it is needed), then read and highlighted like any PDF. About 5 seconds a page; pages ahead are
+  read while you listen.
+- Pictures on web pages: right-click, "Read the text in this picture".
+- Plain `.txt` files: read like a page.
+- Local PDF files need one switch in Chrome: the add-on's details, "Allow access to file URLs". Or press
+  "Open PDF" in the reader.
+- Not covered: Google Docs (drawn on a canvas, closed to add-ons), Word and EPUB files (Chrome downloads them).
+
+## Test window
+
+`tools/test-window.sh` opens a separate Chrome window with the add-on loaded, without touching your own Chrome.
 
 ## Licences
 

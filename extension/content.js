@@ -43,6 +43,8 @@
   }
 
   // Blocks of text in reading order: [{ el, parts: [{ node, s, e }], text }]; with a range, only the text inside it.
+  const PLAIN = document.contentType === 'text/plain';  // a .txt file: Chrome shows it in <pre>, read it
+  const skip = PLAIN ? SKIP.replace('pre,', '') : SKIP;
   function collect(top, range) {
     vis.clear(); blk.clear();
     const out = [];
@@ -50,7 +52,7 @@
       acceptNode(n) {
         if (!n.data.trim() || (range && !range.intersectsNode(n))) return NodeFilter.FILTER_REJECT;
         const p = n.parentElement;
-        return p && !p.closest(SKIP) && visible(p) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+        return p && !p.closest(skip) && visible(p) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
       },
     });
     for (let n; (n = walk.nextNode());) {

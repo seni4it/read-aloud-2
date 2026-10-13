@@ -88,12 +88,27 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {  // files on this Mac have 
   if (info.url && /^file:.*\.pdf([?#]|$)/i.test(info.url)) toReader(tabId, info.url);
 });
 
+// The text in a picture, by Apple's Vision on this Mac; it opens on the "listen to text" page.
+async function pictureText(src, tab) {
+  let text = '';
+  try {
+    const img = await (await fetch(src)).blob();
+    const r = await fetch(SERVER + '/ocr', { method: 'POST', body: img });
+    // one flowing text: lines are joined, and a word broken with a hyphen at a line end is glued back
+    text = (await r.json()).lines.map((l) => l.text).join('\n').replace(/-\n(?=[a-z])/g, '').replace(/\n/g, ' ');
+  } catch (e) { text = 'The text in this picture could not be read: ' + e.message; }
+  await chrome.storage.session.set({ ra2Paste: text || 'No text was found in this picture.' });
+  chrome.tabs.create({ url: chrome.runtime.getURL('paste.html?from=picture'), index: tab.index + 1 });
+}
+
 // right-click menu and keyboard shortcuts (no keys are set by default: choose them at chrome://extensions/shortcuts)
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({ id: 'sel', title: 'Listen to the selected text', contexts: ['selection'] });
-  chrome.contextMenus.create({ id: 'here', title: 'Listen from here', contexts: ['page', 'link', 'image'] });
+  chrome.contextMenus.create({ id: 'here', title: 'Listen from here', contexts: ['page', 'link'] });
+  chrome.contextMenus.create({ id: 'img', title: 'Read the text in this picture', contexts: ['image'] });
 });
 chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === 'img') { pictureText(info.srcUrl, tab); return; }
   chrome.tabs.sendMessage(tab.id, { to: 'page', cmd: info.menuItemId === 'sel' ? 'readSelection' : 'readHere' }).catch(() => {});
 });
 chrome.commands.onCommand.addListener(async (cmd) => {
