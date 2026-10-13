@@ -1,5 +1,5 @@
 // Read Aloud 2 popup: start reading the page, pick voice and speed, switch the page helpers on or off.
-const DEFAULTS = { voice: 'kokoro:af_heart', rate: 1.2, follow: true, launcher: true, hoverPlay: true, clickJump: true, hidden: [] };
+const DEFAULTS = { voice: 'kokoro:af_heart', rate: 1.2, follow: true, launcher: true, hoverPlay: true, clickJump: true, pdf: true, hidden: [] };
 const $ = (id) => document.getElementById(id);
 let cfg = { ...DEFAULTS }, tab = null, host = '';
 const save = () => chrome.storage.sync.set({ ra2: cfg });
@@ -9,7 +9,7 @@ const save = () => chrome.storage.sync.set({ ra2: cfg });
   try { host = new URL(tab.url).hostname; } catch { host = ''; }
   cfg = { ...DEFAULTS, ...((await chrome.storage.sync.get('ra2')).ra2 || {}) };
   $('rate').value = cfg.rate; $('rv').textContent = cfg.rate.toFixed(1) + '×';
-  for (const k of ['hoverPlay', 'launcher', 'follow', 'clickJump']) { $(k).checked = cfg[k]; $(k).onchange = () => { cfg[k] = $(k).checked; save(); }; }
+  for (const k of ['hoverPlay', 'launcher', 'follow', 'clickJump', 'pdf']) { $(k).checked = cfg[k]; $(k).onchange = () => { cfg[k] = $(k).checked; save(); }; }
   $('site').checked = cfg.hidden.includes(host); $('siteRow').hidden = !host;
   $('site').onchange = () => { cfg.hidden = $('site').checked ? [...new Set([...cfg.hidden, host])] : cfg.hidden.filter((h) => h !== host); save(); };
   $('rate').oninput = () => { $('rv').textContent = Number($('rate').value).toFixed(1) + '×'; };

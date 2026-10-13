@@ -6,13 +6,14 @@ Start:  ~/.local/share/uv/tools/mlx-audio/bin/python "voice-server.py"   (port 8
 
   GET /                     the voice sampler page (voices.html)
   GET /voices               the voice list as JSON
+  POST /ocr                 a picture (PNG) -> its text, word by word with places (Apple's Vision, ocr/ocr.swift)
   GET /speak?text=&voice=   one sentence as a WAV file (24 kHz); recent ones are kept, so replay and read-ahead are instant
                             &ahead=1|2|3 marks read-ahead (3 next sentences, 2 under the mouse, 1 on screen, with &batch=):
                             it waits while someone waits to hear a sentence; higher and newer go first
 
 Version 1 (~/.claude/read-aloud, port 8791) is not touched.
 """
-import collections, functools, itertools, http.server, io, json, os, re, sys, threading, time, urllib.parse
+import collections, functools, itertools, http.server, io, json, os, re, subprocess, sys, tempfile, threading, time, urllib.parse
 
 import numpy as np
 import soundfile as sf
@@ -21,7 +22,7 @@ PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8793
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL = 'mlx-community/Kokoro-82M-bf16'
 ALLOWED = {f'localhost:{PORT}', f'127.0.0.1:{PORT}', f'[::1]:{PORT}'}
-MAX_CHARS = 600  # one sentence or a short paragraph per request; the add-on splits longer text
+MAX_CHARS = 1500  # a sentence, or a paragraph from the PDF viewer
 
 # name, accent, language code, label. Kokoro grades: heart and bella are its best English voices.
 VOICES = [
@@ -152,6 +153,19 @@ def warm_up():
                 pass
 
 
+OCR = os.path.join(HERE, 'ocr', 'ocr')
+_ocr_slots = threading.Semaphore(2)
+
+
+def ocr(picture):
+    if not os.path.exists(OCR):  # build the small Vision helper once (Xcode command line tools are on this Mac)
+        subprocess.run(['swiftc', '-O', OCR + '.swift', '-o', OCR], check=True, capture_output=True, timeout=300)
+    with _ocr_slots, tempfile.NamedTemporaryFile(suffix='.png') as f:
+        f.write(picture)
+        f.flush()
+        return subprocess.run([OCR, f.name], check=True, capture_output=True, timeout=120).stdout
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def send_head(self):
         if (self.headers.get('Host') or '').lower() not in ALLOWED:
@@ -184,6 +198,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(404, 'Not found')
             return None
         return super().send_head()
+
+    def do_POST(self):  # /ocr: the text in a picture (a page of a scanned book), by Apple's Vision
+        if (self.headers.get('Host') or '').lower() not in ALLOWED or self.path != '/ocr':
+            self.send_error(403 if self.path == '/ocr' else 404)
+            return
+        size = int(self.headers.get('Content-Length') or 0)
+        if not 0 < size <= 40_000_000:
+            self.send_error(413, 'Picture too large')
+            return
+        try:
+            body = ocr(self.rfile.read(size))
+        except Exception as e:
+            self.send_error(500, str(e)[:200])
+            return
+        self.copyfile(self.reply(body, 'application/json'), self.wfile)
 
     def reply(self, body, kind):
         self.send_response(200)

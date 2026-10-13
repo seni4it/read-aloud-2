@@ -5,7 +5,7 @@
   if (document.documentElement.dataset.readAloud2) return;
   document.documentElement.dataset.readAloud2 = '1';
 
-  const DEFAULTS = { voice: 'kokoro:af_heart', rate: 1.2, follow: true, launcher: true, hoverPlay: true, clickJump: true, hidden: [] };
+  const DEFAULTS = { voice: 'kokoro:af_heart', rate: 1.2, follow: true, launcher: true, hoverPlay: true, clickJump: true, pdf: true, hidden: [] };
   const SKIP = 'script,style,noscript,template,svg,math,canvas,video,audio,iframe,select,option,textarea,input,button,pre,nav,footer,aside,'
     + '[aria-hidden="true"],[hidden],[role=navigation],[role=banner],[role=contentinfo],[role=complementary],[contenteditable=""],[contenteditable=true],ra2-root,'
     // page clutter Speechify also skips: citation numbers, info boxes, edit links, site notices, share and cookie bars

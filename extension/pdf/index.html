@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Paper Reader</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h9l5 5v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"/><path d="M14 4v5h5"/></svg>
+    <span>Paper Reader</span>
+  </div>
+
+  <div class="doc-title" id="docTitle">No document open</div>
+
+  <div class="zoom-controls">
+    <button class="icon-btn" id="zoomOut" title="Zoom out" aria-label="Zoom out">−</button>
+    <button class="zoom-level" id="zoomLevel" title="Reset zoom to fit width">100%</button>
+    <button class="icon-btn" id="zoomIn" title="Zoom in" aria-label="Zoom in">+</button>
+  </div>
+
+  <div class="topbar-actions">
+    <button class="btn" id="openBtn">Open PDF</button>
+    <button class="btn ghost" id="sampleBtn" hidden>Try sample</button>
+    <input type="file" id="fileInput" accept="application/pdf" hidden>
+  </div>
+</header>
+
+<div class="parse-bar" id="parseBar" hidden>
+  <div class="parse-fill" id="parseFill"></div>
+  <span class="parse-text" id="parseText"></span>
+</div>
+
+<main class="layout">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-head">
+      <span>Contents</span>
+      <button class="icon-btn" id="closeSidebar" title="Hide contents" aria-label="Hide contents">×</button>
+    </div>
+    <nav class="toc" id="toc"></nav>
+    <div class="opts">
+      <label class="opt"><input type="checkbox" id="optCitations" checked><span>Skip citations</span></label>
+      <label class="opt"><input type="checkbox" id="optCaptions" checked><span>Skip figure captions</span></label>
+      <label class="opt"><input type="checkbox" id="optRefs" checked><span>Stop at references</span></label>
+      <label class="opt"><input type="checkbox" id="optFrontMatter" checked><span>Start at abstract</span></label>
+      <button class="btn ghost small" id="reparseBtn">Re-read document</button>
+
+    </div>
+  </aside>
+
+  <section class="viewer-wrap" id="scroller">
+    <div class="pages" id="pages"></div>
+
+    <div class="empty" id="empty">
+      <h1>Listen to your papers</h1>
+      <p>Drop a PDF anywhere on this window, or open one. The sentence being read is underlined on the page and the view follows along.</p>
+      <p class="hint">Everything runs in your browser. Nothing is uploaded.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="player" id="player" hidden>
+  <div class="now-reading" id="nowReading"></div>
+
+  <div class="controls">
+    <button class="icon-btn" id="tocBtn" title="Contents" aria-label="Contents">☰</button>
+    <button class="icon-btn" id="prevBtn" title="Previous sentence" aria-label="Previous sentence">⏮</button>
+    <button class="play-btn" id="playBtn" aria-label="Play">
+      <span class="play-icon" id="playIcon">▶</span>
+    </button>
+    <button class="icon-btn" id="nextBtn" title="Next sentence" aria-label="Next sentence">⏭</button>
+
+    <div class="scrub">
+      <input type="range" id="seek" min="0" max="0" value="0" step="1" aria-label="Position in document">
+      <div class="pos" id="pos">0 / 0</div>
+    </div>
+
+    <label class="select-wrap">
+      <span>Engine</span>
+      <select id="engineSel" aria-label="Speech engine">
+        <option value="system">System (instant)</option>
+        <option value="kokoro">Natural voice (on your Mac)</option>
+      </select>
+    </label>
+
+    <label class="select-wrap">
+      <span>Voice</span>
+      <select id="voiceSel" aria-label="Voice"></select>
+    </label>
+
+    <button class="icon-btn" id="previewBtn" title="Preview this voice" aria-label="Preview this voice">♪</button>
+    <span class="engine-status" id="engineStatus"></span>
+
+    <label class="select-wrap narrow">
+      <span>Speed</span>
+      <select id="rateSel" aria-label="Speed">
+        <option value="0.75">0.75×</option>
+        <option value="1">1×</option>
+        <option value="1.1" selected>1.1×</option>
+        <option value="1.25">1.25×</option>
+        <option value="1.5">1.5×</option>
+        <option value="1.75">1.75×</option>
+        <option value="2">2×</option>
+        <option value="2.5">2.5×</option>
+        <option value="3">3×</option>
+      </select>
+    </label>
+  </div>
+</footer>
+
+<div class="drop-veil" id="dropVeil"><div>Drop the PDF to open it</div></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -72,6 +72,22 @@ async function voices() {
   return out;
 }
 
+// PDFs open in the add-on's own reader (Chrome's PDF viewer is closed to add-ons), like Speechify does.
+// The site's own "this is a PDF" answer catches links without .pdf in the name (journals, arXiv).
+const READER = chrome.runtime.getURL('pdf/index.html');
+const toReader = (tabId, url) => chrome.storage.sync.get('ra2').then((r) => {
+  if ((r.ra2 || {}).pdf === false) return;
+  chrome.tabs.update(tabId, { url: `${READER}?file=${encodeURIComponent(url)}` });
+});
+chrome.webRequest.onHeadersReceived.addListener((d) => {
+  if (d.tabId < 0 || d.method !== 'GET') return;
+  const h = (n) => (d.responseHeaders || []).find((x) => x.name.toLowerCase() === n)?.value || '';
+  if (/application\/pdf/i.test(h('content-type')) && !/attachment/i.test(h('content-disposition'))) toReader(d.tabId, d.url);
+}, { urls: ['<all_urls>'], types: ['main_frame'] }, ['responseHeaders']);
+chrome.tabs.onUpdated.addListener((tabId, info) => {  // files on this Mac have no headers: go by the name
+  if (info.url && /^file:.*\.pdf([?#]|$)/i.test(info.url)) toReader(tabId, info.url);
+});
+
 // right-click menu and keyboard shortcuts (no keys are set by default: choose them at chrome://extensions/shortcuts)
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({ id: 'sel', title: 'Listen to the selected text', contexts: ['selection'] });
