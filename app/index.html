@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Read Aloud 2 · Library</title>
+<link rel="icon" href="icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="library.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3" y="13" width="5" height="7" rx="2" fill="currentColor"/><rect x="16" y="13" width="5" height="7" rx="2" fill="currentColor"/></svg>
+    <span>Read Aloud 2</span><small>Library</small>
+  </div>
+  <input id="search" type="search" placeholder="Search your books" aria-label="Search your books">
+  <select id="sort" aria-label="Order">
+    <option value="opened">Recently read</option>
+    <option value="added">Recently added</option>
+    <option value="name">Title A to Z</option>
+  </select>
+  <button class="btn" id="add" type="button">+ Add PDF</button>
+  <input type="file" id="file" accept="application/pdf" multiple hidden>
+</header>
+<main>
+  <p class="status" id="status" role="status"></p>
+  <section class="grid" id="grid" aria-label="Your books"></section>
+  <div class="empty" id="empty" hidden>
+    <h1>Your library is empty</h1>
+    <p>Drag PDF files onto this window, or press <b>Add PDF</b>.</p>
+    <p class="hint">Books are kept in the folder <b>Documents › Read Aloud Library</b>. PDFs you put there yourself appear here too.</p>
+  </div>
+</main>
+<div class="veil" id="veil"><div>Drop the PDFs to add them</div></div>
+<script src="library.js"></script>
+</body>
+</html>

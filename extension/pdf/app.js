@@ -17,6 +17,7 @@ try {
 }
 
 const $ = id => document.getElementById(id);
+const LIB_ID = (new URLSearchParams(location.search).get('lib') || '').replace(/[^0-9a-f]/g, '');  // opened from the desktop library
 const ICON_PLAY = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>';
 const ICON_PAUSE = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z" fill="currentColor"/></svg>';
 
@@ -354,6 +355,8 @@ function saveProgress() {
   });
   try {
     localStorage.setItem('pr.pos.' + state.docKey, record);
+    // Read Aloud 2 desktop library: how far you are, for the progress bar on the book's card
+    if (LIB_ID) localStorage.setItem('ra2.lib.' + LIB_ID, JSON.stringify({ i: state.index, total: state.sentences.length, t: Date.now() }));
     storageWarned = false;
   } catch (err) {
     // Not silent. A full or blocked store means the reader loses their place
@@ -708,13 +711,19 @@ async function requestPersistentStorage() {
   els.engineSel.value = savedEngine;
   if (savedEngine !== 'system') await selectEngine(savedEngine);
 
+  if (LIB_ID) {  // the desktop library: a way back, and the book's "last read" time
+    const back = document.getElementById('libraryBtn');
+    back.hidden = false;
+    back.addEventListener('click', () => { saveProgress(); location.href = '/app/'; });
+    fetch('/library/' + LIB_ID + '/opened', { method: 'POST' }).catch(() => {});
+  }
   // Read Aloud 2: a PDF link opened in Chrome arrives here as ?file=<address>
   const src = new URLSearchParams(location.search).get('file');
   if (src) {
     try {
       const res = await fetch(src, { credentials: 'include' });
       if (!res.ok) throw new Error(res.status);
-      const name = decodeURIComponent(new URL(src).pathname.split('/').pop() || 'document.pdf');
+      const name = new URLSearchParams(location.search).get('name') || decodeURIComponent(new URL(src, location.href).pathname.split('/').pop() || 'document.pdf');
       await openFile(new File([await res.arrayBuffer()], name, { type: 'application/pdf' }));
       document.title = name + ' · Read Aloud 2';
     } catch (err) {

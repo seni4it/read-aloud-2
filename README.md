@@ -56,6 +56,15 @@ Without the voice server the add-on still works, with the voices built into the 
   "Open PDF" in the reader.
 - Not covered: Google Docs (drawn on a canvas, closed to add-ons), Word and EPUB files (Chrome downloads them).
 
+## Desktop reader with a library
+
+`tools/make-desktop-app.sh` builds **Read Aloud.app** in `~/Applications`. Open it like any app: it starts the voice
+server when needed and opens your library in its own window (Chrome, without tabs).
+- Add PDFs with **+ Add PDF** or by dragging them onto the window. They are kept in `Documents/Read Aloud Library`;
+  PDFs you copy into that folder yourself appear too.
+- Each book shows its cover, how far you have read, and when. Search, sort, remove (the file goes to the Trash).
+- Click a book to read it in the same PDF reader as the add-on, with **← Library** to go back.
+
 ## Test window
 
 `tools/test-window.sh` opens a separate Chrome window with the add-on loaded, without touching your own Chrome.

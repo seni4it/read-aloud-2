@@ -1,0 +1,2 @@
+{ "name": "Read Aloud 2", "short_name": "Read Aloud", "start_url": "/app/", "display": "standalone",
+  "background_color": "#10233f", "theme_color": "#10233f", "icons": [{ "src": "icon.png", "sizes": "128x128", "type": "image/png" }] }

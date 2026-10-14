@@ -7,6 +7,12 @@ Start:  ~/.local/share/uv/tools/mlx-audio/bin/python "voice-server.py"   (port 8
   GET /                     the voice sampler page (voices.html)
   GET /voices               the voice list as JSON
   POST /ocr                 a picture (PNG) -> its text, word by word with places (Apple's Vision, ocr/ocr.swift)
+
+Desktop reader (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
+  /app/...                  the library page (app/)          /reader/...  the PDF reader (extension/pdf, the same code)
+  GET  /library.json        the books in ~/Documents/Read Aloud Library (PDFs dropped there in Finder are picked up)
+  GET  /library/file/<id>   one book        GET /library/cover/<id>   its cover (made by macOS Quick Look)
+  POST /library/add?name=   add a PDF (body)    POST /library/<id>/opened    POST /library/<id>/remove (to the Trash)
   GET /speak?text=&voice=   one sentence as a WAV file (24 kHz); recent ones are kept, so replay and read-ahead are instant
   GET /times?text=&voice=   when each word of that sentence starts, in seconds of the WAV (Kokoro's own timings), as
                             {"starts": [...]}, one per space-separated word; null where Kokoro gave none
@@ -15,7 +21,7 @@ Start:  ~/.local/share/uv/tools/mlx-audio/bin/python "voice-server.py"   (port 8
 
 Version 1 (~/.claude/read-aloud, port 8791) is not touched.
 """
-import collections, functools, itertools, http.server, io, json, os, re, subprocess, sys, tempfile, threading, time, urllib.parse
+import collections, functools, hashlib, itertools, http.server, io, json, mimetypes, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.parse
 
 import numpy as np
 import soundfile as sf
@@ -191,6 +197,81 @@ def warm_up():
                 pass
 
 
+LIB = os.environ.get('READ_ALOUD_LIBRARY', os.path.expanduser('~/Documents/Read Aloud Library'))
+COVERS = os.path.join(LIB, '.covers')
+STATIC = {'/app/': os.path.join(HERE, 'app'), '/reader/': os.path.join(HERE, 'extension', 'pdf')}
+mimetypes.add_type('text/javascript', '.mjs')
+_lib = threading.Lock()
+
+
+def lib_index():
+    """The library: {id: {name, file, added, opened}}; PDFs put in the folder by hand are added on the way."""
+    os.makedirs(COVERS, exist_ok=True)
+    path = os.path.join(LIB, 'library.json')
+    try:
+        with open(path, encoding='utf-8') as f:
+            idx = json.load(f)
+    except (OSError, ValueError):
+        idx = {}
+    files = {b['file'] for b in idx.values()}
+    changed = False
+    for name in sorted(os.listdir(LIB)):
+        full = os.path.join(LIB, name)
+        if name.lower().endswith('.pdf') and name not in files and os.path.isfile(full):
+            st = os.stat(full)
+            bid = hashlib.sha1(f'{name}|{st.st_size}|{st.st_mtime}'.encode()).hexdigest()[:12]
+            idx[bid] = {'name': name[:-4], 'file': name, 'added': st.st_mtime, 'opened': 0}
+            changed = True
+    for bid in [k for k, b in idx.items() if not os.path.exists(os.path.join(LIB, b['file']))]:
+        del idx[bid]  # deleted in Finder
+        changed = True
+    if changed:
+        lib_save(idx)
+    return idx
+
+
+def lib_save(idx):
+    tmp = os.path.join(LIB, 'library.json.tmp')
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(idx, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, os.path.join(LIB, 'library.json'))
+
+
+def lib_add(name, data):
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]', ' ', os.path.basename(name or 'document.pdf')).strip() or 'document.pdf'
+    if not name.lower().endswith('.pdf'):
+        name += '.pdf'
+    with _lib:
+        idx = lib_index()
+        file, n = name, 2
+        while os.path.exists(os.path.join(LIB, file)):
+            file = f'{name[:-4]} ({n}).pdf'
+            n += 1
+        with open(os.path.join(LIB, file), 'wb') as f:
+            f.write(data)
+        bid = hashlib.sha1(data).hexdigest()[:12]
+        idx[bid] = {'name': file[:-4], 'file': file, 'added': time.time(), 'opened': 0}
+        lib_save(idx)
+    threading.Thread(target=lib_cover, args=(bid,), daemon=True).start()
+    return bid
+
+
+def lib_cover(bid):
+    """A cover picture of page 1, made by macOS Quick Look (qlmanage), kept in .covers/<id>.png."""
+    out = os.path.join(COVERS, bid + '.png')
+    if os.path.exists(out):
+        return out
+    b = lib_index().get(bid)
+    if not b:
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(['qlmanage', '-t', '-s', '420', '-o', tmp, os.path.join(LIB, b['file'])], capture_output=True, timeout=60)
+        made = [f for f in os.listdir(tmp) if f.endswith('.png')]
+        if made:
+            shutil.move(os.path.join(tmp, made[0]), out)
+    return out if os.path.exists(out) else None
+
+
 OCR = os.path.join(HERE, 'ocr', 'ocr')
 _ocr_slots = threading.Semaphore(2)
 
@@ -232,6 +313,42 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except Exception as e:
                 self.send_error(500, str(e)[:200])
                 return None
+        if url.path == '/library.json':
+            with _lib:
+                idx = lib_index()
+            books = [{'id': k, **b, 'cover': os.path.exists(os.path.join(COVERS, k + '.png'))} for k, b in idx.items()]
+            return self.reply(json.dumps(books, ensure_ascii=False).encode(), 'application/json')
+        m = re.match(r'^/library/(file|cover)/([0-9a-f]{12})$', url.path)
+        if m:
+            b = lib_index().get(m.group(2))
+            path = (os.path.join(LIB, b['file']) if m.group(1) == 'file' else lib_cover(m.group(2))) if b else None
+            if not path or not os.path.exists(path):
+                self.send_error(404, 'Not found')
+                return None
+            f = open(path, 'rb')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/pdf' if m.group(1) == 'file' else 'image/png')
+            self.send_header('Content-Length', str(os.fstat(f.fileno()).st_size))
+            self.end_headers()
+            return f
+        if url.path == '/app':
+            self.send_response(302)
+            self.send_header('Location', '/app/')
+            self.end_headers()
+            return None
+        for prefix, base in STATIC.items():  # the library page and the PDF reader
+            if url.path.startswith(prefix):
+                rel = urllib.parse.unquote(url.path[len(prefix):]) or 'index.html'
+                full = os.path.realpath(os.path.join(base, rel))
+                if not full.startswith(os.path.realpath(base) + os.sep) or not os.path.isfile(full):
+                    self.send_error(404, 'Not found')
+                    return None
+                f = open(full, 'rb')
+                self.send_response(200)
+                self.send_header('Content-Type', mimetypes.guess_type(full)[0] or 'application/octet-stream')
+                self.send_header('Content-Length', str(os.fstat(f.fileno()).st_size))
+                self.end_headers()
+                return f
         if url.path in ('/', '/index.html'):
             self.path = '/voices.html'
         if not re.match(r'^/[\w.-]+\.(html|js|css)$', self.path.split('?')[0]):  # only the page files, never the folder
@@ -239,16 +356,49 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return None
         return super().send_head()
 
-    def do_POST(self):  # /ocr: the text in a picture (a page of a scanned book), by Apple's Vision
-        if (self.headers.get('Host') or '').lower() not in ALLOWED or self.path != '/ocr':
-            self.send_error(403 if self.path == '/ocr' else 404)
+    def do_POST(self):
+        # Only the app and the add-on may change things: a web page elsewhere cannot add or remove books.
+        origin = self.headers.get('Origin') or ''
+        if (self.headers.get('Host') or '').lower() not in ALLOWED or not (
+                origin in (f'http://127.0.0.1:{PORT}', f'http://localhost:{PORT}') or origin.startswith('chrome-extension://')):
+            self.send_error(403, 'Forbidden')
             return
+        url = urllib.parse.urlsplit(self.path)
         size = int(self.headers.get('Content-Length') or 0)
-        if not 0 < size <= 40_000_000:
-            self.send_error(413, 'Picture too large')
-            return
         try:
-            body = ocr(self.rfile.read(size))
+            if url.path == '/ocr':  # the text in a picture (a page of a scanned book), by Apple's Vision
+                if not 0 < size <= 40_000_000:
+                    self.send_error(413, 'Picture too large')
+                    return
+                body = ocr(self.rfile.read(size))
+            elif url.path == '/library/add':
+                if not 0 < size <= 500_000_000:
+                    self.send_error(413, 'File too large')
+                    return
+                data = self.rfile.read(size)
+                if not data.startswith(b'%PDF'):
+                    self.send_error(415, 'Not a PDF')
+                    return
+                body = json.dumps({'id': lib_add(dict(urllib.parse.parse_qsl(url.query)).get('name', ''), data)}).encode()
+            else:
+                m = re.match(r'^/library/([0-9a-f]{12})/(opened|remove)$', url.path)
+                if not m:
+                    self.send_error(404, 'Not found')
+                    return
+                with _lib:
+                    idx = lib_index()
+                    b = idx.get(m.group(1))
+                    if b and m.group(2) == 'opened':
+                        b['opened'] = time.time()
+                    elif b:  # to the Trash, never deleted outright
+                        trash = os.path.expanduser('~/.Trash')
+                        dest = os.path.join(trash, b['file'])
+                        if os.path.exists(dest):
+                            dest = os.path.join(trash, f"{b['file'][:-4]} {int(time.time())}.pdf")
+                        shutil.move(os.path.join(LIB, b['file']), dest)
+                        del idx[m.group(1)]
+                    lib_save(idx)
+                body = b'{}'
         except Exception as e:
             self.send_error(500, str(e)[:200])
             return
