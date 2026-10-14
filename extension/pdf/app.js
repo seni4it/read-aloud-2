@@ -313,6 +313,32 @@ function markActiveSection(idx) {
   [...els.toc.children].forEach((btn, i) => btn.classList.toggle('active', i === idx));
 }
 
+/**
+ * Read Aloud 2: the PDF's own chapter list (its bookmarks), when it has one. Published books do, and it is exact,
+ * where chapters guessed from the size of the type pick up figure labels and contents-page lines.
+ */
+async function outlineSections(sentences) {
+  const outline = await state.doc.getOutline().catch(() => null);
+  if (!outline || outline.length < 2) return null;
+  const pageOf = (s) => { const o = s.charOwners && s.charOwners.find(Boolean); return o ? o.page : s.page || 0; };
+  const firstOnOrAfter = (page) => { const i = sentences.findIndex((s) => pageOf(s) >= page); return i; };
+  const out = [];
+  const walk = async (items, level) => {
+    for (const it of items) {
+      let page = null;
+      try {
+        const dest = typeof it.dest === 'string' ? await state.doc.getDestination(it.dest) : it.dest;
+        if (dest) page = (await state.doc.getPageIndex(dest[0])) + 1;
+      } catch { /* a bookmark without a page */ }
+      const start = page ? firstOnOrAfter(page) : -1;
+      if (start >= 0 && it.title.trim()) out.push({ title: it.title.trim(), startSentence: start, page, level });
+      if (it.items && it.items.length && level < 1) await walk(it.items, level + 1);
+    }
+  };
+  await walk(outline, 0);
+  return out.length >= 2 ? out : null;
+}
+
 function renderToc() {
   els.toc.innerHTML = '';
   state.sections.forEach((section, i) => {
@@ -496,7 +522,7 @@ async function parseDocument() {
   if (token !== state.parseToken) return;
 
   state.sentences = builder.sentences;
-  state.sections = builder.sections;
+  state.sections = (await outlineSections(builder.sentences)) || builder.sections;
   buildClickIndex();
   renderToc();
 

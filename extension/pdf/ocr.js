@@ -9,10 +9,9 @@ export async function withOcr(doc, note = () => {}) {
   const getPage = doc.getPage.bind(doc);
   const textOf = async (n) => {
     if (!done.has(n)) {
-      done.set(n, getPage(n).then(async (page) => {
+      done.set(n, doc.getPage(n).then(async (page) => {  // through the wrapper below, which keeps the page's own text reader
         const c = await page.__text();
         if (c.items.some((i) => i.str && i.str.trim())) return c;
-        doc.__scanned = true;
         for (const k of [n + 1, n + 2]) if (k <= doc.numPages) setTimeout(() => textOf(k), 0);  // read ahead
         note(`Reading the picture of page ${n}…`);
         return recognize(page).catch((e) => { note(`Page ${n}: no text found (${e.message}).`); return c; });
@@ -28,8 +27,13 @@ export async function withOcr(doc, note = () => {}) {
     }
     return page;
   };
-  await (await doc.getPage(1)).getTextContent();  // page 1 tells the reader early whether this is a scanned book
-  doc.__scanned = !!doc.__scanned;
+  // A scanned book: most of its first pages have no text of their own. One picture page (a cover) is not enough.
+  let empty = 0; const look = Math.min(3, doc.numPages);
+  for (let n = 1; n <= look; n++) {
+    const page = await doc.getPage(n);
+    if (!(await page.__text()).items.some((i) => i.str && i.str.trim())) empty++;
+  }
+  doc.__scanned = empty * 2 > look;
   return doc;
 }
 
