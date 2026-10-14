@@ -165,12 +165,14 @@ function speakCurrent() {
   if (engine.id !== 'system') setStatus('generating…');
   let spoke = false;
 
+  state.at = from;
   engine.speak(sentence, {
     voiceId: els.voiceSel.value,
     rate: Number(els.rateSel.value),
     onWord: (charIndex, charLength) => {
       if (!state.playing) return;
       if (!spoke) { spoke = true; setStatus(readyLabel); }
+      state.at = charIndex + from;  // Read Aloud 2: the word being read, so Pause then Play goes on from here
       const parts = wordPartsAt(full, charIndex + from, charLength);
       if (parts.length) viewer.highlightWord(parts);
     },
@@ -239,6 +241,14 @@ function wordPartsAt(sentence, charIndex, charLength) {
 
 function play() {
   if (!state.sentences.length) return;
+  // Read Aloud 2: after a pause, go on from the word you paused on, not from the top of the paragraph
+  if (state.resumeAt && state.resumeAt.index === state.index && !state.from) {
+    const text = state.sentences[state.index].text;
+    let at = state.resumeAt.at;
+    while (at > 0 && !/\s/.test(text[at - 1])) at--;
+    state.from = at;
+  }
+  state.resumeAt = null;
   state.playing = true;
   els.playIcon.innerHTML = ICON_PAUSE;  // Read Aloud 2: the same icons as the web player
   els.playBtn.setAttribute('aria-label', 'Pause');
@@ -247,6 +257,7 @@ function play() {
 
 function stop() {
   clearTimeout(state.pauseTimer);
+  if (state.playing && state.at > 0) state.resumeAt = { index: state.index, at: state.at };
   state.playing = false;
   els.playIcon.innerHTML = ICON_PLAY;
   els.playBtn.setAttribute('aria-label', 'Play');
@@ -282,6 +293,7 @@ function warmCurrent() {
 
 function jumpTo(i, { resume = state.playing } = {}) {
   const wasPlaying = state.playing;
+  state.resumeAt = null;  // moving on: the next Play starts at the top of that paragraph
   clearTimeout(state.pauseTimer);
   engine.stop();
   state.index = Math.max(0, Math.min(i, Math.max(0, state.sentences.length - 1)));
