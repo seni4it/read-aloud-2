@@ -204,13 +204,16 @@ function dropPageFurniture(lines) {
   // in the head's own size. What still separates them is that the head sits
   // alone above the text block. Never applied to anything set larger than the
   // body, so a chapter title stays.
+  // Read Aloud 2: a line that carries on a sentence (starts in lower case) or ends one is body text, wherever it
+  // sits. A page with a table has tiny gaps between its rows, so "stranded" alone took a paragraph's last line.
+  const prose = l => /^[a-z]/.test(l.text) || (/[.!?]["'”’)]?$/.test(l.text) && l.text.length > 20);
   const strandedAtTop = l =>
-    leading > 0 && l === byY[0] && byY.length > 1 &&
+    !prose(l) && leading > 0 && l === byY[0] && byY.length > 1 &&
     l.size <= bodySize * 1.05 &&
     (byY[0].y - byY[1].y) > leading * 2.5;
 
   const strandedAtFoot = l =>
-    leading > 0 && l === byY[byY.length - 1] && byY.length > 1 &&
+    !prose(l) && leading > 0 && l === byY[byY.length - 1] && byY.length > 1 &&
     l.size <= bodySize * 1.05 &&
     (byY[byY.length - 2].y - l.y) > leading * 2.5;
 
@@ -955,8 +958,13 @@ export class DocumentBuilder {
       }
     }
 
-    // The contents page is a map of the book, not part of it.
-    if (isContentsPage(lines)) { this.flush(); return; }
+    // The contents page is a map of the book, not part of it. Read Aloud 2: so is its last, shorter page,
+    // which follows a contents page and still lists titles with page numbers ("Develop a Product Plan 253").
+    const numbered = lines.filter(l => /\s(\d{1,4}|[ivxlc]{1,6})$/i.test(l.text)).length;
+    if (isContentsPage(lines) || (this.inContents && numbered >= Math.max(2, lines.length * 0.25))) {
+      this.inContents = true; this.flush(); return;
+    }
+    this.inContents = false;
 
     // The book names its own chapter at the top of every page. When that name
     // changes, a chapter starts — this is the structure the reader recognises,
