@@ -65,6 +65,11 @@ server when needed and opens your library in its own window (Chrome, without tab
 - Each book shows its cover, how far you have read, and when. Search, sort, remove (the file goes to the Trash).
 - Click a book to read it in the same PDF reader as the add-on, with **← Library** to go back.
 
+## Start the voices at login
+
+`tools/autostart.sh` makes the voice server start when you log in and restart if it stops (a LaunchAgent,
+`~/Library/LaunchAgents/com.semion.read-aloud-2.plist`). `tools/autostart.sh off` removes it.
+
 ## Test window
 
 `tools/test-window.sh` opens a separate Chrome window with the add-on loaded, without touching your own Chrome.
