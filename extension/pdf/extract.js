@@ -115,39 +115,41 @@ export async function readPage(doc, pageNumber) {
     };
   };
 
-  let lines;
-  if (gutter === null) {
-    lines = ordered.map(([y, entries]) => makeLine(y, entries));
-  } else {
-    // Real papers mix full-width blocks (title, author list, wide figures)
-    // with two-column body text. Split the page into bands separated by the
-    // full-width rows, and read each band left column then right column.
-    lines = [];
+  // Real papers mix full-width blocks (title, author list, wide figures) with columns. Split the page into
+  // bands separated by the full-width rows, and read each band left column then right column. Read Aloud 2:
+  // each side is split again when it has a gap of its own, so a three-column table reads column by column.
+  const gutterIn = (rows, x0, x1) => {
+    const shifted = rows.map(([y, es]) => [y, es.map(e => ({ ...e, x: e.x - x0 }))]);
+    const g = findGutter(shifted, x1 - x0);
+    return g === null ? null : g + x0;
+  };
+  const order = (rows, x0, x1, depth) => {
+    const g = depth === 0 ? gutter : gutterIn(rows, x0, x1);
+    if (g === null || depth > 2) return rows.map(([y, entries]) => makeLine(y, entries));
+    const out = [];
     let left = [];
     let right = [];
-
     const flushBand = () => {
-      lines.push(...left, ...right);
+      out.push(...order(left, x0, g, depth + 1), ...order(right, g, x1, depth + 1));
       left = [];
       right = [];
     };
-
-    for (const [y, entries] of ordered) {
-      const crosses = entries.some(e => e.x < gutter && e.x + e.w > gutter);
-      const l = entries.filter(e => e.x + e.w / 2 < gutter);
-      const r = entries.filter(e => e.x + e.w / 2 >= gutter);
-
-      if (crosses || (l.length && r.length && !hasGutterGap(entries, gutter))) {
+    for (const [y, entries] of rows) {
+      const crosses = entries.some(e => e.x < g && e.x + e.w > g);
+      const l = entries.filter(e => e.x + e.w / 2 < g);
+      const r = entries.filter(e => e.x + e.w / 2 >= g);
+      if (crosses || (l.length && r.length && !hasGutterGap(entries, g))) {
         flushBand();
-        lines.push(makeLine(y, entries));
+        out.push(makeLine(y, entries));
         continue;
       }
-
-      if (l.length) left.push(makeLine(y, l));
-      if (r.length) right.push(makeLine(y, r));
+      if (l.length) left.push([y, l]);
+      if (r.length) right.push([y, r]);
     }
     flushBand();
-  }
+    return out;
+  };
+  const lines = order(ordered, 0, pageWidth, 0);
 
   // Deliberately NOT calling page.cleanup(): pdf.js hands the same page proxy
   // to the viewer, and cleaning it up mid-render makes render() hang forever.
@@ -936,7 +938,22 @@ export class DocumentBuilder {
 
   addPage(pageData) {
     if (this.stopped) return;
-    const { lines, page } = pageData;
+    const { page } = pageData;
+    let { lines } = pageData;
+    // Read Aloud 2: the page's header and footer: the top or bottom line, short, with the page number at one end
+    if (lines.length >= 2) {
+      const ys = lines.map(l => l.y), top = Math.max(...ys), bottom = Math.min(...ys);
+      const RUNNING = /^\d{1,4}\s+\D.{0,70}$|^.{1,70}\D\s+\d{1,4}$|^\d{1,4}$/;
+      lines = lines.filter(l => !((l.y >= top - 6 || l.y <= bottom + 6) && l.text.length < 80 && RUNNING.test(l.text.trim())));
+    }
+    // Read Aloud 2: footnotes and figure sources (small print under all the body text) are citations
+    if (this.options.stripCitations && this.bodySize > 0) {
+      const body = lines.filter(l => l.size >= this.bodySize * 0.95 && l.text.length > 20);
+      if (body.length) {
+        const lowest = Math.min(...body.map(l => l.y));
+        lines = lines.filter(l => !(l.size <= this.bodySize * 0.85 && l.y < lowest));
+      }
+    }
 
     // The contents page is a map of the book, not part of it.
     if (isContentsPage(lines)) { this.flush(); return; }
@@ -1048,6 +1065,8 @@ export class DocumentBuilder {
       const isHeading = short &&
         (bigType || HEADING_WORDS.test(text) || looksNumbered);
 
+      // Read Aloud 2: a page header or footer ("Introduction 3", "4 Disciplined Entrepreneurship") is not a heading
+      if (isHeading && (i === 0 || i === lines.length - 1) && /^\d{1,4}\s+\D|\D\s+\d{1,4}$/.test(text)) continue;
       if (isHeading) {
         this.flush();
 
@@ -1055,6 +1074,7 @@ export class DocumentBuilder {
         // YOUR EYES" is two lines of 49pt type and one chapter, not two.
         // Absorb the lines that follow at the same size.
         let title = text;
+        const headLines = [line];  // Read Aloud 2: the heading is read aloud too, as its own short paragraph
         while (i + 1 < lines.length) {
           const next = lines[i + 1];
           if (Math.abs(next.size - line.size) > 0.5) break;
@@ -1063,6 +1083,7 @@ export class DocumentBuilder {
           // Vision) set the heading and the body at one size, and "Abstract" swallowed the whole abstract.
           if (/-$/.test(next.text) || (this.lineLength && next.text.length >= this.lineLength * 0.75)) break;
           title += ' ' + next.text;
+          headLines.push(next);
           i++;
         }
 
@@ -1072,6 +1093,8 @@ export class DocumentBuilder {
           page,
           level: 1
         });
+        for (const hl of headLines) { this.buffer.push(hl.tokens); this.buffer.space(); }
+        this.flush();
         continue;
       }
 
