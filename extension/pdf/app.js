@@ -103,12 +103,19 @@ async function selectEngine(id) {
       });
       setStatus(engineLabel(next));
     } catch (err) {
-      setStatus('model failed to load — using system voices');
+      // Read Aloud 2: the voice server is down for a moment. Use the Mac voices meanwhile, but do not remember
+      // that as your choice, and switch back by itself when the natural voices answer again.
+      setStatus('Natural voices are not answering — using Mac voices for now');
       engine = engines.system;
       els.engineSel.value = 'system';
-      localStorage.setItem('pr.engine', 'system');
       fillVoiceSelect();
       setBusy(false);
+      clearTimeout(state.retryNatural);
+      state.retryNatural = setTimeout(function retry() {
+        if (localStorage.getItem('pr.engine') !== 'kokoro' || engine.id === 'kokoro') return;
+        next.init().then(() => { if (!state.playing && engine.id === 'system') selectEngine('kokoro'); })
+          .catch(() => { state.retryNatural = setTimeout(retry, 5000); });
+      }, 5000);
       return;
     }
     setBusy(false);
@@ -591,7 +598,7 @@ els.voiceSel.addEventListener('change', () => {
   if (state.playing) { engine.stop(); speakCurrent(); }
 });
 
-els.engineSel.addEventListener('change', () => selectEngine(els.engineSel.value));
+els.engineSel.addEventListener('change', () => { localStorage.setItem('pr.engine.chosen', els.engineSel.value); selectEngine(els.engineSel.value); });
 
 
 // Audition the selected voice on a fixed line, without touching playback.
@@ -733,7 +740,8 @@ async function requestPersistentStorage() {
   fillVoiceSelect();
 
   // Kokoro is the point of this app, so start there unless told otherwise.
-  const savedEngine = localStorage.getItem('pr.engine') || 'kokoro';
+  // Read Aloud 2: natural voices unless you picked the Mac voices yourself in the menu
+  const savedEngine = localStorage.getItem('pr.engine.chosen') === 'system' ? 'system' : 'kokoro';
   els.engineSel.value = savedEngine;
   if (savedEngine !== 'system') await selectEngine(savedEngine);
 
