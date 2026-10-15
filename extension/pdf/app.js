@@ -31,7 +31,7 @@ const els = {
   toc: $('toc'), sidebar: $('sidebar'), tocBtn: $('tocBtn'), closeSidebar: $('closeSidebar'),
   parseBar: $('parseBar'), parseFill: $('parseFill'), parseText: $('parseText'),
   optCitations: $('optCitations'), optCaptions: $('optCaptions'), optRefs: $('optRefs'),
-  optFrontMatter: $('optFrontMatter'), optInsets: $('optInsets'), timeLeft: $('timeLeft'), exportBtn: $('exportBtn'), exportStatus: $('exportStatus'),
+  optFrontMatter: $('optFrontMatter'), optInsets: $('optInsets'), optTables: $('optTables'), optParens: $('optParens'), timeLeft: $('timeLeft'), exportBtn: $('exportBtn'), exportStatus: $('exportStatus'),
   reparseBtn: $('reparseBtn'), dropVeil: $('dropVeil'),
   engineSel: $('engineSel'), engineStatus: $('engineStatus'), previewBtn: $('previewBtn'),
   zoomIn: $('zoomIn'), zoomOut: $('zoomOut'), zoomLevel: $('zoomLevel')
@@ -546,6 +546,8 @@ async function parseDocument() {
       stripCitations: els.optCitations.checked,
       stripCaptions: els.optCaptions.checked,
       skipInsets: els.optInsets.checked,  // Read Aloud 2
+      skipTables: els.optTables.checked,
+      skipParens: els.optParens.checked,
       stopAtReferences: els.optRefs.checked
     },
     async (n, total, b) => {
@@ -665,9 +667,11 @@ els.previewBtn.addEventListener('click', async () => {
   });
 });
 
-try { els.optInsets.checked = localStorage.getItem('ra2.skipInsets') === '1'; } catch { /* storage blocked */ }
-els.optInsets.addEventListener('change', () => { try { localStorage.setItem('ra2.skipInsets', els.optInsets.checked ? '1' : '0'); } catch {} });
-for (const el of [els.optCitations, els.optCaptions, els.optRefs, els.optFrontMatter, els.optInsets]) {
+for (const [el, key, dflt] of [[els.optInsets, 'ra2.skipInsets', '0'], [els.optTables, 'ra2.skipTables', '1'], [els.optParens, 'ra2.skipParens', '0']]) {
+  try { el.checked = (localStorage.getItem(key) ?? dflt) === '1'; } catch { /* storage blocked */ }
+  el.addEventListener('change', () => { try { localStorage.setItem(key, el.checked ? '1' : '0'); } catch {} });
+}
+for (const el of [els.optCitations, els.optCaptions, els.optRefs, els.optFrontMatter, els.optInsets, els.optTables, els.optParens]) {
   el.addEventListener('change', () => { if (state.doc) parseDocument(); });
 }
 els.reparseBtn.addEventListener('click', () => { if (state.doc) parseDocument(); });

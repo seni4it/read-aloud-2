@@ -45,6 +45,9 @@ Without the voice server the add-on still works, with the voices built into the 
 - A PDF opened in Chrome switches to the add-on's own reader (`extension/pdf`, Paper Reader's viewer copied from
   `~/paper-reader` at commit 8ee8a1e), with the natural voice. It finds two columns, skips citations, figure captions
   and the reference list, and highlights each word on the page. Switch off in the popup ("Open PDFs in Read Aloud 2").
+  Options in the side bar, like Speechify's skip settings: citations (also footnotes and superscript numbers),
+  figure captions, the reference list, boxed quotes, tables (rows of short cells that line up) and text in
+  parentheses or brackets.
   Changes from Paper Reader: the Mac voice engine (`tts.js`), scanned pages (`ocr.js`), a paper's title block no
   longer hides its columns, and a heading no longer swallows the lines after it (`extract.js`, marked "Read Aloud 2").
 - Scanned PDFs (pages that are pictures): the text is read by Apple's Vision on this Mac (`ocr/ocr.swift`, built
