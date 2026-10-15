@@ -69,6 +69,12 @@ server when needed and opens your library in its own window (Chrome, without tab
   **Highlights** tab beside Contents lists them by group; click one to go to it. Library books keep them in
   `Documents/Read Aloud Library/.notes/<id>.json`; PDFs opened in Chrome keep them in the browser.
 
+## Audio files (MP3)
+
+In the reader of a library book, **Export audio (MP3)** in the side bar makes one MP3 per chapter (64 kb/s mono,
+the cover as album art, chapter titles as track names). Files go to `Documents/Read Aloud Library/Audio/<book>/`
+(`READ_ALOUD_AUDIO` changes the folder). The reader shows the time left to read at the current speed.
+
 ## Start the voices at login
 
 `tools/autostart.sh` makes the voice server start when you log in and restart if it stops (a LaunchAgent,

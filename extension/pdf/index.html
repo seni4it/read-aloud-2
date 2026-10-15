@@ -52,6 +52,8 @@
       <label class="opt"><input type="checkbox" id="optFrontMatter" checked><span>Start at abstract</span></label>
       <label class="opt"><input type="checkbox" id="optInsets"><span>Skip boxed quotes</span></label>
       <button class="btn ghost small" id="reparseBtn">Re-read document</button>
+      <button class="btn ghost small" id="exportBtn" hidden>Export audio (MP3)</button>
+      <p class="status" id="exportStatus"></p>
 
     </div>
   </aside>
@@ -83,6 +85,7 @@
     <div class="scrub">
       <input type="range" id="seek" min="0" max="0" value="0" step="1" aria-label="Position in document">
       <div class="pos" id="pos">0 / 0</div>
+      <div class="pos" id="timeLeft" title="Time left at this speed"></div>
     </div>
 
     <label class="select-wrap">

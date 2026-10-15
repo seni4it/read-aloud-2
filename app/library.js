@@ -39,7 +39,9 @@
       <button class="remove" type="button" title="Remove from library" aria-label="Remove from library">×</button>`;
     el.querySelector('.title').textContent = b.name;
     const [left, right] = el.querySelectorAll('.sub span');
-    left.textContent = pct ? pct + '% read' : 'Not started';
+    const min = p && Number.isFinite(p.minLeft) ? Math.round(p.minLeft) : null;
+    const left0 = min === null ? '' : min < 60 ? `${Math.max(1, min)} min left` : `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')} min left`;
+    left.textContent = pct ? `${pct}% read · ${left0}` : 'Not started';
     right.textContent = when(b.opened);
     const cover = el.querySelector('.cover');
     const img = new Image();
@@ -48,6 +50,11 @@
     img.src = `/library/cover/${b.id}`;
     const open = () => { location.href = `/reader/index.html?lib=${b.id}&name=${encodeURIComponent(b.name)}&file=${encodeURIComponent('/library/file/' + b.id)}`; };
     el.addEventListener('click', (e) => { if (!e.target.closest('.remove')) open(); });
+    // audio export (MP3 files) in progress or ready: a line on the card
+    fetch(`/library/${b.id}/export`, { cache: 'no-store' }).then((r) => r.json()).then((st) => {
+      if (st.state === 'running' || st.state === 'starting') right.textContent = `Making audio ${st.total ? Math.round((st.done / st.total) * 100) : 0}%`;
+      else if (st.state === 'done') right.textContent = `Audio: ${st.files.length} MP3s`;
+    }).catch(() => {});
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target === el) open(); });
     el.querySelector('.remove').addEventListener('click', async (e) => {
       e.stopPropagation();

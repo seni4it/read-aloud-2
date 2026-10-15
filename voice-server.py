@@ -14,6 +14,10 @@ Desktop reader (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
   GET  /library/file/<id>   one book        GET /library/cover/<id>   its cover (made by macOS Quick Look)
   POST /library/add?name=   add a PDF (body)    POST /library/<id>/opened    POST /library/<id>/remove (to the Trash)
   GET/POST /library/<id>/notes   the book's highlights (JSON), kept in .notes/<id>.json
+  POST /library/<id>/export   make MP3 files of the book, one per chapter, with the cover picture (body: JSON
+                              {title, voice, chapters: [{title, text: [...]}]}); GET the same: progress;
+                              POST .../export/cancel; POST .../export/open shows the folder in Finder.
+                              Files go to ~/Documents/Read Aloud Library/Audio/<book>/ (READ_ALOUD_AUDIO to change)
   GET /speak?text=&voice=   one sentence as a WAV file (24 kHz); recent ones are kept, so replay and read-ahead are instant
   GET /times?text=&voice=   when each word of that sentence starts, in seconds of the WAV (Kokoro's own timings), as
                             {"starts": [...]}, one per space-separated word; null where Kokoro gave none
@@ -273,6 +277,63 @@ def lib_cover(bid):
     return out if os.path.exists(out) else None
 
 
+AUDIO = os.environ.get('READ_ALOUD_AUDIO', os.path.join(LIB, 'Audio'))
+FFMPEG = shutil.which('ffmpeg') or '/opt/homebrew/bin/ffmpeg'
+_exports = {}  # book id -> {state, chapter, chapters, done, total, files, folder, error, cancel}
+
+
+def export_book(bid, job):
+    """One MP3 per chapter: the chapter title, then its sentences with short pauses; 64 kb/s mono, the cover as art."""
+    st = _exports[bid]
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]', ' ', job.get('title') or 'Book').strip()[:80] or 'Book'
+    folder = os.path.join(AUDIO, name)
+    os.makedirs(folder, exist_ok=True)
+    st.update(folder=folder, state='running')
+    voice = job.get('voice') if job.get('voice') in LANG else 'af_heart'
+    cover = lib_cover(bid)
+    chapters = job.get('chapters') or []
+    st['total'] = sum(len(c.get('text') or []) + 1 for c in chapters)
+    sr = 24000
+    pause = lambda sec: np.zeros(int(sr * sec), dtype=np.float32)
+    try:
+        for k, ch in enumerate(chapters, 1):
+            if st.get('cancel'):
+                st['state'] = 'cancelled'
+                return
+            title = (ch.get('title') or f'Part {k}').strip()
+            st.update(chapter=k, chapters=len(chapters), title=title)
+            wav = os.path.join(folder, f'{k:02d}.wav')
+            with sf.SoundFile(wav, 'w', samplerate=sr, channels=1, subtype='PCM_16') as f:
+                pieces = [title] + [t for t in (ch.get('text') or []) if t and t.strip()]
+                for i, text in enumerate(pieces):
+                    if st.get('cancel'):
+                        break
+                    audio, _ = synth(text[:MAX_CHARS], voice)
+                    a, _ = trim(audio, text)
+                    f.write(a.astype(np.float32))
+                    f.write(pause(0.9 if i == 0 else 0.3))
+                    st['done'] += 1
+            if st.get('cancel'):
+                os.remove(wav)
+                st['state'] = 'cancelled'
+                return
+            safe = re.sub(r'[\\/:*?"<>|]', ' ', title)[:60].strip()
+            mp3 = os.path.join(folder, f'{k:02d} {safe}.mp3')
+            cmd = [FFMPEG, '-y', '-loglevel', 'error', '-i', wav]
+            if cover:
+                cmd += ['-i', cover, '-map', '0:a', '-map', '1:v', '-c:v', 'copy', '-disposition:v', 'attached_pic',
+                        '-metadata:s:v', 'title=Album cover', '-metadata:s:v', 'comment=Cover (front)']
+            cmd += ['-c:a', 'libmp3lame', '-b:a', '64k', '-ac', '1', '-id3v2_version', '3',
+                    '-metadata', f'title={title}', '-metadata', f'album={name}', '-metadata', f'track={k}/{len(chapters)}',
+                    '-metadata', 'artist=Read Aloud 2', '-metadata', 'genre=Audiobook', mp3]
+            subprocess.run(cmd, check=True, capture_output=True, timeout=600)
+            os.remove(wav)
+            st['files'].append(os.path.basename(mp3))
+        st['state'] = 'done'
+    except Exception as e:
+        st.update(state='error', error=str(e)[:200])
+
+
 OCR = os.path.join(HERE, 'ocr', 'ocr')
 _ocr_slots = threading.Semaphore(2)
 
@@ -319,6 +380,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 idx = lib_index()
             books = [{'id': k, **b, 'cover': os.path.exists(os.path.join(COVERS, k + '.png'))} for k, b in idx.items()]
             return self.reply(json.dumps(books, ensure_ascii=False).encode(), 'application/json')
+        m = re.match(r'^/library/([0-9a-f]{12})/export$', url.path)
+        if m:  # progress of the MP3 export
+            st = _exports.get(m.group(1)) or {'state': 'none'}
+            return self.reply(json.dumps({k: v for k, v in st.items() if k != 'thread'}).encode(), 'application/json')
         m = re.match(r'^/library/([0-9a-f]{12})/notes$', url.path)
         if m:  # the book's highlights (Read Aloud 2 reader)
             path = os.path.join(LIB, '.notes', m.group(1) + '.json')
@@ -387,6 +452,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     return
                 body = json.dumps({'id': lib_add(dict(urllib.parse.parse_qsl(url.query)).get('name', ''), data)}).encode()
             else:
+                m = re.match(r'^/library/([0-9a-f]{12})/export(/cancel|/open)?$', url.path)
+                if m:
+                    bid, act = m.group(1), m.group(2)
+                    st = _exports.get(bid)
+                    if act == '/cancel':
+                        if st: st['cancel'] = True
+                    elif act == '/open':
+                        if st and st.get('folder'): subprocess.Popen(['open', st['folder']])
+                    else:
+                        if st and st.get('state') == 'running':
+                            self.send_error(409, 'Already exporting')
+                            return
+                        job = json.loads(self.rfile.read(size) or b'{}')
+                        _exports[bid] = {'state': 'starting', 'chapter': 0, 'chapters': 0, 'done': 0, 'total': 0, 'files': [], 'folder': '', 'error': '', 'cancel': False}
+                        t = threading.Thread(target=export_book, args=(bid, job), daemon=True)
+                        _exports[bid]['thread'] = t
+                        t.start()
+                    self.copyfile(self.reply(b'{}', 'application/json'), self.wfile)
+                    return
                 m = re.match(r'^/library/([0-9a-f]{12})/(opened|remove|notes)$', url.path)
                 if not m:
                     self.send_error(404, 'Not found')

@@ -31,7 +31,7 @@ const els = {
   toc: $('toc'), sidebar: $('sidebar'), tocBtn: $('tocBtn'), closeSidebar: $('closeSidebar'),
   parseBar: $('parseBar'), parseFill: $('parseFill'), parseText: $('parseText'),
   optCitations: $('optCitations'), optCaptions: $('optCaptions'), optRefs: $('optRefs'),
-  optFrontMatter: $('optFrontMatter'), optInsets: $('optInsets'),
+  optFrontMatter: $('optFrontMatter'), optInsets: $('optInsets'), timeLeft: $('timeLeft'), exportBtn: $('exportBtn'), exportStatus: $('exportStatus'),
   reparseBtn: $('reparseBtn'), dropVeil: $('dropVeil'),
   engineSel: $('engineSel'), engineStatus: $('engineStatus'), previewBtn: $('previewBtn'),
   zoomIn: $('zoomIn'), zoomOut: $('zoomOut'), zoomLevel: $('zoomLevel')
@@ -319,6 +319,7 @@ function render() {
   els.seek.max = String(Math.max(0, total - 1));
   els.seek.value = String(state.index);
   els.pos.textContent = `${total ? state.index + 1 : 0} / ${total}`;
+  els.timeLeft.textContent = timeLeftText();  // Read Aloud 2
 
   const sentence = state.sentences[state.index];
   if (sentence) {
@@ -394,6 +395,23 @@ function fingerprint(text) {
 
 let storageWarned = false;
 
+// Read Aloud 2: how long the rest takes at this speed. The natural voice reads about 160 words a minute at 1x.
+const WPM = 160;
+function wordsLeft(from = state.index) {
+  let n = 0;
+  for (let i = from; i < state.sentences.length; i++) n += (state.sentences[i].words ??= (state.sentences[i].text.match(/\S+/g) || []).length);
+  return n;
+}
+function minutesText(min) {
+  if (!Number.isFinite(min)) return '';
+  const m = Math.round(min);
+  return m < 60 ? `${Math.max(1, m)} min left` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min left`;
+}
+function timeLeftText() {
+  if (!state.sentences.length) return '';
+  return minutesText(wordsLeft() / (WPM * Number(els.rateSel.value || 1)));
+}
+
 function saveProgress() {
   if (!state.docKey) return;
   const sentence = state.sentences[state.index];
@@ -404,7 +422,7 @@ function saveProgress() {
   try {
     localStorage.setItem('pr.pos.' + state.docKey, record);
     // Read Aloud 2 desktop library: how far you are, for the progress bar on the book's card
-    if (LIB_ID) localStorage.setItem('ra2.lib.' + LIB_ID, JSON.stringify({ i: state.index, total: state.sentences.length, t: Date.now() }));
+    if (LIB_ID) localStorage.setItem('ra2.lib.' + LIB_ID, JSON.stringify({ i: state.index, total: state.sentences.length, t: Date.now(), minLeft: wordsLeft() / (WPM * Number(els.rateSel.value || 1)) }));
     storageWarned = false;
   } catch (err) {
     // Not silent. A full or blocked store means the reader loses their place
@@ -606,6 +624,7 @@ els.seek.addEventListener('input', () => jumpTo(Number(els.seek.value), { resume
 els.seek.addEventListener('change', () => { if (state.playing) jumpTo(Number(els.seek.value)); });
 
 els.rateSel.addEventListener('change', () => {
+  els.timeLeft.textContent = timeLeftText();  // Read Aloud 2
   localStorage.setItem('pr.rate', els.rateSel.value);
   if (state.playing) { engine.stop(); speakCurrent(); }
 });
@@ -770,6 +789,25 @@ function followVoice() {
 }
 findBtn.addEventListener('click', followVoice);
 
+// Read Aloud 2: progress of the MP3 export, shown under the button
+let exportTimer = null;
+async function pollExport() {
+  clearTimeout(exportTimer);
+  let st; try { st = await (await fetch(`/library/${LIB_ID}/export`, { cache: 'no-store' })).json(); } catch { return; }
+  const el = els.exportStatus;
+  if (st.state === 'running' || st.state === 'starting') {
+    const pct = st.total ? Math.round((st.done / st.total) * 100) : 0;
+    el.innerHTML = `Making audio: chapter ${st.chapter} of ${st.chapters}, ${pct}% · <a href="#" id="exportCancel">stop</a>`;
+    el.querySelector('#exportCancel').onclick = (e) => { e.preventDefault(); fetch(`/library/${LIB_ID}/export/cancel`, { method: 'POST' }); };
+    exportTimer = setTimeout(pollExport, 2000);
+  } else if (st.state === 'done') {
+    el.innerHTML = `Audio ready: ${st.files.length} files · <a href="#" id="exportOpen">show folder</a>`;
+    el.querySelector('#exportOpen').onclick = (e) => { e.preventDefault(); fetch(`/library/${LIB_ID}/export/open`, { method: 'POST' }); };
+  } else if (st.state === 'error') el.textContent = 'Export failed: ' + st.error;
+  else if (st.state === 'cancelled') el.textContent = 'Export stopped.';
+  else el.textContent = '';
+}
+
 (async function boot() {
   requestPersistentStorage();
   showZoom();
@@ -782,6 +820,26 @@ findBtn.addEventListener('click', followVoice);
   els.engineSel.value = savedEngine;
   if (savedEngine !== 'system') await selectEngine(savedEngine);
 
+  if (LIB_ID) {  // the desktop library: export the book as MP3 files, one per chapter
+    els.exportBtn.hidden = false;
+    els.exportBtn.addEventListener('click', async () => {
+      if (!state.sentences.length) return;
+      if (!confirm('Make MP3 files of this book, one per chapter? It takes about a minute for each ten minutes of audio. The files go to Documents › Read Aloud Library › Audio.')) return;
+      const secs = (state.sections || []).filter(s => s.level === 0 || !(state.sections || []).some(x => x.level === 0));
+      const starts = secs.map(s => s.startSentence).filter(n => n > 0);
+      const bounds = [0, ...new Set(starts)].sort((a, b) => a - b);
+      const chapters = bounds.map((b, i) => {
+        const end = bounds[i + 1] ?? state.sentences.length;
+        const sec = secs.find(s => s.startSentence === b);
+        return { title: sec ? sec.title : (i === 0 ? 'Beginning' : `Part ${i + 1}`), text: state.sentences.slice(b, end).map(s => s.text) };
+      }).filter(c => c.text.length);
+      const r = await fetch(`/library/${LIB_ID}/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: document.title.replace(/ · Read Aloud 2$/, ''), voice: els.voiceSel.value, chapters }) });
+      els.exportStatus.textContent = r.ok ? 'Export started…' : 'Export is already running.';
+      pollExport();
+    });
+    pollExport();
+  }
   if (LIB_ID) {  // the desktop library: a way back, and the book's "last read" time
     const back = document.getElementById('libraryBtn');
     back.hidden = false;
