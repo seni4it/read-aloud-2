@@ -143,10 +143,22 @@ export async function readPage(doc, pageNumber) {
   // Word gaps are narrow; a column gap is at least 1.5% of the page wide (the finder's own limit), in most
   // of the split rows. With that, a ragged table (few rows lined up, many split) still passes.
   const minGap = Math.max(3, pageWidth * 0.015);
+  // Columns on their own line grids have no row with text on both sides. Then whole lines count: at least five
+  // wholly left of x and five wholly right, with a real gap between the left lines' right edge and the right
+  // lines' left edge.
+  const whole = (x) => {
+    const txt = ([, es]) => es.map(e => e.item.str).join('').trim().length >= 10;
+    const L = ordered.filter(r => txt(r) && r[1].every(e => e.x + e.w <= x + 1));
+    const R = ordered.filter(r => txt(r) && r[1].every(e => e.x >= x - 1));
+    const gap = L.length && R.length ? Math.min(...R.map(([, es]) => Math.min(...es.map(e => e.x)))) - Math.max(...L.map(([, es]) => Math.max(...es.map(e => e.x + e.w)))) : 0;
+    return { l: L.length, r: R.length, gap };
+  };
   const judge = (g) => {
     const x = settle(ordered, g); const rows = splitRows(x); const lined = aligned(rows);
     const widths = rows.map(r => r[1] - r[0]).sort((a, b) => a - b); const wide = widths.length ? widths[Math.floor(widths.length / 2)] >= minGap : false;
-    return { x, split: rows.length, lined, cross: crossAt(x), ok: lined >= 2 && wide && (lined >= rows.length * 0.4 || rows.length >= 6) };
+    const w = whole(x);
+    const ok = (lined >= 2 && wide && (lined >= rows.length * 0.4 || rows.length >= 6)) || (w.l >= 5 && w.r >= 5 && w.gap >= minGap);
+    return { x, split: rows.length, lined: lined + Math.min(w.l, w.r), cross: crossAt(x), ok };
   };
   const scores = [];
   let gutter = null;
@@ -218,8 +230,8 @@ export async function readPage(doc, pageNumber) {
   // Real papers mix full-width blocks (title, author list, wide figures) with columns. Split the page into
   // bands separated by the full-width rows, and read each band left column then right column. Read Aloud 2:
   // each side is split again when it has a gap of its own, so a three-column table reads column by column.
-  const order = (rows, x0, x1, depth) => {
-    const g = depth === 0 ? gutter : gutterIn(rows, x0, x1);
+  const order = (rows, x0, x1, depth, g0) => {
+    const g = g0 !== undefined ? g0 : depth === 0 ? gutter : gutterIn(rows, x0, x1);
     if (g === null || depth > 2) return rows.map(([y, entries]) => makeLine(y, entries));
     const out = [];
     let left = [];
@@ -241,11 +253,48 @@ export async function readPage(doc, pageNumber) {
       const t = makeLine(...left[left.length - 1]).text.trim();
       return t.length > 0 && !/[.!?:]["'”’)\]]?$/.test(t);
     };
-    for (const [y, entries] of rows) {
-      const crosses = entries.some(e => e.x < g && e.x + e.w > g);
-      const l = entries.filter(e => e.x + e.w / 2 < g);
-      const r = entries.filter(e => e.x + e.w / 2 >= g);
-      if (crosses || (l.length && r.length && !hasGutterGap(entries, g))) {
+    const breaks = ([, es]) => es.some(e => e.x < g && e.x + e.w > g)
+      || (es.some(e => e.x + e.w / 2 < g) && es.some(e => e.x + e.w / 2 >= g) && !hasGutterGap(es, g));
+    // Read Aloud 2: the gap is one number for the page, but a page can hold a narrow column with a figure
+    // caption beside it (gap at 265) above two wide columns (gap at 353). After three rows, the band knows
+    // where its left column ends and its right column starts; text that starts past the left edge is right-hand
+    // text, and text that ends before the right edge is left-hand text, whatever side of the gap it sits on.
+    // The edges come from the last three rows on each side only: a page can change its layout part way down
+    // (wide columns, then a narrow column beside a figure, then wide columns again) without any row crossing.
+    const edges = () => {
+      const last = (arr) => arr.slice(-3);
+      const L = left.length >= 3 ? Math.max(...last(left).map(([, es]) => Math.max(...es.map(e => e.x + e.w)))) : null;
+      const R = right.length >= 3 ? Math.min(...last(right).map(([, es]) => Math.min(...es.map(e => e.x)))) : null;
+      return [L, R];
+    };
+    const sideOf = (e, L, R) => {
+      if (L !== null && e.x >= L - 1) return 'r';
+      if (R !== null && e.x + e.w <= R + 1) return 'l';
+      return e.x + e.w / 2 < g ? 'l' : 'r';
+    };
+    for (let idx = 0; idx < rows.length; idx++) {
+      const [y, entries] = rows[idx];
+      const [L, R] = edges();
+      const l = entries.filter(e => sideOf(e, L, R) === 'l');
+      const r = entries.filter(e => sideOf(e, L, R) === 'r');
+      const crosses = entries.some(e => e.x < g && e.x + e.w > g && !((L !== null && e.x >= L - 1) || (R !== null && e.x + e.w <= R + 1)));
+      const apart = !l.length || !r.length || Math.max(...l.map(e => e.x + e.w)) <= Math.min(...r.map(e => e.x));
+      if (crosses || (l.length && r.length && !apart)) {
+        // Read Aloud 2: a page can change its layout part way down: a narrow column beside a figure above, two
+        // wide columns below. The lower rows all cross the upper gap. A run of three or more such rows is given
+        // its own gap search; with a gap of its own it is read as its own columns. A quote box has no gap inside.
+        let end = idx;
+        while (end + 1 < rows.length && breaks(rows[end + 1])) end++;
+        const run = rows.slice(idx, end + 1);
+        if (run.length >= 3 && depth < 2) {
+          const g2 = gutterIn(run, x0, x1);
+          if (g2 !== null && run.filter(([, es]) => hasGutterGap(es, g2) && es.some(e => e.x + e.w <= g2) && es.some(e => e.x >= g2)).length >= 2) {
+            flushBand();
+            out.push(...order(run, x0, x1, depth + 1, g2));
+            idx = end;
+            continue;
+          }
+        }
         if (inset.length || midSentence()) { inset.push({ ...makeLine(y, entries), inset: true }); continue; }
         flushBand();
         out.push(makeLine(y, entries));
@@ -349,6 +398,8 @@ function dropPageFurniture(lines) {
   for (let i = byY.length - 1; i >= 0; i--) {
     const l = byY[i];
     if (isBody(l) && !strandedAtFoot(l)) break;
+    // Read Aloud 2: small type that reads as text (a bold list at the foot of a column) is text, not a footer
+    if (prose(l) && l.size >= bodySize * 0.7) break;
     if (l.text.length <= 90) furniture.add(l);
   }
 
@@ -1076,7 +1127,15 @@ export class DocumentBuilder {
       const body = lines.filter(l => l.size >= this.bodySize * 0.95 && l.text.length > 20);
       if (body.length) {
         const lowest = Math.min(...body.map(l => l.y));
-        lines = lines.filter(l => !(l.size <= this.bodySize * 0.85 && l.y < lowest));
+        const small = lines.filter(l => l.size <= this.bodySize * 0.85 && l.y < lowest);
+        // Footnotes stand off from the text by a clear space. Small type that follows the text at the normal
+        // line spacing (a bold list at the foot of a column) is part of the text.
+        const ys = [...new Set(lines.map(l => Math.round(l.y)))].sort((a, b) => b - a);
+        const gaps = ys.slice(1).map((y, i) => ys[i] - y).filter(d => d > 2).sort((a, b) => a - b);
+        const leading = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0;
+        const real = small.filter(l => l.text.trim().length >= 3);  // not a lone footnote number
+        const top = real.length ? Math.max(...real.map(l => l.y)) : -1;
+        if (small.length && (leading === 0 || lowest - top >= leading * 1.8)) lines = lines.filter(l => !small.includes(l));
       }
     }
 
@@ -1170,7 +1229,10 @@ export class DocumentBuilder {
 
       if (this.options.stripCaptions && CAPTION_START.test(text)) {
         this.flush();
-        while (i < lines.length && !/[.!?]["')\]]?$/.test(lines[i].text)) i++;
+        // Read Aloud 2: a caption in small type ends where the small type ends; one in body type ends at its
+        // sentence end. The old rule ran past a caption that ended in ")" and swallowed body text.
+        const cap = line.size, small = this.bodySize > 0 && cap < this.bodySize * 0.95;
+        while (i + 1 < lines.length && Math.abs(lines[i + 1].size - cap) < 0.6 && (small || !/[.!?]["')\]]?$/.test(lines[i].text))) i++;
         continue;
       }
 

@@ -409,8 +409,19 @@ function minutesText(min) {
 }
 function timeLeftText() {
   if (!state.sentences.length) return '';
-  return minutesText(wordsLeft() / (WPM * Number(els.rateSel.value || 1)));
+  const min = wordsLeft() / (WPM * Number(els.rateSel.value || 1));
+  state.leftAt = { min, t: Date.now() };  // the live counter below counts on from here
+  return minutesText(min);
 }
+// While the voice reads, the time left counts down each second (the estimate is re-based at every sentence).
+function secondsText(min) {
+  const s = Math.max(0, Math.round(min * 60)), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  return (h ? `${h} h ${String(m).padStart(2, '0')} min ` : `${m} min `) + `${String(r).padStart(2, '0')} s left`;
+}
+setInterval(() => {
+  if (!state.playing || !state.leftAt) return;
+  els.timeLeft.textContent = secondsText(state.leftAt.min - (Date.now() - state.leftAt.t) / 60000);
+}, 1000);
 
 function saveProgress() {
   if (!state.docKey) return;
