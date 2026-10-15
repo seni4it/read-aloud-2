@@ -258,6 +258,7 @@ export async function readPage(doc, pageNumber) {
     let right = [];
     let inset = [];  // a box across both columns (a pulled quote) that the columns run past
     let insetSure = false;
+    let insetMark = [0, 0];  // how many left and right rows the band had when the box began
     const flushBand = () => {
       out.push(...order(left, x0, g, depth + 1), ...order(right, g, x1, depth + 1), ...inset);
       left = [];
@@ -341,7 +342,13 @@ export async function readPage(doc, pageNumber) {
             }
           }
         }
-        if (inset.length || midSentence()) { inset.push({ ...makeLine(y, entries), inset: true }); continue; }
+        if (inset.length || midSentence()) {
+          // Read Aloud 2: the right-hand rows that arrive while the box is still in doubt are remembered: if the
+          // box turns out to be a heading, they belong after it, not before it (a page whose print slug at the
+          // top put "core, compared to the file's total diameter" before the running head and the question).
+          if (!inset.length) insetMark = [left.length, right.length];
+          inset.push({ ...makeLine(y, entries), inset: true }); continue;
+        }
         flushBand();
         out.push(makeLine(y, entries));
         continue;
@@ -353,8 +360,10 @@ export async function readPage(doc, pageNumber) {
         else {
           const real = inset.map(({ inset: _, ...line }) => line);
           inset = [];
+          const lAfter = left.splice(insetMark[0]), rAfter = right.splice(insetMark[1]);
           flushBand();
           out.push(...real);
+          left = lAfter; right = rAfter;
         }
       }
       if (l.length) left.push([y, l]);
