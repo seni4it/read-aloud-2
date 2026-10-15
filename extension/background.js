@@ -104,6 +104,17 @@ async function pictureText(src, tab) {
   chrome.tabs.create({ url: chrome.runtime.getURL('paste.html?from=picture'), index: tab.index + 1 });
 }
 
+// Installed from the folder (Load unpacked): when the files there change (a new version), reload by itself,
+// so a fix reaches Chrome without pressing reload in chrome://extensions. The store version never changes on disk.
+async function selfUpdate() {
+  try {
+    const disk = await (await fetch(chrome.runtime.getURL('manifest.json'), { cache: 'no-store' })).json();
+    if (disk.version !== chrome.runtime.getManifest().version) chrome.runtime.reload();
+  } catch { /* nothing to compare */ }
+}
+chrome.alarms.create('self-update', { periodInMinutes: 1 });
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'self-update') selfUpdate(); });
+
 // right-click menu and keyboard shortcuts (no keys are set by default: choose them at chrome://extensions/shortcuts)
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({ id: 'sel', title: 'Listen to the selected text', contexts: ['selection'] });

@@ -62,17 +62,41 @@ export async function readPage(doc, pageNumber) {
   const ordered = [...rows.entries()].sort((a, b) => b[0] - a[0]);
   for (const [, entries] of ordered) entries.sort((a, b) => a.x - b.x);
 
-  let gutter = findGutter(ordered, pageWidth);
+  // Read Aloud 2: look for the gap between columns in the middle of the TEXT AREA, not of the sheet. A book's
+  // text block is often narrower than the page and off-centre; measured on the sheet, the index of a 6x9 book
+  // found a "gap" inside its right column and read both columns as one.
+  // The gap's exact place: slide it, within 40pt, to where the fewest lines cross it. One long entry
+  // ("Artificial Intelligence") reaching past the first guess made its whole row read across all columns.
+  const settle = (rows, g) => {
+    if (g === null) return null;
+    let best = g, fewest = Infinity;
+    for (let x = g - 40; x <= g + 40; x++) {
+      const n = rows.reduce((c, [, es]) => c + (es.some(e => e.x < x && e.x + e.w > x) ? 1 : 0), 0);
+      if (n < fewest || (n === fewest && Math.abs(x - g) < Math.abs(best - g))) { fewest = n; best = x; }
+    }
+    return best;
+  };
+  const gutterIn = (rows, x0, x1) => {
+    const shifted = rows.map(([y, es]) => [y, es.map(e => ({ ...e, x: e.x - x0 }))]);
+    const g = findGutter(shifted, x1 - x0);
+    return g === null ? null : settle(rows, g + x0);
+  };
+  const lefts = ordered.flatMap(([, es]) => es.map(e => e.x)).sort((a, b) => a - b);
+  const rights = ordered.flatMap(([, es]) => es.map(e => e.x + e.w)).sort((a, b) => a - b);
+  const pick = (arr, q) => arr.length ? arr[Math.min(arr.length - 1, Math.floor(arr.length * q))] : 0;
+  const blockX0 = Math.max(0, pick(lefts, 0.02) - 2), blockX1 = Math.min(pageWidth, pick(rights, 0.98) + 2);
+  let gutter = blockX1 - blockX0 > pageWidth * 0.3 ? gutterIn(ordered, blockX0, blockX1) : null;
+  if (gutter === null) gutter = settle(ordered, findGutter(ordered, pageWidth));
   if (gutter === null) {
     // Read Aloud 2: a paper's first page opens with a centred title, author and address block that runs across
     // the middle, and that hides the two columns below it. Look again from the first real line that stays on
     // one side of the middle: all its words left of it, or all right (the block above is then read first).
-    const mid = pageWidth / 2;
+    const mid = (blockX0 + blockX1) / 2;
     // A scanned page may break that block into pieces that sit on one side, so try each such line in turn.
     const oneSide = ([, es]) => es.map(e => e.item.str).join('').trim().length >= 15
       && (es.every(e => e.x + e.w <= mid) || es.every(e => e.x >= mid));
     for (let k = 1; k < ordered.length * 0.6 && gutter === null; k++) {
-      if (oneSide(ordered[k])) gutter = findGutter(ordered.slice(k), pageWidth);
+      if (oneSide(ordered[k])) gutter = gutterIn(ordered.slice(k), blockX0, blockX1) ?? findGutter(ordered.slice(k), pageWidth);
     }
   }
 
@@ -118,11 +142,6 @@ export async function readPage(doc, pageNumber) {
   // Real papers mix full-width blocks (title, author list, wide figures) with columns. Split the page into
   // bands separated by the full-width rows, and read each band left column then right column. Read Aloud 2:
   // each side is split again when it has a gap of its own, so a three-column table reads column by column.
-  const gutterIn = (rows, x0, x1) => {
-    const shifted = rows.map(([y, es]) => [y, es.map(e => ({ ...e, x: e.x - x0 }))]);
-    const g = findGutter(shifted, x1 - x0);
-    return g === null ? null : g + x0;
-  };
   const order = (rows, x0, x1, depth) => {
     const g = depth === 0 ? gutter : gutterIn(rows, x0, x1);
     if (g === null || depth > 2) return rows.map(([y, entries]) => makeLine(y, entries));
