@@ -157,16 +157,27 @@ export async function readPage(doc, pageNumber) {
     const out = [];
     let left = [];
     let right = [];
+    let inset = [];  // a box across both columns (a pulled quote) that the columns run past
     const flushBand = () => {
-      out.push(...order(left, x0, g, depth + 1), ...order(right, g, x1, depth + 1));
+      out.push(...order(left, x0, g, depth + 1), ...order(right, g, x1, depth + 1), ...inset);
       left = [];
       right = [];
+      inset = [];
+    };
+    // Read Aloud 2: the left column stops mid-sentence above a full-width block ("Consequently, endodontists" /
+    // quote / "often needlessly spend"): the columns carry on below it, so read each column whole and the block
+    // after them. A column that ends a sentence there meets a real break (a heading, a new section).
+    const midSentence = () => {
+      if (!left.length || !right.length) return false;
+      const t = makeLine(...left[left.length - 1]).text.trim();
+      return t.length > 0 && !/[.!?:]["'”’)\]]?$/.test(t);
     };
     for (const [y, entries] of rows) {
       const crosses = entries.some(e => e.x < g && e.x + e.w > g);
       const l = entries.filter(e => e.x + e.w / 2 < g);
       const r = entries.filter(e => e.x + e.w / 2 >= g);
       if (crosses || (l.length && r.length && !hasGutterGap(entries, g))) {
+        if (inset.length || midSentence()) { inset.push(makeLine(y, entries)); continue; }
         flushBand();
         out.push(makeLine(y, entries));
         continue;
