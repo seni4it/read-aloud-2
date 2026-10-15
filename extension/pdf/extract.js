@@ -87,6 +87,15 @@ export async function readPage(doc, pageNumber) {
   const blockX0 = Math.max(0, pick(lefts, 0.02) - 2), blockX1 = Math.min(pageWidth, pick(rights, 0.98) + 2);
   let gutter = blockX1 - blockX0 > pageWidth * 0.3 ? gutterIn(ordered, blockX0, blockX1) : null;
   if (gutter === null) gutter = settle(ordered, findGutter(ordered, pageWidth));
+  // Read Aloud 2: a page whose own evidence is too thin (a chapter opener with a title and a quote across the
+  // middle, columns on their own line grids) borrows the gap the book's other pages use, when this page has
+  // plenty of lines wholly on each side of it.
+  const known = doc.__gutters || (doc.__gutters = new Map());
+  if (gutter === null && known.size) {
+    const usual = [...known.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    const side = (fits) => ordered.filter(([, es]) => es.every(fits) && es.map(e => e.item.str).join('').trim().length >= 10).length;
+    if (side(e => e.x + e.w <= usual + 2) >= 5 && side(e => e.x >= usual - 2) >= 5) gutter = settle(ordered, usual);
+  }
   if (gutter === null) {
     // Read Aloud 2: a paper's first page opens with a centred title, author and address block that runs across
     // the middle, and that hides the two columns below it. Look again from the first real line that stays on
@@ -168,6 +177,7 @@ export async function readPage(doc, pageNumber) {
     flushBand();
     return out;
   };
+  if (gutter !== null) known.set(Math.round(gutter), (known.get(Math.round(gutter)) || 0) + 1);
   const lines = order(ordered, 0, pageWidth, 0);
 
   // Deliberately NOT calling page.cleanup(): pdf.js hands the same page proxy
