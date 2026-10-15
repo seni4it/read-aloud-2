@@ -14,6 +14,8 @@ Desktop reader (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
   GET  /library/file/<id>   one book        GET /library/cover/<id>   its cover (made by macOS Quick Look)
   POST /library/add?name=   add a PDF (body)    POST /library/<id>/opened    POST /library/<id>/remove (to the Trash)
   GET/POST /library/<id>/notes   the book's highlights (JSON), kept in .notes/<id>.json
+  GET /claude/sessions      the Claude desktop app's conversations (title, folder); POST /claude/setting {session, title, cwd, group, auto}
+  POST /claude/send         {points: [{book, page, text}]}: key points appended to key-points/<book>.md in that folder
   POST /library/<id>/export   make MP3 files of the book, one per chapter, with the cover picture (body: JSON
                               {title, voice, chapters: [{title, text: [...]}]}); GET the same: progress;
                               POST .../export/cancel; POST .../export/open shows the folder in Finder.
@@ -512,6 +514,71 @@ def yt_worker():
 threading.Thread(target=yt_worker, daemon=True).start()
 
 
+# ---------- Key points: highlights go to a Claude conversation's project folder ----------
+# A highlight in the chosen group ("Important") is written, as it is made, to key-points/<book>.md inside the
+# project folder of the conversation picked in the reader (for example "Nickel-titanium lecture" works in
+# ~/tooth-3d-atlas). In that conversation, Claude reads the file when asked ("read key-points"). The desktop
+# app's conversations and their folders are read from its own records (title, cwd); nothing else is touched.
+CLAUDE_SESSIONS = os.path.expanduser('~/Library/Application Support/Claude/claude-code-sessions')
+BRIDGE_FILE = os.path.join(LIB, '.key-points.json')
+_bridge = threading.Lock()
+
+
+def claude_sessions():
+    """The Claude desktop app's conversations: [{id, title, cwd, last}], newest first (not archived)."""
+    out = []
+    for root, _dirs, files in os.walk(CLAUDE_SESSIONS):
+        for fn in files:
+            if not (fn.startswith('local_') and fn.endswith('.json')):
+                continue
+            try:
+                with open(os.path.join(root, fn), encoding='utf-8') as f:
+                    d = json.load(f)
+            except (OSError, ValueError):
+                continue
+            if d.get('isArchived') or not d.get('title') or not os.path.isdir(d.get('cwd') or ''):
+                continue
+            out.append({'id': d.get('sessionId') or fn[:-5], 'title': d['title'], 'cwd': d['cwd'], 'last': d.get('lastActivityAt') or 0})
+    out.sort(key=lambda x: -x['last'])
+    return out[:60]
+
+
+def bridge_setting():
+    try:
+        with open(BRIDGE_FILE, encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {'session': '', 'title': '', 'cwd': '', 'group': 'yellow', 'auto': False}
+
+
+def bridge_write(points):
+    """Append these points to key-points/<book>.md in the chosen conversation's folder; returns the file path."""
+    st = bridge_setting()
+    cwd = st.get('cwd') or ''
+    if not os.path.isdir(cwd):
+        raise RuntimeError('No conversation chosen')
+    folder = os.path.join(cwd, 'key-points')
+    os.makedirs(folder, exist_ok=True)
+    written = []
+    by_book = collections.OrderedDict()
+    for p in points:
+        by_book.setdefault((p.get('book') or 'book').strip(), []).append(p)
+    for book, ps in by_book.items():
+        safe = re.sub(r'[\\/:*?"<>|]+', ' ', book).strip()[:80] or 'book'
+        path = os.path.join(folder, safe + '.md')
+        new = not os.path.exists(path)
+        with _bridge, open(path, 'a', encoding='utf-8') as f:
+            if new:
+                f.write(f'# Key points from "{book}"\n\nMarked by Semion in Read Aloud 2 while listening. Each one is a key point for the work in this folder.\n\n')
+            for p in ps:
+                page = f' *(p. {p["page"]})*' if p.get('page') else ''
+                text = re.sub(r'\s+', ' ', p['text']).strip()
+                stamp = time.strftime('%Y-%m-%d %H:%M')
+                f.write(f'- {text}{page}  <!-- {stamp} -->\n')
+        written.append(path)
+    return written
+
+
 OCR = os.path.join(HERE, 'ocr', 'ocr')
 _ocr_slots = threading.Semaphore(2)
 
@@ -590,6 +657,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if m:  # progress of the MP3 export
             st = _exports.get(m.group(1)) or {'state': 'none'}
             return self.reply(json.dumps({k: v for k, v in st.items() if k != 'thread'}).encode(), 'application/json')
+        if url.path == '/claude/sessions':  # key points: the conversations to choose from, and the choice made
+            return self.reply(json.dumps({'sessions': claude_sessions(), 'setting': bridge_setting()}).encode(), 'application/json')
         m = re.match(r'^/library/([0-9a-f]{12})/notes$', url.path)
         if m:  # the book's highlights (Read Aloud 2 reader)
             path = os.path.join(LIB, '.notes', m.group(1) + '.json')
@@ -658,6 +727,27 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     return
                 body = json.dumps({'id': lib_add(dict(urllib.parse.parse_qsl(url.query)).get('name', ''), data)}).encode()
             else:
+                if url.path == '/claude/setting':  # which conversation's folder gets the key points
+                    data = json.loads(self.rfile.read(size) or b'{}')
+                    st = bridge_setting()
+                    for k in ('session', 'title', 'cwd', 'group'):
+                        if k in data: st[k] = str(data[k])[:300]
+                    if 'auto' in data: st['auto'] = bool(data['auto'])
+                    os.makedirs(LIB, exist_ok=True)
+                    with open(BRIDGE_FILE, 'w', encoding='utf-8') as f:
+                        json.dump(st, f)
+                    self.copyfile(self.reply(json.dumps(st).encode(), 'application/json'), self.wfile)
+                    return
+                if url.path == '/claude/send':  # key points: [{book, page, text, id}] -> key-points/<book>.md
+                    data = json.loads(self.rfile.read(size) or b'{}')
+                    pts = [p for p in (data.get('points') or []) if isinstance(p, dict) and str(p.get('text', '')).strip()][:200]
+                    try:
+                        files = bridge_write([{'book': str(p.get('book', ''))[:200], 'page': int(p.get('page') or 0), 'text': str(p['text'])[:4000]} for p in pts])
+                        body = json.dumps({'written': len(pts), 'files': files}).encode()
+                    except Exception as e:
+                        body = json.dumps({'error': str(e)[:300]}).encode()
+                    self.copyfile(self.reply(body, 'application/json'), self.wfile)
+                    return
                 if url.path == '/youtube/secret':  # the client_secret.json file from Google Cloud
                     data = json.loads(self.rfile.read(size) or b'{}')
                     if not ((data.get('installed') or data.get('web') or {}).get('client_id')):

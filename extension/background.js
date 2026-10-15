@@ -106,10 +106,20 @@ async function pictureText(src, tab) {
 
 // Installed from the folder (Load unpacked): when the files there change (a new version), reload by itself,
 // so a fix reaches Chrome without pressing reload in chrome://extensions. The store version never changes on disk.
+let readersOpen = 0;  // reader pages hold a port while they are open
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'reader') return;
+  readersOpen++;
+  port.onDisconnect.addListener(() => { readersOpen = Math.max(0, readersOpen - 1); });
+});
 async function selfUpdate() {
   try {
     const disk = await (await fetch(chrome.runtime.getURL('manifest.json'), { cache: 'no-store' })).json();
-    if (disk.version !== chrome.runtime.getManifest().version) chrome.runtime.reload();
+    if (disk.version === chrome.runtime.getManifest().version) return;
+    // A reload cuts every open reader page off from the add-on (no underlines, no copy, no voice) until the
+    // page itself is reloaded. Wait until no reader page is open.
+    if (readersOpen > 0) return;
+    chrome.runtime.reload();
   } catch { /* nothing to compare */ }
 }
 chrome.alarms.create('self-update', { periodInMinutes: 1 });

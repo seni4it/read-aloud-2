@@ -74,3 +74,10 @@
 .show-marks input { width: 18px; height: 18px; accent-color: var(--acc, #FF8C00); }
 #findBtn.away { color: #FF8C00; box-shadow: inset 0 0 0 2px #FF8C00; }
 .note-tools { margin-top: 10px; font-size: 12px; color: var(--muted); }
+
+/* Key points to Claude (Highlights tab) */
+.keypts { margin-top: 14px; padding: 8px 10px; border: 1px solid var(--line, #e5e7eb); border-radius: 8px; font-size: 12px; color: var(--muted); }
+.keypts summary { cursor: pointer; font-weight: 600; color: var(--fg, inherit); }
+.keypts label { display: block; margin: 6px 0; }
+.keypts select { max-width: 100%; font: inherit; }
+.keypts .kp-note { margin: 6px 0 0; word-break: break-word; }

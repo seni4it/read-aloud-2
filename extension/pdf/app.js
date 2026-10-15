@@ -18,6 +18,9 @@ try {
 }
 
 const $ = id => document.getElementById(id);
+// Read Aloud 2: tell the add-on this page is open, so it does not reload itself under the page (that cuts the
+// page off: no underlines, no copy, no voice until the page is reloaded).
+try { if (globalThis.chrome?.runtime?.id) chrome.runtime.connect({ name: 'reader' }); } catch { /* not in the add-on */ }
 const LIB_ID = (new URLSearchParams(location.search).get('lib') || '').replace(/[^0-9a-f]/g, '');  // opened from the desktop library
 const ICON_PLAY = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>';
 const ICON_PAUSE = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z" fill="currentColor"/></svg>';

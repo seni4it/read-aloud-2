@@ -12,6 +12,33 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
   let lastColor = load('ra2.lastColor') || 'yellow';
   let showMarks = load('ra2.showMarks') !== false;  // the switch in the Highlights tab
   const $ = (id) => document.getElementById(id);
+  // Key points: highlights in one group go to a Claude conversation's folder (key-points/<book>.md) through the
+  // voice server, as they are made or on request, and can be copied as a message. The server keeps the choice.
+  const SERVER = location.origin.startsWith('http') ? '' : 'http://127.0.0.1:8793';
+  let kp = { sessions: [], setting: { session: '', title: '', cwd: '', group: 'yellow', auto: false }, ok: false, note: '' };
+  const bookName = () => (document.getElementById('docTitle')?.textContent || document.title.replace(/ · Read Aloud 2$/, '')).trim();
+  async function kpLoad() {
+    try {
+      const r = await (await fetch(SERVER + '/claude/sessions', { cache: 'no-store' })).json();
+      kp.sessions = r.sessions || []; kp.setting = { ...kp.setting, ...(r.setting || {}) }; kp.ok = true;
+    } catch { kp.ok = false; }
+  }
+  async function kpSave(patch) {
+    kp.setting = { ...kp.setting, ...patch };
+    try { await fetch(SERVER + '/claude/setting', { method: 'POST', body: JSON.stringify(patch), headers: { 'Content-Type': 'application/json' } }); } catch { /* server off */ }
+  }
+  const unsent = () => notes.filter((n) => n.color === kp.setting.group && !n.sent);
+  async function kpSend(list) {
+    if (!list.length) { kp.note = 'Nothing new to send.'; return list; }
+    try {
+      const r = await (await fetch(SERVER + '/claude/send', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ points: list.map((n) => ({ book: bookName(), page: n.page, text: n.text, id: n.id })) }) })).json();
+      if (r.error) { kp.note = 'Not sent: ' + r.error; return []; }
+      for (const n of list) n.sent = Date.now();
+      kp.note = `${list.length} key point${list.length === 1 ? '' : 's'} saved to ${(r.files || [])[0] || 'the folder'}.`;
+      write(); return list;
+    } catch { kp.note = 'Not sent: the voice server did not answer.'; return []; }
+  }
 
   function load(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }
   function keep(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage blocked */ } }
@@ -68,6 +95,8 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
     notes.sort((x, y) => (x.segs[0].si - y.segs[0].si) || (x.segs[0].a - y.segs[0].a));
     lastColor = color; keep('ra2.lastColor', color);
     write(); draw();
+    const made = notes.find((n) => n.text === text && n.color === color && !n.sent);
+    if (made && kp.ok && kp.setting.auto && kp.setting.cwd && color === kp.setting.group) kpSend([made]).then(list);
   }
 
   // ---------- 1. the sentence being read: the marker button in the player bar ----------
@@ -200,7 +229,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
     for (const n of shown) {
       const b = document.createElement('button');
       b.type = 'button'; b.className = 'note'; b.dataset.color = n.color;
-      b.innerHTML = `${esc(n.text.length > 220 ? n.text.slice(0, 220) + '…' : n.text)}<small>${esc(names[n.color])} · page ${n.page}</small><span class="del" role="button" title="Delete this highlight" aria-label="Delete this highlight">×</span>`;
+      b.innerHTML = `${esc(n.text.length > 220 ? n.text.slice(0, 220) + '…' : n.text)}<small>${esc(names[n.color])} · page ${n.page}${n.sent ? ' · ✓ sent' : ''}</small><span class="del" role="button" title="Delete this highlight" aria-label="Delete this highlight">×</span>`;
       b.addEventListener('click', (e) => {
         if (e.target.closest('.del')) { remove(n); return; }
         const si = where(n.segs[0]);
@@ -213,9 +242,25 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
       box.appendChild(b);
     }
     box.insertAdjacentHTML('beforeend', '<div class="note-tools"><button type="button" class="rename" id="exportMd">Export as Markdown (.md)</button> · <button type="button" class="rename" id="copyMd">Copy for Claude</button> · <button type="button" class="rename" id="renameGroups">Rename groups</button></div>');
+    if (kp.ok) {
+      const st = kp.setting, n = unsent().length;
+      const opts = kp.sessions.map((x) => `<option value="${esc(x.id)}" ${x.id === st.session ? 'selected' : ''}>${esc(x.title)}</option>`).join('');
+      box.insertAdjacentHTML('beforeend', `<details class="keypts" ${st.cwd ? 'open' : ''}><summary>Key points to Claude${n ? ` (${n} new)` : ''}</summary>
+        <label>Conversation <select id="kpSession"><option value="">(choose)</option>${opts}</select></label>
+        <label>Group <select id="kpGroup">${COLORS.map((c) => `<option value="${c}" ${c === st.group ? 'selected' : ''}>${esc(names[c])}</option>`).join('')}</select></label>
+        <label><input type="checkbox" id="kpAuto" ${st.auto ? 'checked' : ''}> Send each one as I mark it</label>
+        <div class="note-tools"><button type="button" class="rename" id="kpSend">Send new now</button> · <button type="button" class="rename" id="kpCopy">Copy new as a message</button></div>
+        <p class="kp-note">${esc(kp.note || (st.cwd ? `They go to key-points/ in ${st.cwd}. In that conversation, say: read the key-points folder.` : 'Choose the conversation that works on the lecture.'))}</p></details>`);
+    }
   }
   $('notes').addEventListener('change', (e) => {
     if (e.target.id === 'showMarks') { showMarks = e.target.checked; keep('ra2.showMarks', showMarks); draw(); }
+    if (e.target.id === 'kpSession') {
+      const x = kp.sessions.find((y) => y.id === e.target.value);
+      kpSave(x ? { session: x.id, title: x.title, cwd: x.cwd } : { session: '', title: '', cwd: '' }).then(list);
+    }
+    if (e.target.id === 'kpGroup') kpSave({ group: e.target.value }).then(list);
+    if (e.target.id === 'kpAuto') kpSave({ auto: e.target.checked }).then(list);
   });
   // the highlights as Markdown: by group, in book order, with page numbers; good to hand to Claude
   function markdown() {
@@ -236,6 +281,16 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
       a.href = URL.createObjectURL(new Blob([markdown()], { type: 'text/markdown' }));
       a.download = (document.getElementById('docTitle')?.textContent || 'book').trim().replace(/[\\/:*?"<>|]/g, ' ').slice(0, 80) + ' - highlights.md';
       document.body.appendChild(a); a.click(); a.remove(); return;
+    }
+    if (e.target.id === 'kpSend') { kpSend(unsent()).then(list); return; }
+    if (e.target.id === 'kpCopy') {  // the new key points as one message to paste into the conversation
+      const list_ = unsent();
+      if (!list_.length) { kp.note = 'Nothing new to copy.'; list(); return; }
+      const msg = [`Key points I marked as important in "${bookName()}" (Read Aloud 2). Add each one where it fits and say what you did with it.`, '',
+        ...list_.map((n) => `- ${n.text.replace(/\s+/g, ' ').trim()}${n.page ? ` (p. ${n.page})` : ''}`)].join('\n');
+      navigator.clipboard.writeText(msg).then(() => { for (const n of list_) n.sent = Date.now(); write(); kp.note = `${list_.length} copied. Paste into the conversation.`; list(); },
+        () => { kp.note = 'Could not copy.'; list(); });
+      return;
     }
     if (e.target.id === 'copyMd') {
       navigator.clipboard.writeText(markdown()).then(() => flash('Copied'), () => alert('Could not copy.'));
@@ -266,6 +321,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
 
   return {
     async reload() {  // after a document is read (or read again); exact duplicates are kept once
+      if (!kp.ok) await kpLoad();
       const seen = new Set(), all = await read();
       notes = all.filter((n) => { const k = JSON.stringify(n.segs.map((g) => [g.si, g.a, g.b])); return !seen.has(k) && seen.add(k); });
       if (notes.length !== all.length) write();
