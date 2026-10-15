@@ -21,6 +21,7 @@
     <option value="added">Recently added</option>
     <option value="name">Title A to Z</option>
   </select>
+  <button class="btn ghost" id="ytBtn" type="button" title="Send audiobooks to your private YouTube channel">YouTube</button>
   <button class="btn" id="add" type="button">+ Add PDF</button>
   <input type="file" id="file" accept="application/pdf" multiple hidden>
 </header>
@@ -33,6 +34,18 @@
     <p class="hint">Books are kept in the folder <b>Documents › Read Aloud Library</b>. PDFs you put there yourself appear here too.</p>
   </div>
 </main>
+<section class="panel" id="yt" hidden>
+  <h2>YouTube</h2>
+  <p id="ytState"></p>
+  <div class="row">
+    <label class="btn ghost" for="ytSecret">Choose the key file</label><input type="file" id="ytSecret" accept=".json,application/json" hidden>
+    <button class="btn" id="ytConnect" type="button">Connect to YouTube</button>
+    <button class="btn ghost" id="ytDisconnect" type="button" hidden>Disconnect</button>
+    <a class="btn ghost" href="/app/youtube-setup.html">How to set it up</a>
+  </div>
+  <label class="sw"><input type="checkbox" id="ytAuto" checked> Upload each book by itself after an MP3 export</label>
+  <ul id="ytQueue"></ul>
+</section>
 <div class="veil" id="veil"><div>Drop the PDFs to add them</div></div>
 <script src="library.js"></script>
 </body>

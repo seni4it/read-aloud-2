@@ -91,3 +91,32 @@
   addEventListener('focus', load);  // back from the reader, or a PDF added in Finder
   load();
 })();
+
+// ---------- YouTube: send the MP3 chapters to a private channel ----------
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const panel = $('yt');
+  const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  async function show() {
+    let st; try { st = await (await fetch('/youtube/status', { cache: 'no-store' })).json(); } catch { return; }
+    $('ytState').textContent = st.connected ? `Connected to channel “${st.channel}”. ${st.pending} chapter(s) waiting, ${st.done} sent.${st.paused_until > Date.now() / 1000 ? ' Google’s daily limit is reached; uploads continue later by themselves.' : ''}`
+      : st.secret ? 'The key file is in place. Now press “Connect to YouTube”.' : 'Not set up yet. Read “How to set it up”, then choose the key file.';
+    $('ytConnect').hidden = !st.secret || st.connected; $('ytDisconnect').hidden = !st.connected; $('ytAuto').checked = st.auto !== false;
+    $('ytQueue').replaceChildren(...(st.items || []).slice().reverse().map((i) => {
+      const li = document.createElement('li');
+      li.textContent = `${i.book} · ${String(i.k).padStart(2, '0')} ${i.title} · ${i.state}${i.error ? ' (' + i.error + ')' : ''} `;
+      if (i.video) { const a = document.createElement('a'); a.href = 'https://youtu.be/' + i.video; a.target = '_blank'; a.textContent = 'open'; li.append(a); }
+      return li;
+    }));
+  }
+  $('ytBtn').addEventListener('click', () => { panel.hidden = !panel.hidden; if (!panel.hidden) show(); });
+  $('ytSecret').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const r = await post('/youtube/secret', JSON.parse(await f.text()).valueOf());
+    $('ytState').textContent = r.ok ? 'Key file saved.' : 'That is not the key file from Google.'; show();
+  });
+  $('ytConnect').addEventListener('click', () => { window.open('/youtube/auth', '_blank'); setTimeout(show, 15000); });
+  $('ytDisconnect').addEventListener('click', async () => { if (confirm('Disconnect YouTube?')) { await post('/youtube/disconnect'); show(); } });
+  $('ytAuto').addEventListener('change', () => post('/youtube/setting', { auto: $('ytAuto').checked }));
+  setInterval(() => { if (!panel.hidden) show(); }, 20000);
+})();

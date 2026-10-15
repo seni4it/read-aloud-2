@@ -26,7 +26,7 @@ Desktop reader (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
 
 Version 1 (~/.claude/read-aloud, port 8791) is not touched.
 """
-import collections, functools, hashlib, itertools, http.server, io, json, mimetypes, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.parse
+import collections, functools, hashlib, itertools, http.server, io, json, mimetypes, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.parse, urllib.request
 
 import numpy as np
 import soundfile as sf
@@ -329,9 +329,187 @@ def export_book(bid, job):
             subprocess.run(cmd, check=True, capture_output=True, timeout=600)
             os.remove(wav)
             st['files'].append(os.path.basename(mp3))
+            if os.path.exists(YT_TOKEN) and yt_load(YT_QUEUE, {}).get('auto', True):
+                yt_enqueue(bid, name, k, title, mp3)
         st['state'] = 'done'
     except Exception as e:
         st.update(state='error', error=str(e)[:200])
+
+
+# ---------------------------------------------------------------- YouTube: private videos of the MP3s
+# Setup (once, by him; the app's page /app/youtube-setup.html shows the steps): a Google Cloud project with the
+# YouTube Data API on, an OAuth client of type "Desktop app", its client_secret.json given to the app, then
+# "Connect". Tokens stay in ~/Documents/Read Aloud Library/.youtube/. Google's quota allows about 6 uploads a
+# day, so uploads wait in a queue and go out by themselves, 6 a day, while the server runs.
+YT_DIR = os.path.join(LIB, '.youtube')
+YT_SECRET = os.path.join(YT_DIR, 'client_secret.json')
+YT_TOKEN = os.path.join(YT_DIR, 'token.json')
+YT_QUEUE = os.path.join(YT_DIR, 'queue.json')
+YT_SCOPE = 'https://www.googleapis.com/auth/youtube'
+_yt = threading.Lock()
+
+
+def yt_load(path, default):
+    try:
+        with open(path, encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def yt_save(path, obj, private=False):
+    os.makedirs(YT_DIR, exist_ok=True)
+    tmp = path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(obj, f, ensure_ascii=False, indent=1)
+    if private:
+        os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def yt_client():
+    d = yt_load(YT_SECRET, {})
+    c = d.get('installed') or d.get('web') or {}
+    return c.get('client_id'), c.get('client_secret')
+
+
+def yt_post(url, data, headers=None, raw=False):
+    body = data if raw else urllib.parse.urlencode(data).encode()
+    req = urllib.request.Request(url, data=body, headers=headers or {'Content-Type': 'application/x-www-form-urlencoded'}, method='POST')
+    with urllib.request.urlopen(req, timeout=600) as r:
+        return r.status, r.headers, r.read()
+
+
+def yt_token():
+    """A valid access token, refreshed when old; None when not connected."""
+    t = yt_load(YT_TOKEN, {})
+    if not t.get('refresh_token'):
+        return None
+    if t.get('expires_at', 0) > time.time() + 60:
+        return t['access_token']
+    cid, sec = yt_client()
+    _, _, body = yt_post('https://oauth2.googleapis.com/token', {'client_id': cid, 'client_secret': sec, 'refresh_token': t['refresh_token'], 'grant_type': 'refresh_token'})
+    new = json.loads(body)
+    t.update(access_token=new['access_token'], expires_at=time.time() + int(new.get('expires_in', 3600)))
+    yt_save(YT_TOKEN, t, private=True)
+    return t['access_token']
+
+
+def yt_api(method, url, payload=None, token=None):
+    token = token or yt_token()
+    req = urllib.request.Request(url, data=json.dumps(payload).encode() if payload is not None else None,
+                                 headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'}, method=method)
+    with urllib.request.urlopen(req, timeout=120) as r:
+        return json.loads(r.read() or b'{}')
+
+
+def yt_status():
+    t = yt_load(YT_TOKEN, {})
+    q = yt_load(YT_QUEUE, {'items': [], 'auto': True, 'paused_until': 0})
+    return {'secret': os.path.exists(YT_SECRET), 'connected': bool(t.get('refresh_token')), 'channel': t.get('channel', ''),
+            'auto': q.get('auto', True), 'paused_until': q.get('paused_until', 0),
+            'pending': sum(1 for i in q['items'] if i['state'] == 'pending'), 'done': sum(1 for i in q['items'] if i['state'] == 'done'),
+            'items': q['items'][-60:]}
+
+
+def yt_enqueue(bid, book, k, title, mp3):
+    with _yt:
+        q = yt_load(YT_QUEUE, {'items': [], 'auto': True, 'paused_until': 0})
+        if any(i['mp3'] == mp3 and i['state'] in ('pending', 'done') for i in q['items']):
+            return
+        q['items'].append({'bid': bid, 'book': book, 'k': k, 'title': title, 'mp3': mp3, 'state': 'pending', 'video': '', 'error': '', 't': time.time()})
+        yt_save(YT_QUEUE, q)
+
+
+def yt_make_video(mp3, cover):
+    """An MP4 of the cover picture with the chapter's sound, for YouTube (made when it is uploaded, then removed)."""
+    out = mp3[:-4] + '.mp4'
+    cmd = [FFMPEG, '-y', '-loglevel', 'error']
+    if cover:
+        cmd += ['-loop', '1', '-framerate', '1', '-i', cover]
+    else:
+        cmd += ['-f', 'lavfi', '-i', 'color=c=0x10233f:s=1280x720:r=1']
+    cmd += ['-i', mp3, '-vf', 'scale=-2:720,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=0x10233f', '-c:v', 'libx264', '-tune', 'stillimage',
+            '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '96k', '-shortest', '-movflags', '+faststart', out]
+    subprocess.run(cmd, check=True, capture_output=True, timeout=1800)
+    return out
+
+
+def yt_playlist(q, book):
+    """The book's private playlist id, made once."""
+    lists = q.setdefault('playlists', {})
+    if book in lists:
+        return lists[book]
+    r = yt_api('POST', 'https://www.googleapis.com/youtube/v3/playlists?part=snippet,status',
+               {'snippet': {'title': 'Read Aloud: ' + book, 'description': 'Audiobook made by Read Aloud 2'}, 'status': {'privacyStatus': 'private'}})
+    lists[book] = r['id']
+    return r['id']
+
+
+def yt_upload_one(item, q):
+    token = yt_token()
+    cover = lib_cover(item['bid'])
+    mp4 = yt_make_video(item['mp3'], cover)
+    try:
+        size = os.path.getsize(mp4)
+        meta = {'snippet': {'title': f"{item['book']} — {item['k']:02d} {item['title']}"[:100], 'description': f"Chapter {item['k']} of {item['book']}. Made by Read Aloud 2.", 'categoryId': '27'},
+                'status': {'privacyStatus': 'private', 'selfDeclaredMadeForKids': False}}
+        req = urllib.request.Request('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
+                                     data=json.dumps(meta).encode(), method='POST',
+                                     headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json; charset=UTF-8',
+                                              'X-Upload-Content-Type': 'video/mp4', 'X-Upload-Content-Length': str(size)})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            location = r.headers['Location']
+        with open(mp4, 'rb') as f:
+            req = urllib.request.Request(location, data=f.read(), method='PUT', headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'video/mp4', 'Content-Length': str(size)})
+            with urllib.request.urlopen(req, timeout=3600) as r:
+                video = json.loads(r.read())['id']
+        item.update(state='done', video=video, error='')
+        try:
+            pl = yt_playlist(q, item['book'])
+            yt_api('POST', 'https://www.googleapis.com/youtube/v3/playlistItems?part=snippet',
+                   {'snippet': {'playlistId': pl, 'resourceId': {'kind': 'youtube#video', 'videoId': video}}})
+        except Exception as e:  # the video is up; the playlist is a convenience
+            item['error'] = 'playlist: ' + str(e)[:120]
+    finally:
+        if os.path.exists(mp4):
+            os.remove(mp4)
+
+
+def yt_worker():
+    """Every 5 minutes: one pending upload, while connected and not paused by the daily quota."""
+    while True:
+        time.sleep(300)
+        try:
+            if not os.path.exists(YT_TOKEN):
+                continue
+            with _yt:
+                q = yt_load(YT_QUEUE, {'items': [], 'auto': True, 'paused_until': 0})
+                if q.get('paused_until', 0) > time.time():
+                    continue
+                item = next((i for i in q['items'] if i['state'] == 'pending' and os.path.exists(i['mp3'])), None)
+                if not item:
+                    continue
+                item['state'] = 'uploading'
+                yt_save(YT_QUEUE, q)
+            try:
+                yt_upload_one(item, q)
+            except urllib.error.HTTPError as e:
+                body = e.read().decode(errors='replace')[:300]
+                if e.code == 403 and 'quota' in body.lower():
+                    item['state'] = 'pending'
+                    q['paused_until'] = time.time() + 6 * 3600  # Google's quota comes back each day; look again in 6 hours
+                else:
+                    item.update(state='error', error=f'{e.code} {body[:150]}')
+            except Exception as e:
+                item.update(state='error', error=str(e)[:200])
+            with _yt:
+                yt_save(YT_QUEUE, q)
+        except Exception:
+            pass
+
+
+threading.Thread(target=yt_worker, daemon=True).start()
 
 
 OCR = os.path.join(HERE, 'ocr', 'ocr')
@@ -380,6 +558,34 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 idx = lib_index()
             books = [{'id': k, **b, 'cover': os.path.exists(os.path.join(COVERS, k + '.png'))} for k, b in idx.items()]
             return self.reply(json.dumps(books, ensure_ascii=False).encode(), 'application/json')
+        if url.path == '/youtube/status':
+            return self.reply(json.dumps(yt_status()).encode(), 'application/json')
+        if url.path == '/youtube/auth':  # to Google's sign-in page; Google sends the code back to /youtube/callback
+            cid, _ = yt_client()
+            if not cid:
+                self.send_error(400, 'No client secret file yet')
+                return None
+            params = {'client_id': cid, 'redirect_uri': f'http://127.0.0.1:{PORT}/youtube/callback', 'response_type': 'code',
+                      'scope': YT_SCOPE, 'access_type': 'offline', 'prompt': 'consent'}
+            self.send_response(302)
+            self.send_header('Location', 'https://accounts.google.com/o/oauth2/v2/auth?' + urllib.parse.urlencode(params))
+            self.end_headers()
+            return None
+        if url.path == '/youtube/callback':
+            try:
+                cid, sec = yt_client()
+                _, _, body = yt_post('https://oauth2.googleapis.com/token', {'code': q.get('code', ''), 'client_id': cid, 'client_secret': sec,
+                                                                            'redirect_uri': f'http://127.0.0.1:{PORT}/youtube/callback', 'grant_type': 'authorization_code'})
+                t = json.loads(body)
+                t['expires_at'] = time.time() + int(t.get('expires_in', 3600))
+                yt_save(YT_TOKEN, t, private=True)
+                ch = yt_api('GET', 'https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', token=t['access_token'])
+                t['channel'] = (ch.get('items') or [{}])[0].get('snippet', {}).get('title', '')
+                yt_save(YT_TOKEN, t, private=True)
+                page = f'<!doctype html><meta charset="utf-8"><body style="font:20px -apple-system,sans-serif;padding:40px"><h1>YouTube is connected</h1><p>Channel: <b>{t["channel"]}</b>. You can close this tab and go back to Read Aloud.</p>'
+            except Exception as e:
+                page = f'<!doctype html><meta charset="utf-8"><body style="font:20px -apple-system,sans-serif;padding:40px"><h1>Connection failed</h1><p>{str(e)[:300]}</p>'
+            return self.reply(page.encode(), 'text/html; charset=utf-8')
         m = re.match(r'^/library/([0-9a-f]{12})/export$', url.path)
         if m:  # progress of the MP3 export
             st = _exports.get(m.group(1)) or {'state': 'none'}
@@ -452,6 +658,45 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     return
                 body = json.dumps({'id': lib_add(dict(urllib.parse.parse_qsl(url.query)).get('name', ''), data)}).encode()
             else:
+                if url.path == '/youtube/secret':  # the client_secret.json file from Google Cloud
+                    data = json.loads(self.rfile.read(size) or b'{}')
+                    if not ((data.get('installed') or data.get('web') or {}).get('client_id')):
+                        self.send_error(400, 'Not a client secret file')
+                        return
+                    yt_save(YT_SECRET, data, private=True)
+                    body = b'{}'
+                    self.copyfile(self.reply(body, 'application/json'), self.wfile)
+                    return
+                if url.path == '/youtube/setting':
+                    data = json.loads(self.rfile.read(size) or b'{}')
+                    with _yt:
+                        qq = yt_load(YT_QUEUE, {'items': [], 'auto': True, 'paused_until': 0})
+                        if 'auto' in data: qq['auto'] = bool(data['auto'])
+                        if data.get('retry'):
+                            for i in qq['items']:
+                                if i['state'] == 'error': i['state'] = 'pending'
+                            qq['paused_until'] = 0
+                        yt_save(YT_QUEUE, qq)
+                    self.copyfile(self.reply(b'{}', 'application/json'), self.wfile)
+                    return
+                if url.path == '/youtube/disconnect':
+                    for f in (YT_TOKEN,):
+                        if os.path.exists(f): os.remove(f)
+                    self.copyfile(self.reply(b'{}', 'application/json'), self.wfile)
+                    return
+                m = re.match(r'^/youtube/upload/([0-9a-f]{12})$', url.path)
+                if m:  # queue every MP3 already made for this book
+                    st = _exports.get(m.group(1)) or {}
+                    b = lib_index().get(m.group(1)) or {}
+                    folder = st.get('folder') or os.path.join(AUDIO, b.get('name', ''))
+                    n = 0
+                    if os.path.isdir(folder):
+                        for fn in sorted(os.listdir(folder)):
+                            mm = re.match(r'^(\d+) (.+)\.mp3$', fn)
+                            if mm:
+                                yt_enqueue(m.group(1), os.path.basename(folder), int(mm.group(1)), mm.group(2), os.path.join(folder, fn)); n += 1
+                    self.copyfile(self.reply(json.dumps({'queued': n}).encode(), 'application/json'), self.wfile)
+                    return
                 m = re.match(r'^/library/([0-9a-f]{12})/export(/cancel|/open)?$', url.path)
                 if m:
                     bid, act = m.group(1), m.group(2)

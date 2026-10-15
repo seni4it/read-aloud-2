@@ -212,12 +212,35 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
       });
       box.appendChild(b);
     }
-    box.insertAdjacentHTML('beforeend', '<button type="button" class="rename" id="renameGroups">Rename groups</button>');
+    box.insertAdjacentHTML('beforeend', '<div class="note-tools"><button type="button" class="rename" id="exportMd">Export as Markdown (.md)</button> · <button type="button" class="rename" id="copyMd">Copy for Claude</button> · <button type="button" class="rename" id="renameGroups">Rename groups</button></div>');
   }
   $('notes').addEventListener('change', (e) => {
     if (e.target.id === 'showMarks') { showMarks = e.target.checked; keep('ra2.showMarks', showMarks); draw(); }
   });
+  // the highlights as Markdown: by group, in book order, with page numbers; good to hand to Claude
+  function markdown() {
+    const book = (document.getElementById('docTitle')?.textContent || document.title.replace(/ · Read Aloud 2$/, '')).trim();
+    const lines = [`# Highlights from “${book}”`, '', `${notes.length} highlights, exported ${new Date().toLocaleDateString()} with Read Aloud 2.`, ''];
+    for (const c of COLORS) {
+      const group = notes.filter((n) => n.color === c);
+      if (!group.length) continue;
+      lines.push(`## ${names[c]} (${group.length})`, '');
+      for (const n of group) lines.push(`- ${n.text.replace(/\s+/g, ' ').trim()} *(p. ${n.page})*`);
+      lines.push('');
+    }
+    return lines.join('\n');
+  }
   $('notes').addEventListener('click', (e) => {
+    if (e.target.id === 'exportMd') {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([markdown()], { type: 'text/markdown' }));
+      a.download = (document.getElementById('docTitle')?.textContent || 'book').trim().replace(/[\\/:*?"<>|]/g, ' ').slice(0, 80) + ' - highlights.md';
+      document.body.appendChild(a); a.click(); a.remove(); return;
+    }
+    if (e.target.id === 'copyMd') {
+      navigator.clipboard.writeText(markdown()).then(() => flash('Copied'), () => alert('Could not copy.'));
+      e.target.textContent = 'Copied'; setTimeout(() => { e.target.textContent = 'Copy for Claude'; }, 1500); return;
+    }
     const f = e.target.closest('[data-f]');
     if (f) { filter = f.dataset.f; list(); return; }
     if (e.target.id === 'renameGroups') {
