@@ -87,29 +87,82 @@ export async function readPage(doc, pageNumber) {
   const rights = ordered.flatMap(([, es]) => es.map(e => e.x + e.w)).sort((a, b) => a - b);
   const pick = (arr, q) => arr.length ? arr[Math.min(arr.length - 1, Math.floor(arr.length * q))] : 0;
   const blockX0 = Math.max(0, pick(lefts, 0.02) - 2), blockX1 = Math.min(pageWidth, pick(rights, 0.98) + 2);
-  let gutter = blockX1 - blockX0 > pageWidth * 0.3 ? gutterIn(ordered, blockX0, blockX1) : null;
-  if (gutter === null) gutter = settle(ordered, findGutter(ordered, pageWidth));
-  // Read Aloud 2: a page whose own evidence is too thin (a chapter opener with a title and a quote across the
-  // middle, columns on their own line grids) borrows the gap the book's other pages use, when this page has
-  // plenty of lines wholly on each side of it.
+  // A row with one piece of text across the middle of the block (a one-column preface above the columns, a
+  // heading, a centred title) can never be a column row, and it only hides the gap: the finder sees the rows
+  // that could be columns. A page that is all one column has few such rows, and they fail the finder's test
+  // that both sides carry text.
+  const bw = blockX1 - blockX0, cx = (blockX0 + blockX1) / 2;
+  const acrossMiddle = ([, es]) => es.some(e => e.x <= cx - bw * 0.15 && e.x + e.w >= cx + bw * 0.15);
+  const colRows = ordered.filter(r => !acrossMiddle(r));
+  // Every way of finding the gap gives a candidate: the finder on the column rows, on all rows, on the sheet,
+  // from the first one-sided row down (a paper's title block hides the columns below it), and the gaps the
+  // book's other pages use (left-hand and right-hand pages have mirrored margins, so there are two). Each
+  // candidate is scored on this page: the rows it splits cleanly (text on both sides, a gap at it) minus the
+  // rows whose text runs across it. The best wins; a page splits only when at least three rows split cleanly
+  // and no more than twice that many cross. A vote on the page alone failed on a page with a one-column
+  // preface above the columns, and on pages with few column rows and figure captions across the gap.
   const known = doc.__gutters || (doc.__gutters = new Map());
-  if (gutter === null && known.size) {
-    const usual = [...known.entries()].sort((a, b) => b[1] - a[1])[0][0];
-    const side = (fits) => ordered.filter(([, es]) => es.every(fits) && es.map(e => e.item.str).join('').trim().length >= 10).length;
-    if (side(e => e.x + e.w <= usual + 2) >= 5 && side(e => e.x >= usual - 2) >= 5) gutter = settle(ordered, usual);
+  // The page's own candidates, best first: the finder on the column rows, on all rows, on the sheet, and from
+  // the first one-sided row down (a paper's title block hides the columns below it).
+  const own = [];
+  const consider = (g) => { if (g !== null && g !== undefined && Number.isFinite(g)) own.push(g); };
+  if (bw > pageWidth * 0.3) {
+    if (colRows.length >= 6 && colRows.length < ordered.length) consider(gutterIn(colRows, blockX0, blockX1));
+    consider(gutterIn(ordered, blockX0, blockX1));
   }
-  if (gutter === null) {
-    // Read Aloud 2: a paper's first page opens with a centred title, author and address block that runs across
-    // the middle, and that hides the two columns below it. Look again from the first real line that stays on
-    // one side of the middle: all its words left of it, or all right (the block above is then read first).
+  consider(settle(ordered, findGutter(ordered, pageWidth)));
+  {
     const mid = (blockX0 + blockX1) / 2;
-    // A scanned page may break that block into pieces that sit on one side, so try each such line in turn.
     const oneSide = ([, es]) => es.map(e => e.item.str).join('').trim().length >= 15
       && (es.every(e => e.x + e.w <= mid) || es.every(e => e.x >= mid));
-    for (let k = 1; k < ordered.length * 0.6 && gutter === null; k++) {
-      if (oneSide(ordered[k])) gutter = gutterIn(ordered.slice(k), blockX0, blockX1) ?? findGutter(ordered.slice(k), pageWidth);
+    for (let k = 1, found = false; k < ordered.length * 0.6 && !found; k++) {
+      if (oneSide(ordered[k])) { const g = gutterIn(ordered.slice(k), blockX0, blockX1) ?? findGutter(ordered.slice(k), pageWidth); if (g !== null) { consider(g); found = true; } }
     }
   }
+  // Rows split by x: text on both sides and a gap at x. In real columns those rows line up: the left column
+  // ends at one x in every row, or the right column starts at one x (a justified column does both). Word gaps
+  // in one-column text that happen to fall at x do not line up. A candidate passes when at least two split
+  // rows line up and they are a fair share of all the split rows.
+  const splitRows = (x) => {
+    const out = [];
+    for (const [, es] of ordered) {
+      for (let i = 1; i < es.length; i++) {
+        const end = es[i - 1].x + es[i - 1].w, start = es[i].x;
+        if (end <= x + 1 && start >= x - 1 && es.slice(0, i).map(q => q.item.str).join('').trim().length >= 3
+            && es.slice(i).map(q => q.item.str).join('').trim().length >= 3) { out.push([end, start]); break; }
+      }
+    }
+    return out;
+  };
+  const aligned = (rows) => {
+    if (rows.length < 2) return 0;
+    const modal = (vals) => { let best = 0; for (const v of vals) best = Math.max(best, vals.filter(w => Math.abs(w - v) <= 2).length); return best; };
+    return Math.max(modal(rows.map(r => r[0])), modal(rows.map(r => r[1])));
+  };
+  const crossAt = (x) => ordered.filter(([, es]) => es.some(e => e.x < x - 1 && e.x + e.w > x + 1)).length;
+  // Word gaps are narrow; a column gap is at least 1.5% of the page wide (the finder's own limit), in most
+  // of the split rows. With that, a ragged table (few rows lined up, many split) still passes.
+  const minGap = Math.max(3, pageWidth * 0.015);
+  const judge = (g) => {
+    const x = settle(ordered, g); const rows = splitRows(x); const lined = aligned(rows);
+    const widths = rows.map(r => r[1] - r[0]).sort((a, b) => a - b); const wide = widths.length ? widths[Math.floor(widths.length / 2)] >= minGap : false;
+    return { x, split: rows.length, lined, cross: crossAt(x), ok: lined >= 2 && wide && (lined >= rows.length * 0.4 || rows.length >= 6) };
+  };
+  const scores = [];
+  let gutter = null;
+  for (const g of own) { const j = judge(g); scores.push(['own', Math.round(g), j.split, j.lined, j.cross]); if (j.ok) { gutter = j.x; break; } }
+  // The page's own finder found nothing sound: the gaps the book's other pages use are tried (left-hand and
+  // right-hand pages have mirrored margins, so there are two), and the one with most lined-up rows is taken.
+  if (gutter === null) {
+    let best = null;
+    for (const [g, count] of known) {
+      const j = judge(g); scores.push(['known', g, j.split, j.lined, j.cross]);
+      if (!j.ok) continue;
+      if (!best || j.lined > best.lined || (j.lined === best.lined && (j.cross < best.cross || (j.cross === best.cross && count > best.count)))) best = { ...j, count };
+    }
+    if (best) gutter = best.x;
+  }
+  if (globalThis.RA2_DEBUG) console.log('gutter', pageNumber, 'block', Math.round(blockX0), Math.round(blockX1), 'colRows', colRows.length, 'of', ordered.length, 'chosen', gutter === null ? 'none' : Math.round(gutter), JSON.stringify(scores));
 
   const makeLine = (y, entries) => {
     const tokens = [];
@@ -221,7 +274,7 @@ export async function readPage(doc, pageNumber) {
   // Deliberately NOT calling page.cleanup(): pdf.js hands the same page proxy
   // to the viewer, and cleaning it up mid-render makes render() hang forever.
   const split = dropPageFurniture(lines.filter(l => l.text));
-  return { page: pageNumber, lines: split.lines, furniture: split.furniture };
+  return { page: pageNumber, lines: split.lines, furniture: split.furniture, gutter };
 }
 
 /**
