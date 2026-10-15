@@ -97,7 +97,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
     if (String(getSelection()).trim()) return;
     const hit = [...els.pages.querySelectorAll('.mark-box')].find((b) => {
       const r = b.getBoundingClientRect();
-      return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top - 2 && e.clientY <= r.bottom + 2;
+      return e.clientX >= r.left - 6 && e.clientX <= r.right + 6 && e.clientY >= r.top - 6 && e.clientY <= r.bottom + 6;  // a generous target
     });
     if (!hit) { markBar.hidden = true; return; }
     const n = notes.find((x) => x.id === hit.dataset.id);
@@ -125,7 +125,8 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
   bar.className = 'selbar'; bar.hidden = true;
   document.body.appendChild(bar);
   function paintBar() {
-    bar.innerHTML = COLORS.map((c) => `<button type="button" data-c="${c}"><span class="dot ${c}"></span>${esc(names[c])}</button>`).join('');
+    bar.innerHTML = COLORS.map((c) => `<button type="button" data-c="${c}"><span class="dot ${c}"></span>${esc(names[c])}</button>`).join('')
+      + '<button type="button" data-c="remove">✕ Remove underlines</button>';
   }
   const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -173,7 +174,13 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
   bar.addEventListener('mousedown', (e) => e.preventDefault());  // keep the selection while clicking the bar
   bar.addEventListener('click', (e) => {
     const b = e.target.closest('button[data-c]'); if (!b) return;
-    add(selectionSegs(), b.dataset.c);
+    if (b.dataset.c === 'remove') {  // every underline that touches the selected text goes, however roughly it was selected
+      const sel = selectionSegs();
+      const touches = (n) => n.segs.some((g) => { const si = where(g); return sel.some((s) => s.si === si && s.a < g.b && g.a < s.b); });
+      const before = notes.length;
+      notes = notes.filter((n) => !touches(n));
+      if (notes.length !== before) { write(); draw(); }
+    } else add(selectionSegs(), b.dataset.c);
     getSelection().removeAllRanges(); bar.hidden = true;
   });
   document.addEventListener('mousedown', (e) => { if (!bar.contains(e.target)) bar.hidden = true; });

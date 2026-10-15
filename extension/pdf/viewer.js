@@ -325,7 +325,8 @@ export class PdfViewer {
 
     // Follow the word, not the block. Scrolling to the start of a block leaves
     // the highlight to wander off-screen halfway through a long paragraph.
-    if (firstBox) this.keepInView(firstBox);
+    if (firstBox) this.lastWordBox = firstBox;
+    if (firstBox && this.follow !== false) this.keepInView(firstBox);  // Read Aloud 2: not while you scroll away
   }
 
   /** Nudges the scroller only when the target has drifted out of a comfortable band. */
@@ -410,6 +411,7 @@ export class PdfViewer {
    * Underline the glyphs a sentence covers and keep them on screen.
    */
   async highlight(spans, { follow = true } = {}) {
+    follow = follow && this.follow !== false;  // Read Aloud 2: you scrolled away: stay where you are
     this.clearHighlight();
     if (!spans || !spans.length) return;
     this.highlighted = spans;

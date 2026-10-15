@@ -243,6 +243,7 @@ function wordPartsAt(sentence, charIndex, charLength) {
 
 function play() {
   if (!state.sentences.length) return;
+  viewer.follow = true; document.getElementById('findBtn')?.classList.remove('away');  // Read Aloud 2: Play follows the voice
   // Read Aloud 2: after a pause, go on from the word you paused on, not from the top of the paragraph
   if (state.resumeAt && state.resumeAt.index === state.index && !state.from) {
     const text = state.sentences[state.index].text;
@@ -753,6 +754,21 @@ async function requestPersistentStorage() {
 }
 
 notesUI = setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId: LIB_ID });
+
+// Read Aloud 2: scroll freely while it reads. Scrolling yourself stops the page from following the voice;
+// the target button in the player takes you back to the word being read and follows again.
+const findBtn = document.getElementById('findBtn');
+const leaveVoice = () => { if (state.playing && viewer.follow !== false) { viewer.follow = false; findBtn.classList.add('away'); } };
+els.scroller.addEventListener('wheel', leaveVoice, { passive: true });
+els.scroller.addEventListener('touchmove', leaveVoice, { passive: true });
+els.scroller.addEventListener('pointerdown', (e) => { if (e.offsetX > els.scroller.clientWidth) leaveVoice(); });  // the scroll bar
+document.addEventListener('keydown', (e) => { if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key) && !e.target.matches('input, select, textarea')) leaveVoice(); });
+function followVoice() {
+  viewer.follow = true; findBtn.classList.remove('away');
+  if (viewer.lastWordBox && viewer.lastWordBox.isConnected) viewer.lastWordBox.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  else render();
+}
+findBtn.addEventListener('click', followVoice);
 
 (async function boot() {
   requestPersistentStorage();
