@@ -32,6 +32,8 @@ const ABBREV = [
 const NOISE = [
   /\s*\[\s*\d+(\s*[-–,;]\s*\d+)*\s*\]/g,
   /\s*\((?:see\s+|e\.g\.,?\s+|cf\.\s+)?[A-Z][A-Za-z'’-]+(?:\s+(?:et\s+al\.?|and|&|,)\s*[A-Z]?[A-Za-z'’-]*)*,?\s*(?:19|20)\d{2}[a-z]?(?:\s*[;,]\s*[^()]{0,60}?(?:19|20)\d{2}[a-z]?)*\)/g,
+  // Read Aloud 2: figure and table references in brackets: "(Fig. 14)", "(Figs. 12, 13 and 14)", "(see Table 2-1)"
+  /\s*\((?:see\s+)?(?:Figs?|Figures?|Tables?|Plates?|Diagrams?)\.?\s*[\w.-]+(?:\s*(?:,|and|&|–|-|to)\s*[\w.-]+)*\)/gi,
   /https?:\/\/\S+/g,
   /\bdoi:\s*\S+/gi,
   MARKER_RUN,
@@ -138,7 +140,19 @@ export async function readPage(doc, pageNumber) {
           });
         }
       }
-      tokens.push({ str: e.item.str, page: pageNumber, item: e.index });
+      // Read Aloud 2: the same fake bold, cut into overlapping pieces ("the l" "la" "an" "nd" "d (Figs" for
+      // "the land (Figs"): letters that start inside the previous piece and repeat its last letters are skipped.
+      let skip = 0;
+      if (i > 0) {
+        const prev = entries[i - 1];
+        const overlap = (prev.x + prev.w) - e.x;
+        const charW = e.w / Math.max(1, e.item.str.length);
+        if (overlap > 1 && charW > 0) {
+          const k = Math.min(e.item.str.length, Math.round(overlap / charW));
+          if (k > 0 && e.item.str.slice(0, k) === prev.item.str.slice(-k)) skip = k;
+        }
+      }
+      if (skip < e.item.str.length) tokens.push({ str: e.item.str.slice(skip), page: pageNumber, item: e.index, offsetBase: skip || undefined });
     });
     return {
       y,
@@ -740,7 +754,7 @@ class TracedText {
     let text = this.chars.join('');
     const dead = new Uint8Array(text.length);
 
-    const patterns = stripCitations ? NOISE : NOISE.slice(2);
+    const patterns = stripCitations ? NOISE : NOISE.slice(3);  // the first three are citations
     for (const re of patterns) {
       re.lastIndex = 0;
       let m;
