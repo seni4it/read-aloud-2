@@ -10,6 +10,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
   let filter = 'all';
   let names = { ...DEFAULT_NAMES, ...(load('ra2.groups') || {}) };
   let lastColor = load('ra2.lastColor') || 'yellow';
+  let showMarks = load('ra2.showMarks') !== false;  // the switch in the Highlights tab
   const $ = (id) => document.getElementById(id);
 
   function load(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }
@@ -50,7 +51,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
       }
       marks.push({ id: n.id, color: n.color, parts });
     }
-    viewer.setMarks(marks);
+    viewer.setMarks(showMarks ? marks : []);
     list();
   }
 
@@ -58,6 +59,8 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
     if (!segs.length) return;
     const text = segs.map((g) => state.sentences[g.si].text.slice(g.a, g.b)).join(' ').replace(/\s+/g, ' ').trim();
     if (!text) return;
+    // the same text saved twice (the marker pressed twice on one sentence) is kept once
+    if (notes.some((n) => n.segs.length === segs.length && n.segs.every((g, i) => g.si === segs[i].si && g.a === segs[i].a && g.b === segs[i].b))) return;
     const first = state.sentences[segs[0].si];
     const own = first.charOwners && first.charOwners[segs[0].a];
     notes.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), color, text, page: own ? own.page : 0, t: Date.now(),
@@ -144,7 +147,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
     const box = $('notes');
     const shown = notes.filter((n) => filter === 'all' || n.color === filter);
     $('notesTab').textContent = `Highlights (${notes.length})`;
-    box.innerHTML = `<div class="note-filter"><button type="button" data-f="all" class="${filter === 'all' ? 'on' : ''}">All</button>${
+    box.innerHTML = `<label class="show-marks"><input type="checkbox" id="showMarks" ${showMarks ? 'checked' : ''}> Show highlights on the page</label><div class="note-filter"><button type="button" data-f="all" class="${filter === 'all' ? 'on' : ''}">All</button>${
       COLORS.map((c) => `<button type="button" data-f="${c}" class="${filter === c ? 'on' : ''}"><span class="dot ${c}"></span>${esc(names[c])}</button>`).join('')
     }</div>`;
     if (!shown.length) {
@@ -170,6 +173,9 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
     }
     box.insertAdjacentHTML('beforeend', '<button type="button" class="rename" id="renameGroups">Rename groups</button>');
   }
+  $('notes').addEventListener('change', (e) => {
+    if (e.target.id === 'showMarks') { showMarks = e.target.checked; keep('ra2.showMarks', showMarks); draw(); }
+  });
   $('notes').addEventListener('click', (e) => {
     const f = e.target.closest('[data-f]');
     if (f) { filter = f.dataset.f; list(); return; }
@@ -195,6 +201,11 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
   }
 
   return {
-    async reload() { notes = await read(); draw(); },  // after a document is read (or read again)
+    async reload() {  // after a document is read (or read again); exact duplicates are kept once
+      const seen = new Set(), all = await read();
+      notes = all.filter((n) => { const k = JSON.stringify(n.segs.map((g) => [g.si, g.a, g.b])); return !seen.has(k) && seen.add(k); });
+      if (notes.length !== all.length) write();
+      draw();
+    },
   };
 }

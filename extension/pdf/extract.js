@@ -172,11 +172,13 @@ export async function readPage(doc, pageNumber) {
     let left = [];
     let right = [];
     let inset = [];  // a box across both columns (a pulled quote) that the columns run past
+    let insetSure = false;
     const flushBand = () => {
       out.push(...order(left, x0, g, depth + 1), ...order(right, g, x1, depth + 1), ...inset);
       left = [];
       right = [];
       inset = [];
+      insetSure = false;
     };
     // Read Aloud 2: the left column stops mid-sentence above a full-width block ("Consequently, endodontists" /
     // quote / "often needlessly spend"): the columns carry on below it, so read each column whole and the block
@@ -191,10 +193,21 @@ export async function readPage(doc, pageNumber) {
       const l = entries.filter(e => e.x + e.w / 2 < g);
       const r = entries.filter(e => e.x + e.w / 2 >= g);
       if (crosses || (l.length && r.length && !hasGutterGap(entries, g))) {
-        if (inset.length || midSentence()) { inset.push(makeLine(y, entries)); continue; }
+        if (inset.length || midSentence()) { inset.push({ ...makeLine(y, entries), inset: true }); continue; }
         flushBand();
         out.push(makeLine(y, entries));
         continue;
+      }
+      // A box only if the left column goes on below it with the same sentence (a small first letter). A heading
+      // such as "References" followed by a new list is a real break: read it where it is, and do not skip it.
+      if (inset.length && !insetSure && l.length) {
+        if (/^[a-z]/.test(makeLine(y, l).text.trim())) insetSure = true;
+        else {
+          const real = inset.map(({ inset: _, ...line }) => line);
+          inset = [];
+          flushBand();
+          out.push(...real);
+        }
       }
       if (l.length) left.push([y, l]);
       if (r.length) right.push([y, r]);
@@ -1003,6 +1016,8 @@ export class DocumentBuilder {
       const RUNNING = /^\d{1,4}\s+\D.{0,70}$|^.{1,70}\D\s+\d{1,4}$|^\d{1,4}$/;
       lines = lines.filter(l => !((l.y >= top - 6 || l.y <= bottom + 6) && l.text.length < 80 && RUNNING.test(l.text.trim())));
     }
+    // Read Aloud 2: a quote box between the columns, on request ("Skip boxed quotes")
+    if (this.options.skipInsets) lines = lines.filter(l => !l.inset);
     // Read Aloud 2: footnotes and figure sources (small print under all the body text) are citations
     if (this.options.stripCitations && this.bodySize > 0) {
       const body = lines.filter(l => l.size >= this.bodySize * 0.95 && l.text.length > 20);

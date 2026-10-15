@@ -31,7 +31,7 @@ const els = {
   toc: $('toc'), sidebar: $('sidebar'), tocBtn: $('tocBtn'), closeSidebar: $('closeSidebar'),
   parseBar: $('parseBar'), parseFill: $('parseFill'), parseText: $('parseText'),
   optCitations: $('optCitations'), optCaptions: $('optCaptions'), optRefs: $('optRefs'),
-  optFrontMatter: $('optFrontMatter'),
+  optFrontMatter: $('optFrontMatter'), optInsets: $('optInsets'),
   reparseBtn: $('reparseBtn'), dropVeil: $('dropVeil'),
   engineSel: $('engineSel'), engineStatus: $('engineStatus'), previewBtn: $('previewBtn'),
   zoomIn: $('zoomIn'), zoomOut: $('zoomOut'), zoomLevel: $('zoomLevel')
@@ -515,6 +515,7 @@ async function parseDocument() {
     {
       stripCitations: els.optCitations.checked,
       stripCaptions: els.optCaptions.checked,
+      skipInsets: els.optInsets.checked,  // Read Aloud 2
       stopAtReferences: els.optRefs.checked
     },
     async (n, total, b) => {
@@ -633,7 +634,9 @@ els.previewBtn.addEventListener('click', async () => {
   });
 });
 
-for (const el of [els.optCitations, els.optCaptions, els.optRefs, els.optFrontMatter]) {
+try { els.optInsets.checked = localStorage.getItem('ra2.skipInsets') === '1'; } catch { /* storage blocked */ }
+els.optInsets.addEventListener('change', () => { try { localStorage.setItem('ra2.skipInsets', els.optInsets.checked ? '1' : '0'); } catch {} });
+for (const el of [els.optCitations, els.optCaptions, els.optRefs, els.optFrontMatter, els.optInsets]) {
   el.addEventListener('change', () => { if (state.doc) parseDocument(); });
 }
 els.reparseBtn.addEventListener('click', () => { if (state.doc) parseDocument(); });
