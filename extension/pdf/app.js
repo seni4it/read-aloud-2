@@ -4,6 +4,7 @@ import { PdfViewer } from './viewer.js';
 import { SystemEngine, ServerEngine } from './tts.js';
 import { loadLexicon, repairStats } from './lexicon.js';
 import { withOcr } from './ocr.js';
+import { setupNotes } from './notes.js';
 
 // Hand pdf.js an explicit module worker. Left to its own auto-setup it was
 // silently falling back to a main-thread "fake worker", where render() never
@@ -37,6 +38,7 @@ const els = {
 };
 
 const viewer = window.__viewer = new PdfViewer(pdfjsLib, els.pages);
+let notesUI = { reload() {} };  // Read Aloud 2: highlights, set up below once the page is ready
 
 // Exposed for debugging in the console: window.__pr.sentences etc.
 const state = window.__pr = {
@@ -543,6 +545,7 @@ async function parseDocument() {
   state.sentences = builder.sentences;
   state.sections = (await outlineSections(builder.sentences)) || builder.sections;
   buildClickIndex();
+  notesUI.reload();  // Read Aloud 2: this document's highlights
   renderToc();
 
   // Skip the title/author front matter on first open: start at the Abstract
@@ -655,6 +658,7 @@ els.closeSidebar.addEventListener('click', () => { els.sidebar.hidden = true; })
 
 // Click any word on the page to start reading from there.
 els.pages.addEventListener('click', e => {
+  if (String(getSelection()).trim()) return;  // Read Aloud 2: selecting text (to highlight it) does not start reading
   const span = e.target.closest('.text-layer span');
   if (!span) return;
   const pageEl = span.closest('.page');
@@ -744,6 +748,8 @@ async function requestPersistentStorage() {
     }
   } catch { /* not supported */ }
 }
+
+notesUI = setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId: LIB_ID });
 
 (async function boot() {
   requestPersistentStorage();

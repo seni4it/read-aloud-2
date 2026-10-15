@@ -40,10 +40,11 @@
 <main class="layout">
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-head">
-      <span>Contents</span>
+      <div class="side-tabs"><button type="button" id="contentsTab" class="on">Contents</button><button type="button" id="notesTab">Highlights (0)</button></div>
       <button class="icon-btn" id="closeSidebar" title="Hide contents" aria-label="Hide contents">×</button>
     </div>
     <nav class="toc" id="toc"></nav>
+    <div class="notes" id="notes" hidden></div>
     <div class="opts">
       <label class="opt"><input type="checkbox" id="optCitations" checked><span>Skip citations</span></label>
       <label class="opt"><input type="checkbox" id="optCaptions" checked><span>Skip figure captions</span></label>
@@ -75,6 +76,7 @@
       <span class="play-icon" id="playIcon"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg></span>
     </button>
     <button class="icon-btn" id="nextBtn" title="Next sentence" aria-label="Next sentence"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z" fill="currentColor"/></svg></button>
+    <button class="icon-btn" id="markBtn" title="Highlight the sentence being read" aria-label="Highlight the sentence being read"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M15.5 3.5l5 5L10 19H5v-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M3 22h18" stroke="#eab308" stroke-width="3" stroke-linecap="round"/></svg></button>
 
     <div class="scrub">
       <input type="range" id="seek" min="0" max="0" value="0" step="1" aria-label="Position in document">

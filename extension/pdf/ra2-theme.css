@@ -38,3 +38,35 @@
 .play-icon { display: grid; place-items: center; }
 .btn.ghost { background: transparent; color: var(--navy); box-shadow: inset 0 0 0 1px var(--line); }
 @media (prefers-color-scheme: dark) { .btn.ghost { color: #fff; } }
+
+/* Read Aloud 2: highlights (saved underlines), the selection bar and the Highlights list */
+.mark-box { position: absolute; pointer-events: none; z-index: 1; border-radius: 2px; mix-blend-mode: multiply; }
+.mark-box[data-color="yellow"] { background: rgba(250, 204, 21, .32); box-shadow: inset 0 -3px 0 #eab308; }
+.mark-box[data-color="green"] { background: rgba(34, 197, 94, .22); box-shadow: inset 0 -3px 0 #16a34a; }
+.mark-box[data-color="blue"] { background: rgba(59, 130, 246, .2); box-shadow: inset 0 -3px 0 #2563eb; }
+.mark-box[data-color="pink"] { background: rgba(236, 72, 153, .2); box-shadow: inset 0 -3px 0 #db2777; }
+@media (prefers-color-scheme: dark) { .mark-box { mix-blend-mode: screen; } }
+.dot { width: 14px; height: 14px; border-radius: 50%; flex: none; display: inline-block; }
+.dot.yellow { background: #eab308; } .dot.green { background: #16a34a; } .dot.blue { background: #2563eb; } .dot.pink { background: #db2777; }
+.selbar { position: fixed; z-index: 30; display: flex; gap: 4px; padding: 6px; background: var(--navy); border-radius: 999px; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+.selbar[hidden] { display: none; }
+.selbar button { all: unset; cursor: pointer; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; color: #fff; font: 600 13px/1 -apple-system, sans-serif; }
+.selbar button:hover { background: rgba(255,255,255,.15); }
+.side-tabs { display: flex; gap: 4px; }
+.side-tabs button { all: unset; cursor: pointer; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.side-tabs button.on { background: var(--accent-soft); color: var(--ink); }
+.notes { flex: 1 1 auto; overflow: auto; padding: 4px 12px 12px; }
+.notes[hidden] { display: none; }
+.note-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.note-filter button { all: unset; cursor: pointer; display: flex; align-items: center; gap: 5px; padding: 4px 9px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; }
+.note-filter button.on { border-color: var(--ink); font-weight: 700; }
+.note { position: relative; display: block; width: 100%; text-align: left; padding: 9px 30px 9px 12px; margin: 0 0 8px; border: 1px solid var(--line); border-left: 4px solid; border-radius: 8px; background: var(--panel); color: var(--ink); font: inherit; font-size: 13.5px; line-height: 1.45; cursor: pointer; }
+.note:hover { border-color: var(--accent); }
+.note[data-color="yellow"] { border-left-color: #eab308; } .note[data-color="green"] { border-left-color: #16a34a; }
+.note[data-color="blue"] { border-left-color: #2563eb; } .note[data-color="pink"] { border-left-color: #db2777; }
+.note small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
+.note .del { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer; font-size: 15px; }
+.note .del:hover { background: var(--line); color: var(--ink); }
+.notes-empty { color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+.rename { all: unset; cursor: pointer; font-size: 12px; color: var(--muted); text-decoration: underline; }
+#markBtn.flash { color: #eab308; background: rgba(255,255,255,.14); }

@@ -194,6 +194,7 @@ export class PdfViewer {
       entry.rendered = true;
 
       this.reapplyHighlight(n);
+      this.drawMarks(n);  // Read Aloud 2: saved highlights
     } catch (err) {
       console.error('render page ' + n, err);
     } finally {
@@ -339,6 +340,46 @@ export class PdfViewer {
       top: box.top - view.top - view.height * 0.35,
       behavior: 'smooth'
     });
+  }
+
+  /**
+   * Read Aloud 2: saved highlights, drawn as a coloured underline under the text on every rendered page.
+   * marks: [{ id, color, parts: [{ page, item, start, end }] }]
+   */
+  setMarks(marks) {
+    this.marks = marks || [];
+    for (const [n, entry] of this.pages) if (entry.rendered) this.drawMarks(n);
+  }
+
+  drawMarks(n) {
+    const entry = this.pages.get(n);
+    if (!entry || !entry.rendered) return;
+    entry.el.querySelectorAll('.mark-box').forEach(b => b.remove());
+    const hostBox = entry.el.getBoundingClientRect();
+    for (const mark of this.marks || []) {
+      for (const part of mark.parts) {
+        if (part.page !== n) continue;
+        const span = entry.spans.get(part.item);
+        if (!span || !span.firstChild) continue;
+        const len = (span.firstChild.textContent || '').length;
+        const range = document.createRange();
+        try {
+          range.setStart(span.firstChild, Math.min(part.start, len));
+          range.setEnd(span.firstChild, Math.min(part.end, len));
+        } catch { continue; }
+        for (const rect of range.getClientRects()) {
+          if (rect.width < 0.5) continue;
+          const box = document.createElement('div');
+          box.className = 'mark-box';
+          box.dataset.color = mark.color;
+          box.style.left = (rect.left - hostBox.left) + 'px';
+          box.style.top = (rect.top - hostBox.top) + 'px';
+          box.style.width = rect.width + 'px';
+          box.style.height = rect.height + 'px';
+          entry.el.appendChild(box);
+        }
+      }
+    }
   }
 
   clearWord() {

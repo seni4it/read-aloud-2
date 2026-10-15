@@ -13,6 +13,7 @@ Desktop reader (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
   GET  /library.json        the books in ~/Documents/Read Aloud Library (PDFs dropped there in Finder are picked up)
   GET  /library/file/<id>   one book        GET /library/cover/<id>   its cover (made by macOS Quick Look)
   POST /library/add?name=   add a PDF (body)    POST /library/<id>/opened    POST /library/<id>/remove (to the Trash)
+  GET/POST /library/<id>/notes   the book's highlights (JSON), kept in .notes/<id>.json
   GET /speak?text=&voice=   one sentence as a WAV file (24 kHz); recent ones are kept, so replay and read-ahead are instant
   GET /times?text=&voice=   when each word of that sentence starts, in seconds of the WAV (Kokoro's own timings), as
                             {"starts": [...]}, one per space-separated word; null where Kokoro gave none
@@ -318,6 +319,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 idx = lib_index()
             books = [{'id': k, **b, 'cover': os.path.exists(os.path.join(COVERS, k + '.png'))} for k, b in idx.items()]
             return self.reply(json.dumps(books, ensure_ascii=False).encode(), 'application/json')
+        m = re.match(r'^/library/([0-9a-f]{12})/notes$', url.path)
+        if m:  # the book's highlights (Read Aloud 2 reader)
+            path = os.path.join(LIB, '.notes', m.group(1) + '.json')
+            body = open(path, 'rb').read() if os.path.exists(path) else b'[]'
+            return self.reply(body, 'application/json')
         m = re.match(r'^/library/(file|cover)/([0-9a-f]{12})$', url.path)
         if m:
             b = lib_index().get(m.group(2))
@@ -381,9 +387,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     return
                 body = json.dumps({'id': lib_add(dict(urllib.parse.parse_qsl(url.query)).get('name', ''), data)}).encode()
             else:
-                m = re.match(r'^/library/([0-9a-f]{12})/(opened|remove)$', url.path)
+                m = re.match(r'^/library/([0-9a-f]{12})/(opened|remove|notes)$', url.path)
                 if not m:
                     self.send_error(404, 'Not found')
+                    return
+                if m.group(2) == 'notes':  # highlights: kept next to the book, written whole each time
+                    data = json.loads(self.rfile.read(size) or b'[]')
+                    if not isinstance(data, list):
+                        raise ValueError('notes must be a list')
+                    os.makedirs(os.path.join(LIB, '.notes'), exist_ok=True)
+                    tmp = os.path.join(LIB, '.notes', m.group(1) + '.json.tmp')
+                    with open(tmp, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False)
+                    os.replace(tmp, os.path.join(LIB, '.notes', m.group(1) + '.json'))
+                    self.copyfile(self.reply(b'{}', 'application/json'), self.wfile)
                     return
                 with _lib:
                     idx = lib_index()

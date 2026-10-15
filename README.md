@@ -64,6 +64,10 @@ server when needed and opens your library in its own window (Chrome, without tab
   PDFs you copy into that folder yourself appear too.
 - Each book shows its cover, how far you have read, and when. Search, sort, remove (the file goes to the Trash).
 - Click a book to read it in the same PDF reader as the add-on, with **← Library** to go back.
+- **Highlights:** select text on the page and choose a group (Important, Idea, Question, Review; rename them in the
+  list), or press the marker button in the player while it reads to keep the sentence being read. The
+  **Highlights** tab beside Contents lists them by group; click one to go to it. Library books keep them in
+  `Documents/Read Aloud Library/.notes/<id>.json`; PDFs opened in Chrome keep them in the browser.
 
 ## Start the voices at login
 
