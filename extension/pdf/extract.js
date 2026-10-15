@@ -1055,6 +1055,8 @@ export class DocumentBuilder {
       const line = lines[i];
       const text = line.text;
       const key = text.replace(/\d+/g, '#').toLowerCase().trim();
+      // Read Aloud 2: a quote box is its own paragraph: never glued to the column text before or after it
+      if (!!line.inset !== !!this.lastInset) { this.flush(); this.lastInset = !!line.inset; }
 
       if (this.repeated.has(key)) continue;
       if (isPageNumber(text)) continue;
