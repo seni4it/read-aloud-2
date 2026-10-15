@@ -231,8 +231,12 @@ export async function readPage(doc, pageNumber) {
         const overlap = (prev.x + prev.w) - e.x;
         const charW = e.w / Math.max(1, e.item.str.length);
         if (overlap > 1 && charW > 0) {
+          // the overlap in letters is a rough number ("ti" + "im": 3.2pt over 6.5pt a letter): the nearest
+          // counts that repeat the previous piece's last letters are tried, so "tiime" and "wwill" do not happen
           const k = Math.min(e.item.str.length, Math.round(overlap / charW));
-          if (k > 0 && e.item.str.slice(0, k) === prev.item.str.slice(-k)) skip = k;
+          for (const c of [k, k - 1, k + 1]) {
+            if (c > 0 && c <= e.item.str.length && c <= prev.item.str.length && e.item.str.slice(0, c) === prev.item.str.slice(-c)) { skip = c; break; }
+          }
         }
       }
       if (skip < e.item.str.length) tokens.push({ str: e.item.str.slice(skip), page: pageNumber, item: e.index, offsetBase: skip || undefined });

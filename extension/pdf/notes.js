@@ -191,6 +191,30 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
     }
     return segs.filter((g) => g.b > g.a);
   }
+  // Copy (Cmd+C) gives the reader's own text, not the PDF's raw text layer: the raw layer has no space at the end of a
+  // line ("filecannot"), a fake-bold word drawn twice ("OOnnccee aa ffiillee") and words run together. The reader's
+  // sentences have those repaired. Where the selection has no sentence (a caption that is skipped), the raw text is
+  // cleaned as far as it can be.
+  function undouble(t) {
+    return t.replace(/\S{4,}/g, (w) => {
+      if (w.length % 2) return w;
+      for (let i = 0; i < w.length; i += 2) if (w[i] !== w[i + 1]) return w;
+      let out = ''; for (let i = 0; i < w.length; i += 2) out += w[i];
+      return out;
+    });
+  }
+  document.addEventListener('copy', (e) => {
+    const sel = getSelection();
+    if (!sel.rangeCount || sel.isCollapsed) return;
+    const r = sel.getRangeAt(0);
+    if (!els.pages.contains(r.commonAncestorContainer)) return;  // text in the side bar copies as it is
+    const segs = selectionSegs();
+    let text = segs.map((g) => state.sentences[g.si].text.slice(g.a, g.b)).join(' ').replace(/\s+/g, ' ').trim();
+    if (!text) text = undouble(String(sel)).replace(/-\n(?=[a-z])/g, '').replace(/\s*\n\s*/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!text) return;
+    e.clipboardData.setData('text/plain', text);
+    e.preventDefault();
+  });
   els.pages.addEventListener('mouseup', () => setTimeout(() => {
     const sel = getSelection();
     if (!sel.rangeCount || sel.isCollapsed || !String(sel).trim()) { bar.hidden = true; return; }

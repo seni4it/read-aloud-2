@@ -278,9 +278,11 @@ export function repairSplit(a, b) {
   if (!/^[A-Za-z]+$/.test(a) || !/^[A-Za-z]+$/.test(b)) return null;
   if (a.length + b.length < 3 || a.length + b.length > 18) return null;
 
-  // Two ordinary words next to each other are just two words.
-  const aWord = lexicon.has(a.toLowerCase());
-  const bWord = lexicon.has(b.toLowerCase());
+  // Two ordinary words next to each other are just two words. The word list has no "a" and no "I", but
+  // they are words: "Once" + "a" was bridged to "Oncetta" (which the list does have).
+  const isWord = (w) => lexicon.has(w.toLowerCase()) || /^[aiAI]$/.test(w);
+  const aWord = isWord(a);
+  const bWord = isWord(b);
   if (aWord && bWord) return null;
 
   // The join has to be the only reading. "a" + "er" could take several
