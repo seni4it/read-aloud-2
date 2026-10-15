@@ -80,9 +80,45 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
     for (const m of t.slice(0, at).matchAll(/[.!?]["'”’)]?\s+/g)) a = m.index + m[0].length;
     const m = /[.!?]["'”’)]?(\s|$)/.exec(t.slice(at));
     const b = m ? at + m.index + m[0].trimEnd().length : t.length;
+    const same = notes.find((n) => n.segs.length === 1 && n.segs[0].si === state.index && n.segs[0].a === a && n.segs[0].b === b);
+    if (same) { remove(same); flash('Highlight removed'); return; }  // pressed again: take it off
     add([{ si: state.index, a, b }], lastColor);
     flash('Highlighted');
   }
+
+  function remove(n) { notes = notes.filter((x) => x !== n); write(); draw(); }
+
+  // ---------- a click on an underline: a small bar to remove it or move it to another group ----------
+  const markBar = document.createElement('div');
+  markBar.className = 'selbar'; markBar.hidden = true;
+  document.body.appendChild(markBar);
+  let markHide = null;
+  els.pages.addEventListener('click', (e) => {
+    if (String(getSelection()).trim()) return;
+    const hit = [...els.pages.querySelectorAll('.mark-box')].find((b) => {
+      const r = b.getBoundingClientRect();
+      return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top - 2 && e.clientY <= r.bottom + 2;
+    });
+    if (!hit) { markBar.hidden = true; return; }
+    const n = notes.find((x) => x.id === hit.dataset.id);
+    if (!n) return;
+    markBar.innerHTML = `<button type="button" data-act="remove">✕ Remove underline</button>` +
+      COLORS.filter((c) => c !== n.color).map((c) => `<button type="button" data-act="${c}"><span class="dot ${c}"></span>${esc(names[c])}</button>`).join('');
+    markBar.dataset.id = n.id;
+    markBar.hidden = false;
+    const r = hit.getBoundingClientRect();
+    markBar.style.left = Math.max(8, Math.min(innerWidth - markBar.offsetWidth - 8, r.left)) + 'px';
+    markBar.style.top = Math.max(8, r.top - 50) + 'px';
+    clearTimeout(markHide); markHide = setTimeout(() => { markBar.hidden = true; }, 6000);
+  });
+  markBar.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-act]'); if (!b) return;
+    const n = notes.find((x) => x.id === markBar.dataset.id);
+    if (n && b.dataset.act === 'remove') remove(n);
+    else if (n) { n.color = b.dataset.act; write(); draw(); }
+    markBar.hidden = true;
+  });
+  document.addEventListener('mousedown', (e) => { if (!markBar.contains(e.target) && !els.pages.contains(e.target)) markBar.hidden = true; });
 
   // ---------- 2. text selected with the mouse: a small bar with the groups ----------
   const bar = document.createElement('div');
@@ -159,9 +195,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
       b.type = 'button'; b.className = 'note'; b.dataset.color = n.color;
       b.innerHTML = `${esc(n.text.length > 220 ? n.text.slice(0, 220) + '…' : n.text)}<small>${esc(names[n.color])} · page ${n.page}</small><span class="del" role="button" title="Delete this highlight" aria-label="Delete this highlight">×</span>`;
       b.addEventListener('click', (e) => {
-        if (e.target.closest('.del')) {
-          notes = notes.filter((x) => x !== n); write(); draw(); return;
-        }
+        if (e.target.closest('.del')) { remove(n); return; }
         const si = where(n.segs[0]);
         if (si < 0) return;
         jumpTo(si, { resume: false });

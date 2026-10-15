@@ -372,6 +372,7 @@ export class PdfViewer {
           const box = document.createElement('div');
           box.className = 'mark-box';
           box.dataset.color = mark.color;
+          box.dataset.id = mark.id;
           box.style.left = (rect.left - hostBox.left) + 'px';
           box.style.top = (rect.top - hostBox.top) + 'px';
           box.style.width = rect.width + 'px';
