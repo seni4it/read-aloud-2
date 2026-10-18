@@ -111,12 +111,12 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
   function pauseReading() { rd.token++; rd.playing = false; voice.hush(); buttons(); }
   function finishReading() { rd.token++; rd.playing = false; rd.pos = 0; rd.id = ''; if (hl) hl.clear(); buttons(); }
   function buttons() {  // the Play / Pause labels, without redrawing the answers
-    const bar = $('askPlayer');
-    if (bar) {
-      bar.hidden = !rd.id;
-      const what = rd.id ? (rd.id[0] === 'c' ? 'Hostile check of answer ' : 'Answer ') + (Number(rd.id.slice(1)) + 1) : '';
-      bar.querySelector('.ap-what').textContent = what;
-      const pp = bar.querySelector('#apPlay');
+    const pl = $('askPlayer');
+    if (pl) {
+      pl.classList.toggle('idle', !rd.id);
+      const what = rd.id ? (rd.id[0] === 'c' ? 'Check of answer ' : 'Answer ') + (Number(rd.id.slice(1)) + 1) : 'Answers';
+      pl.querySelector('.ap-what').textContent = what;
+      const pp = pl.querySelector('#apPlay');
       pp.textContent = rd.playing ? ICON.pause : ICON.play;
       pp.setAttribute('aria-label', rd.playing ? 'Pause' : 'Play');
     }
@@ -139,9 +139,8 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
     el.innerHTML = extra(st.turns[i], i); buttons();
   }
   // the question box grows with what you type (up to half the panel), and keeps your words when the panel is redrawn
-  let draft = '';
-  function grow(q) { q.style.height = 'auto'; q.style.height = Math.max(130, Math.min(q.scrollHeight + 2, box.clientHeight * 0.5)) + 'px'; }
-  box.addEventListener('input', (e) => { if (e.target.id === 'askQ') { draft = e.target.value; grow(e.target); } });
+  let draft = '';  // kept for older callers
+  function grow(q) { q.style.height = 'auto'; q.style.height = Math.max(54, Math.min(q.scrollHeight + 2, innerHeight * 0.4)) + 'px'; }
   function paint() {
     if (rd.playing) pauseReading();
     rd.id = ''; rd.el = null; if (hl) hl.clear();
@@ -149,24 +148,28 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
     if (!st.claude) { box.innerHTML = '<p class="notes-empty">Claude Code was not found on this Mac. Install it, then open the book again.</p>'; return; }
     const turns = st.turns.map((t, i) => `<div class="turn"><p class="q">${esc(t.q)}<small>page ${esc(t.page)}${t.chapter ? ' · ' + esc(t.chapter) : ''}${t.sources ? ' · ' + esc(SOURCES[t.sources] || '') : ''}</small></p>
       <div class="a readable" data-id="a${i}">${format(t.a)}</div><div class="turn-extra" data-i="${i}">${extra(t, i)}</div></div>`).join('');
-    box.innerHTML = `<div class="ask-top">
-      <div class="ask-row"><select id="askModel" aria-label="Claude model">${Object.entries(MODELS).map(([k, v]) => `<option value="${k}" ${k === model ? 'selected' : ''}>${v}</option>`).join('')}</select>
-        <select id="askSources" aria-label="Sources">${Object.entries(SOURCES).map(([k, v]) => `<option value="${k}" ${k === sources ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
-      <label class="ask-opt"><input type="checkbox" id="askCheck" ${autoCheck ? 'checked' : ''}> Hostile check of every answer (a second Claude tries to prove the book parts wrong)</label>
-      <div class="note-tools"><button type="button" class="rename" id="askContinue">Continue in Claude (Terminal)</button> · <button type="button" class="rename" id="askConv">Open the whole conversation</button> · <button type="button" class="rename" id="askOpen">Open the book folder</button> · <button type="button" class="rename" id="askNew">New conversation</button></div></div>
-      <div class="turns" id="askTurns">${turns || '<p class="notes-empty">Ask about anything in this book. Claude answers from the book first and gives the pages. Select words on the page and press “Ask Claude” to ask about them. While an answer is read, click any word in it to read from there.</p>'}</div>
-      <div class="ask-player" id="askPlayer" hidden><span class="ap-what"></span>
-        <button type="button" id="apBack" title="Back to the start of the answer" aria-label="Back to the start">⏮</button>
-        <button type="button" id="apPlay" class="ap-pp" aria-label="Play">${ICON.play}</button>
-        <button type="button" id="apStop" title="Stop reading" aria-label="Stop reading">■</button></div>
+    box.innerHTML = `<div class="ask-links note-tools"><button type="button" class="rename" id="askContinue">Continue in Claude (Terminal)</button> · <button type="button" class="rename" id="askConv">Open the whole conversation</button> · <button type="button" class="rename" id="askOpen">Open the book folder</button> · <button type="button" class="rename" id="askNew">New conversation</button></div>
+      <div class="turns" id="askTurns">${turns || '<p class="notes-empty">Ask about anything in this book. The question box is in the bar at the bottom of the page. Claude answers from the book first and gives the pages. Select words on the page and press “Ask Claude” to ask about them. While an answer is read, click any word in it to read from there.</p>'}</div>
       ${busy ? `<p class="ask-busy" role="status">Claude is reading the book… <span id="askSecs">0</span> s</p>` : ''}
       ${note ? `<p class="kp-note" role="status">${esc(note)}</p>` : ''}
-      ${selection ? `<p class="ask-sel">About: “${esc(selection.length > 160 ? selection.slice(0, 160) + '…' : selection)}” <button type="button" class="rename" id="askNoSel">×</button></p>` : ''}
-      <textarea id="askQ" rows="5" placeholder="Your question. Type or dictate. Enter to ask, Shift+Enter for a new line." ${busy ? 'disabled' : ''}></textarea>
-      <button type="button" class="btn ask-go" id="askGo" ${busy ? 'disabled' : ''}>Ask Claude</button>`;
+      ${selection ? `<p class="ask-sel">About: “${esc(selection.length > 160 ? selection.slice(0, 160) + '…' : selection)}” <button type="button" class="rename" id="askNoSel">×</button></p>` : ''}`;
     const t = $('askTurns'); t.scrollTop = t.scrollHeight;
-    const q = $('askQ'); q.value = draft; grow(q);
+    $('askQ').disabled = busy; $('askGo').disabled = busy;
+    buttons();
   }
+
+  // The bar at the bottom of the page: the answer player, the question box, Ask, and the settings. It is made once
+  // and never redrawn, so typing or dictating (Wispr Flow) into the box is never cut off.
+  const bar = $('askBar');
+  bar.innerHTML = `<div class="ask-player" id="askPlayer"><span class="ap-what">Answers</span>
+      <button type="button" id="apBack" title="Back to the start of the answer" aria-label="Back to the start">⏮</button>
+      <button type="button" id="apPlay" class="ap-pp" aria-label="Play">${ICON.play}</button>
+      <button type="button" id="apStop" title="Stop reading" aria-label="Stop reading">■</button></div>
+    <textarea id="askQ" rows="2" placeholder="Ask Claude about this book. Type or dictate. Enter to ask, Shift+Enter for a new line."></textarea>
+    <button type="button" class="btn ask-go" id="askGo">Ask Claude</button>
+    <div class="ask-set"><select id="askModel" aria-label="Claude model">${Object.entries(MODELS).map(([k, v]) => `<option value="${k}" ${k === model ? 'selected' : ''}>${v}</option>`).join('')}</select>
+      <select id="askSources" aria-label="Sources">${Object.entries(SOURCES).map(([k, v]) => `<option value="${k}" ${k === sources ? 'selected' : ''}>${v}</option>`).join('')}</select>
+      <label class="ask-opt" title="A second Claude tries to prove the book parts of each answer wrong"><input type="checkbox" id="askCheck" ${autoCheck ? 'checked' : ''}> Hostile check</label></div>`;
 
   async function refresh() {
     if (!key()) { paint(); return; }
@@ -198,7 +201,7 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
   async function ask(question) {
     question = question.trim();
     if (!question || busy || !state.sentences.length) return;
-    busy = true; note = ''; draft = ''; paint();
+    busy = true; note = ''; draft = ''; const qq = $('askQ'); qq.value = ''; grow(qq); paint();
     const t0 = Date.now(), tick = setInterval(() => { const e = $('askSecs'); if (e) e.textContent = Math.round((Date.now() - t0) / 1000); }, 1000);
     try {
       if (!st.hasBook) await sendBook();
@@ -209,11 +212,12 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
       else { st.turns.push(r.turn); st.folder = r.folder; selection = ''; }
     } catch (err) { note = 'No answer: ' + err.message + '.'; }
     clearInterval(tick); busy = false; paint();
-    if (note) { draft = question; const q = $('askQ'); q.value = question; grow(q); }
+    if (note) { const q = $('askQ'); q.value = question; grow(q); }
     else if (autoCheck) check(st.turns.length - 1);
   }
 
-  box.addEventListener('keydown', (e) => {
+  bar.addEventListener('input', (e) => { if (e.target.id === 'askQ') { draft = e.target.value; grow(e.target); } });
+  bar.addEventListener('keydown', (e) => {
     if (e.target.id === 'askQ' && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(e.target.value); }
   });
   // Space plays or pauses the answer being read (not the book) while one is open
@@ -222,12 +226,12 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
     e.preventDefault(); e.stopImmediatePropagation();
     if (rd.playing) pauseReading(); else readFrom(rd.pos);
   }, true);
-  box.addEventListener('change', (e) => {
+  bar.addEventListener('change', (e) => {
     if (e.target.id === 'askModel') { model = e.target.value; setPref('ra2.askModel', model); }
     if (e.target.id === 'askSources') { sources = e.target.value; setPref('ra2.askSources', sources); }
     if (e.target.id === 'askCheck') { autoCheck = e.target.checked; setPref('ra2.askCheck', autoCheck ? '1' : '0'); }
   });
-  box.addEventListener('click', async (e) => {
+  const onClick = async (e) => {
     const t = e.target;
     if (t.id === 'askGo') ask($('askQ').value);
     else if (t.id === 'askNoSel') { selection = ''; paint(); }
@@ -262,18 +266,19 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
       while (p > 0 && !/\s/.test(rd.text[p - 1])) p--;  // the start of the word
       readFrom(p);
     }
-  });
+  };
+  box.addEventListener('click', onClick); bar.addEventListener('click', onClick);
 
   // the panel on the right side of the page; its width is dragged at its left edge and remembered
   const pane = $('askPane');
   pane.style.width = Math.max(340, Math.min(Number(pref('ra2.askWidth', 520)), innerWidth - 300)) + 'px';
   function show() {
-    pane.hidden = false; $('askTab').classList.add('on');
+    pane.hidden = false; bar.hidden = false; $('askTab').classList.add('on');
     note = '';
     const focus = () => { const q = $('askQ'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } };
     if (loadedFor !== key()) refresh().then(focus); else { paint(); focus(); }
   }
-  function hide() { if (rd.playing) pauseReading(); pane.hidden = true; $('askTab').classList.remove('on'); }
+  function hide() { if (rd.playing) pauseReading(); pane.hidden = true; bar.hidden = true; $('askTab').classList.remove('on'); }
   $('askTab').addEventListener('click', () => (pane.hidden ? show() : hide()));
   $('askClose').addEventListener('click', hide);
   $('askGrip').addEventListener('pointerdown', (e) => {
