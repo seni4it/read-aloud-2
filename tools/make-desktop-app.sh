@@ -30,12 +30,14 @@ PLIST
 cat > "$APP/Contents/MacOS/read-aloud" <<SH
 #!/bin/sh
 # Start the voice server if it is not running, then open the library in its own window.
+# --force-renderer-accessibility: the page's text fields are always shown to dictation apps (Wispr Flow) and VoiceOver.
 if ! curl -s -m 1 -o /dev/null http://127.0.0.1:8793/voices; then
   nohup "$PY" "$DIR/voice-server.py" 8793 > "\$HOME/Library/Logs/read-aloud-server.log" 2>&1 &
   for i in \$(seq 1 60); do curl -s -m 1 -o /dev/null http://127.0.0.1:8793/voices && break; sleep 0.5; done
 fi
 open -na "Google Chrome" --args --app=http://127.0.0.1:8793/app/ \\
-  --user-data-dir="\$HOME/Library/Application Support/Read Aloud 2 App" --no-first-run --no-default-browser-check
+  --user-data-dir="\$HOME/Library/Application Support/Read Aloud 2 App" --no-first-run --no-default-browser-check \\
+  --force-renderer-accessibility
 SH
 chmod +x "$APP/Contents/MacOS/read-aloud"
 touch "$APP"
