@@ -137,6 +137,10 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
     if (!el || (rd.el && el.contains(rd.el))) { if (!rd.playing) paint(); return; }
     el.innerHTML = extra(st.turns[i], i); buttons();
   }
+  // the question box grows with what you type (up to half the panel), and keeps your words when the panel is redrawn
+  let draft = '';
+  function grow(q) { q.style.height = 'auto'; q.style.height = Math.min(q.scrollHeight + 2, Math.max(120, box.clientHeight * 0.5)) + 'px'; }
+  box.addEventListener('input', (e) => { if (e.target.id === 'askQ') { draft = e.target.value; grow(e.target); } });
   function paint() {
     if (rd.playing) pauseReading();
     rd.id = ''; rd.el = null; if (hl) hl.clear();
@@ -152,13 +156,14 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
       ${busy ? `<p class="ask-busy" role="status">Claude is reading the book… <span id="askSecs">0</span> s</p>` : ''}
       ${note ? `<p class="kp-note" role="status">${esc(note)}</p>` : ''}
       ${selection ? `<p class="ask-sel">About: “${esc(selection.length > 160 ? selection.slice(0, 160) + '…' : selection)}” <button type="button" class="rename" id="askNoSel">×</button></p>` : ''}
-      <textarea id="askQ" rows="3" placeholder="Your question (Enter to ask, Shift+Enter for a new line)" ${busy ? 'disabled' : ''}></textarea>
+      <textarea id="askQ" rows="4" placeholder="Your question (Enter to ask, Shift+Enter for a new line)" ${busy ? 'disabled' : ''}></textarea>
       <div class="ask-row"><button type="button" class="btn small" id="askGo" ${busy ? 'disabled' : ''}>Ask Claude</button>
         <select id="askModel" aria-label="Claude model">${Object.entries(MODELS).map(([k, v]) => `<option value="${k}" ${k === model ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
       <label class="ask-opt">Sources <select id="askSources">${Object.entries(SOURCES).map(([k, v]) => `<option value="${k}" ${k === sources ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
       <label class="ask-opt"><input type="checkbox" id="askCheck" ${autoCheck ? 'checked' : ''}> Hostile check of every answer (a second Claude tries to prove the book parts wrong)</label>
-      <div class="note-tools"><button type="button" class="rename" id="askOpen">Open the book folder</button> · <button type="button" class="rename" id="askNew">New conversation</button></div>`;
+      <div class="note-tools"><button type="button" class="rename" id="askContinue">Continue in Claude (Terminal)</button> · <button type="button" class="rename" id="askConv">Open the whole conversation</button> · <button type="button" class="rename" id="askOpen">Open the book folder</button> · <button type="button" class="rename" id="askNew">New conversation</button></div>`;
     const t = $('askTurns'); t.scrollTop = t.scrollHeight;
+    const q = $('askQ'); q.value = draft; grow(q);
   }
 
   async function refresh() {
@@ -191,7 +196,7 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
   async function ask(question) {
     question = question.trim();
     if (!question || busy || !state.sentences.length) return;
-    busy = true; note = ''; paint();
+    busy = true; note = ''; draft = ''; paint();
     const t0 = Date.now(), tick = setInterval(() => { const e = $('askSecs'); if (e) e.textContent = Math.round((Date.now() - t0) / 1000); }, 1000);
     try {
       if (!st.hasBook) await sendBook();
@@ -202,7 +207,7 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
       else { st.turns.push(r.turn); st.folder = r.folder; selection = ''; }
     } catch (err) { note = 'No answer: ' + err.message + '.'; }
     clearInterval(tick); busy = false; paint();
-    if (note) $('askQ').value = question;
+    if (note) { draft = question; const q = $('askQ'); q.value = question; grow(q); }
     else if (autoCheck) check(st.turns.length - 1);
   }
 
@@ -224,7 +229,11 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
     const t = e.target;
     if (t.id === 'askGo') ask($('askQ').value);
     else if (t.id === 'askNoSel') { selection = ''; paint(); }
-    else if (t.id === 'askOpen') { const r = await post('/ask/open', {}).catch(() => null); if (!r) { note = 'The voice server did not answer.'; paint(); } }
+    else if (t.id === 'askContinue' || t.id === 'askConv') {
+      try { await post(t.id === 'askContinue' ? '/ask/continue' : '/ask/conversation', {}); note = t.id === 'askContinue' ? 'Terminal opens this book’s conversation in Claude Code. Type there to go on; the next question here continues the same conversation.' : ''; }
+      catch (err) { note = 'Could not open it: ' + err.message + '.'; }
+      paint();
+    } else if (t.id === 'askOpen') { const r = await post('/ask/open', {}).catch(() => null); if (!r) { note = 'The voice server did not answer.'; paint(); } }
     else if (t.id === 'askNew') { await post('/ask/new', {}).catch(() => {}); note = 'The next question starts a new conversation. The old one stays in conversation.md.'; paint(); }
     else if (t.dataset.check !== undefined) check(Number(t.dataset.check));
     else if (t.id === 'apPlay') { if (rd.playing) pauseReading(); else if (rd.id) readFrom(rd.pos); }
@@ -258,7 +267,7 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
     for (const id of tabs) $(id).classList.toggle('on', id === 'askTab');
     els.toc.hidden = true; $('notes').hidden = true; box.hidden = false;
     els.sidebar.hidden = false; els.sidebar.classList.add('asking');
-    if (loadedFor !== key()) refresh(); else paint();
+    note = ''; if (loadedFor !== key()) refresh(); else paint();
     setTimeout(() => $('askQ')?.focus(), 0);
   }
   $('askTab').addEventListener('click', show);

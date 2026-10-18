@@ -31,7 +31,7 @@ Desktop reader (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
 
 Version 1 (~/.claude/read-aloud, port 8791) is not touched.
 """
-import collections, functools, hashlib, itertools, http.server, io, json, mimetypes, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.parse, urllib.request
+import collections, functools, hashlib, shlex, itertools, http.server, io, json, mimetypes, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.parse, urllib.request
 
 import numpy as np
 import soundfile as sf
@@ -681,8 +681,9 @@ The answer to examine:
 def run_claude(d, prompt, model, tools=('Read', 'Grep', 'Glob'), resume='', extra=()):
     """Claude Code in the book's folder, read-only tools; returns its JSON result."""
     banned = [t for t in ('Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch') if t not in tools]
-    cmd = [CLAUDE, '-p', prompt, '--output-format', 'json', '--model', model, '--allowedTools', *tools,
-           '--disallowedTools', *banned, '--permission-mode', 'dontAsk', '--strict-mcp-config', *extra]
+    # only the book folder's own settings (CLAUDE.md): no user plugins, hooks or MCP servers in these answers
+    cmd = [CLAUDE, '-p', prompt, '--output-format', 'json', '--model', model, '--tools', *tools, '--allowedTools', *tools,
+           '--disallowedTools', *banned, '--permission-mode', 'dontAsk', '--strict-mcp-config', '--setting-sources', 'project,local', *extra]
     if resume:
         cmd += ['--resume', resume]
     env = {k: v for k, v in os.environ.items() if not k.startswith('CLAUDE_CODE_') and k not in ('CLAUDECODE', 'ANTHROPIC_API_KEY')}
@@ -976,7 +977,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         body = json.dumps({'error': str(e)[:300]}).encode()
                     self.copyfile(self.reply(body, 'application/json'), self.wfile)
                     return
-                if url.path in ('/ask', '/ask/book', '/ask/open', '/ask/new', '/ask/highlights', '/ask/check'):  # Ask Claude about the book
+                if url.path in ('/ask', '/ask/book', '/ask/open', '/ask/new', '/ask/highlights', '/ask/check', '/ask/continue', '/ask/conversation'):  # Ask Claude about the book
                     data = json.loads(self.rfile.read(size) or b'{}')
                     d = book_dir(data.get('key'), str(data.get('name', ''))[:200])
                     res = {'folder': d}
@@ -987,6 +988,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                             f.write(str(data.get('highlights', '')))
                     elif url.path == '/ask/open':
                         subprocess.Popen(['open', d])
+                    elif url.path == '/ask/continue':  # the book's conversation in Terminal, to go on with it in Claude Code
+                        sid = re.sub(r'[^0-9a-f-]', '', book_meta(d).get('session', ''))
+                        line = f"cd {shlex.quote(d)} && {shlex.quote(CLAUDE)}" + (f" --resume {sid}" if sid else '')
+                        subprocess.Popen(['osascript', '-e', f'tell application "Terminal" to do script {json.dumps(line)}',
+                                          '-e', 'tell application "Terminal" to activate'])
+                    elif url.path == '/ask/conversation':
+                        subprocess.Popen(['open', '-e', os.path.join(d, 'conversation.md')] if os.path.exists(os.path.join(d, 'conversation.md')) else ['open', d])
                     elif url.path == '/ask/new':  # the next question starts a new conversation (the old one stays in conversation.md)
                         meta = book_meta(d); meta['session'] = ''; book_meta_save(d, meta)
                     elif url.path == '/ask/check':

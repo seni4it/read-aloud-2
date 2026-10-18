@@ -114,3 +114,5 @@
 .ask .ask-player button:hover { background: rgba(255,255,255,.15); }
 .ask .ask-player .ap-pp { background: var(--accent); color: #111; }
 .ask .ask-player button:focus-visible { outline: 3px solid #6ea8ff; }
+.ask textarea { min-height: 90px; max-height: 50vh; resize: vertical; line-height: 1.45; }
+.ask > :not(.turns) { flex: 0 0 auto; }
