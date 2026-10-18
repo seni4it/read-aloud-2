@@ -71,6 +71,15 @@ server when needed and opens your library in its own window (Chrome, without tab
   list), or press the marker button in the player while it reads to keep the sentence being read. The
   **Highlights** tab beside Contents lists them by group; click one to go to it. Library books keep them in
   `Documents/Read Aloud Library/.notes/<id>.json`; PDFs opened in Chrome keep them in the browser.
+- **Ask Claude:** the **Ask** tab beside Highlights. Type a question about the book, or select words on the page
+  and press **Ask Claude**. Claude answers from the book first, gives the pages (click one to go there), and marks
+  what comes from outside the book. **Read this answer aloud** uses the chosen voice. Each book has its own
+  conversation and its own folder, `Documents/Read Aloud Library/Books/<book>/`: `book.md` (the book's text, each
+  paragraph with its page), `highlights.md`, `conversation.md` (every question and answer) and `CLAUDE.md` (how
+  Claude answers). A question sends only the page you are on; Claude searches `book.md` for the rest. It uses the
+  Claude Code program on this Mac and its sign-in, no API key. Normal (Sonnet) is the default; Fast (Haiku) and
+  Deep (Opus) are in the menu. **New conversation** starts again; the old one stays in `conversation.md`. To go on
+  in the terminal: `cd` into the book's folder and run `claude --continue`.
 
 ## Audio files (MP3)
 

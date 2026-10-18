@@ -5,7 +5,7 @@
 const COLORS = ['yellow', 'green', 'blue', 'pink'];
 const DEFAULT_NAMES = { yellow: 'Important', green: 'Idea', blue: 'Question', pink: 'Review' };
 
-export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
+export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onChange = () => {} }) {
   let notes = [];
   let filter = 'all';
   let names = { ...DEFAULT_NAMES, ...(load('ra2.groups') || {}) };
@@ -55,6 +55,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
     const data = JSON.stringify(notes);
     if (libId) fetch(`/library/${libId}/notes`, { method: 'POST', body: data, headers: { 'Content-Type': 'application/json' } }).catch(() => {});
     else keep('ra2.notes.' + state.docKey, notes);
+    onChange();
   }
 
   // A highlight remembers its sentence's first words: if the document is read again with other options
@@ -155,7 +156,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
   document.body.appendChild(bar);
   function paintBar() {
     bar.innerHTML = COLORS.map((c) => `<button type="button" data-c="${c}"><span class="dot ${c}"></span>${esc(names[c])}</button>`).join('')
-      + '<button type="button" data-c="remove">✕ Remove underlines</button>';
+      + '<button type="button" data-c="remove">✕ Remove underlines</button><button type="button" data-c="ask">Ask Claude</button>';
   }
   const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -227,7 +228,11 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
   bar.addEventListener('mousedown', (e) => e.preventDefault());  // keep the selection while clicking the bar
   bar.addEventListener('click', (e) => {
     const b = e.target.closest('button[data-c]'); if (!b) return;
-    if (b.dataset.c === 'remove') {  // every underline that touches the selected text goes, however roughly it was selected
+    if (b.dataset.c === 'ask') {  // the selected words go to the Ask tab (ask.js)
+      const segs = selectionSegs();
+      const text = segs.map((g) => state.sentences[g.si].text.slice(g.a, g.b)).join(' ').trim() || undouble(String(getSelection()));
+      document.dispatchEvent(new CustomEvent('ra2-ask', { detail: text }));
+    } else if (b.dataset.c === 'remove') {  // every underline that touches the selected text goes, however roughly it was selected
       const sel = selectionSegs();
       const touches = (n) => n.segs.some((g) => { const si = where(g); return sel.some((s) => s.si === si && s.a < g.b && g.a < s.b); });
       const before = notes.length;
@@ -344,6 +349,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId }) {
   }
 
   return {
+    markdown,
     async reload() {  // after a document is read (or read again); exact duplicates are kept once
       if (!kp.ok) await kpLoad();
       const seen = new Set(), all = await read();

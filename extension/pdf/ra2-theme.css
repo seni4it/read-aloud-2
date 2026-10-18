@@ -81,3 +81,22 @@
 .keypts label { display: block; margin: 6px 0; }
 .keypts select { max-width: 100%; font: inherit; }
 .keypts .kp-note { margin: 6px 0 0; word-break: break-word; }
+
+/* Ask Claude (ask.js): the side bar gets wider while the Ask tab is open */
+.sidebar.asking { width: min(440px, 92vw); }
+.sidebar.asking .opts { display: none; }
+.ask { display: flex; flex-direction: column; gap: 8px; }
+.ask[hidden] { display: none; }
+.ask .turns { flex: 1 1 auto; overflow: auto; min-height: 120px; }
+.ask .turn { margin: 0 0 14px; }
+.ask .q { margin: 0 0 6px; padding: 8px 10px; border-radius: 10px; background: var(--accent-soft); font-weight: 600; font-size: 14px; line-height: 1.45; }
+.ask .q small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.ask .a { font-size: 14.5px; line-height: 1.55; color: var(--ink); }
+.ask .a p { margin: 0 0 8px; }
+.ask .a ul { margin: 0 0 8px; padding-left: 20px; }
+.ask .a a.pg { color: inherit; text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 2px; }
+.ask textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); resize: vertical; }
+.ask .ask-row { display: flex; gap: 8px; align-items: center; }
+.ask .ask-row select { font: inherit; font-size: 13px; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+.ask .ask-busy, .ask .ask-sel { margin: 0; font-size: 13px; color: var(--muted); }
+.ask .ask-row .btn { width: auto; flex: 1 1 auto; }

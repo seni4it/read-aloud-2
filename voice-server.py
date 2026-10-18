@@ -16,6 +16,9 @@ Desktop reader (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
   GET/POST /library/<id>/notes   the book's highlights (JSON), kept in .notes/<id>.json
   GET /claude/sessions      the Claude desktop app's conversations (title, folder); POST /claude/setting {session, title, cwd, group, auto}
   POST /claude/send         {points: [{book, page, text}]}: key points appended to key-points/<book>.md in that folder
+  Ask Claude about the book (folder Books/<book>/, see "Ask Claude" below): GET /ask/status?key=, POST /ask/book
+                            {key, name, sections, pages}, POST /ask {key, name, question, page, chapter, passage,
+                            selection, highlights, model, fresh}, POST /ask/highlights, /ask/open, /ask/new
   POST /library/<id>/export   make MP3 files of the book, one per chapter, with the cover picture (body: JSON
                               {title, voice, chapters: [{title, text: [...]}]}); GET the same: progress;
                               POST .../export/cancel; POST .../export/open shows the folder in Finder.
@@ -610,6 +613,128 @@ def bridge_write(points):
     return written
 
 
+# ---------- Ask Claude: questions about the book you are reading ----------
+# Each book has a folder, Documents/Read Aloud Library/Books/<book>/, with book.md (the reader's text, page by
+# page), highlights.md, conversation.md (every question and answer) and CLAUDE.md (how to answer). Each book has
+# its own Claude Code conversation (claude -p --resume), run in that folder with read-only tools: the book stays
+# on disk and Claude searches it, so a question sends one page, not the whole book. Uses this Mac's Claude Code
+# and its sign-in; no API key.
+BOOKS = os.path.join(LIB, 'Books')
+CLAUDE = shutil.which('claude') or os.path.expanduser('~/.local/bin/claude')
+MODELS = {'fast': 'haiku', 'normal': 'sonnet', 'deep': 'opus'}
+BOOK_V = 3  # the layout of book.md; an older one is made again
+_ask_locks = collections.defaultdict(threading.Lock)  # one question at a time per book
+BOOK_RULES = """# How to answer questions about this book
+
+Semion (an endodontist) asks these questions while he listens to the book in Read Aloud 2.
+
+- The book's text is in book.md. Every paragraph starts with its page, like this: [p. 23]. It is the reader's
+  text: references, figure captions and other skipped parts may be missing. Search it (Grep) and read only the
+  parts you need.
+- The passage in the question only shows where he is. Before you answer, search the whole book for the key words
+  of the question (and their other forms): the answer is often in another chapter.
+- Answer from the book first. Give the page for each point, like this: (p. 23). Take the page from the [p. N] at
+  the start of the paragraph. Never give a line number from a search as a page.
+- When a point does not come from the book, start that part with "Outside the book:".
+- If the book does not answer the question, say so.
+- Write in ASD-STE100 Simplified Technical English: short sentences, active voice, simple words.
+- No tables. The answer is read aloud.
+- highlights.md has what he marked, by group. conversation.md has the earlier questions and answers.
+- Do not change any file.
+"""
+
+
+def book_dir(key, name, make=True):
+    """The book's folder (made the first time), found again by its key in .book.json."""
+    key = re.sub(r'[^\w.-]', '', str(key or ''))[:80]
+    if not key:
+        raise ValueError('no book key')
+    os.makedirs(BOOKS, exist_ok=True)
+    for d in os.listdir(BOOKS):
+        meta = os.path.join(BOOKS, d, '.book.json')
+        if os.path.exists(meta) and yt_load(meta, {}).get('key') == key:
+            return os.path.join(BOOKS, d)
+    if not make:
+        return None
+    base = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', ' ', name or 'Book').strip()[:80] or 'Book'
+    d, n = os.path.join(BOOKS, base), 2
+    while os.path.exists(d):
+        d, n = os.path.join(BOOKS, f'{base} ({n})'), n + 1
+    os.makedirs(d)
+    book_meta_save(d, {'key': key, 'name': name, 'session': '', 'turns': []})
+    with open(os.path.join(d, 'CLAUDE.md'), 'w', encoding='utf-8') as f:
+        f.write(BOOK_RULES)
+    return d
+
+
+def book_meta(d):
+    return yt_load(os.path.join(d, '.book.json'), {'turns': []})
+
+
+def book_meta_save(d, meta):
+    tmp = os.path.join(d, '.book.json.tmp')
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(meta, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, os.path.join(d, '.book.json'))
+
+
+def book_text(d, data):
+    """book.md from the reader: the contents, then the text page by page."""
+    lines = [f"# {data.get('name') or 'Book'}", '']
+    secs = data.get('sections') or []
+    if secs:
+        lines += ['## Contents', ''] + [f"- {s.get('title', '')} (p. {s.get('page', '?')})" for s in secs] + ['']
+    for p in data.get('pages') or []:  # each paragraph carries its page, so a search hit shows the page
+        n = p.get('page', '?')
+        lines += [f"## Page {n}", ''] + [f"[p. {n}] {para.strip()}\n" for para in str(p.get('text', '')).split('\n\n') if para.strip()]
+    with open(os.path.join(d, 'book.md'), 'w', encoding='utf-8') as f:
+        f.write('\n'.join(lines))
+    with open(os.path.join(d, 'CLAUDE.md'), 'w', encoding='utf-8') as f:  # the rules as they are now
+        f.write(BOOK_RULES)
+    meta = book_meta(d); meta['bookv'] = BOOK_V; book_meta_save(d, meta)
+
+
+def ask_claude(d, data):
+    """One question, in the book's own conversation. Returns {answer, page, t, model} or raises."""
+    meta = book_meta(d)
+    if data.get('highlights'):
+        with open(os.path.join(d, 'highlights.md'), 'w', encoding='utf-8') as f:
+            f.write(str(data['highlights']))
+    q = str(data.get('question', '')).strip()[:4000]
+    page, chapter = data.get('page') or '?', str(data.get('chapter') or '').strip()
+    prompt = [f'I am on page {page}' + (f', in "{chapter}"' if chapter else '') + '.']
+    if data.get('passage'):
+        prompt += ['The passage I am reading:', '"""', str(data['passage'])[:3000], '"""']
+    if data.get('selection'):
+        prompt += ['The words I selected:', '"""', str(data['selection'])[:2000], '"""']
+    prompt += ['', 'My question: ' + q]
+    model = MODELS.get(data.get('model'), 'sonnet')
+    cmd = [CLAUDE, '-p', '\n'.join(prompt), '--output-format', 'json', '--model', model,
+           '--allowedTools', 'Read', 'Grep', 'Glob', '--disallowedTools', 'Bash', 'Edit', 'Write', 'WebFetch', 'WebSearch',
+           '--permission-mode', 'dontAsk', '--strict-mcp-config']
+    if meta.get('session') and not data.get('fresh'):
+        cmd += ['--resume', meta['session']]
+    env = {k: v for k, v in os.environ.items() if not k.startswith('CLAUDE_CODE_') and k not in ('CLAUDECODE', 'ANTHROPIC_API_KEY')}
+    env['PATH'] = os.path.dirname(CLAUDE) + os.pathsep + env.get('PATH', '/usr/bin:/bin')
+    r = subprocess.run(cmd, cwd=d, env=env, capture_output=True, text=True, timeout=600)
+    try:
+        out = json.loads(r.stdout)
+    except ValueError:
+        raise RuntimeError((r.stderr or r.stdout or 'Claude did not answer').strip()[:300])
+    if out.get('is_error') or not out.get('result'):
+        raise RuntimeError(str(out.get('result') or out.get('subtype') or 'Claude did not answer')[:300])
+    turn = {'q': q, 'a': out['result'].strip(), 'page': page, 'chapter': chapter, 't': time.time(), 'model': model}
+    meta['session'] = out.get('session_id') or meta.get('session', '')
+    meta.setdefault('turns', []).append(turn)
+    book_meta_save(d, meta)
+    with open(os.path.join(d, 'conversation.md'), 'a', encoding='utf-8') as f:
+        if os.path.getsize(os.path.join(d, 'conversation.md')) == 0:
+            f.write(f"# Questions about \"{meta.get('name') or 'this book'}\"\n\n")
+        f.write(f"## {time.strftime('%d %b %Y %H:%M')} · page {page}{(' · ' + chapter) if chapter else ''}\n\n"
+                f"**Question:** {q}\n\n{turn['a']}\n\n")
+    return turn
+
+
 OCR = os.path.join(HERE, 'ocr', 'ocr')
 _ocr_slots = threading.Semaphore(2)
 
@@ -688,6 +813,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if m:  # progress of the MP3 export
             st = _exports.get(m.group(1)) or {'state': 'none'}
             return self.reply(json.dumps({k: v for k, v in st.items() if k != 'thread'}).encode(), 'application/json')
+        if url.path == '/ask/status':  # the book's folder and its questions so far
+            d = book_dir(q.get('key'), q.get('name', ''), make=False) if q.get('key') else None
+            meta = book_meta(d) if d else {}
+            st = {'folder': d or '', 'hasBook': bool(d and os.path.exists(os.path.join(d, 'book.md')) and meta.get('bookv') == BOOK_V),
+                  'turns': meta.get('turns', [])[-50:], 'claude': os.path.exists(CLAUDE)}
+            return self.reply(json.dumps(st, ensure_ascii=False).encode(), 'application/json')
         if url.path == '/claude/sessions':  # key points: the conversations to choose from, and the choice made
             return self.reply(json.dumps({'sessions': claude_sessions(), 'setting': bridge_setting()}).encode(), 'application/json')
         m = re.match(r'^/library/([0-9a-f]{12})/notes$', url.path)
@@ -779,6 +910,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     except Exception as e:
                         body = json.dumps({'error': str(e)[:300]}).encode()
                     self.copyfile(self.reply(body, 'application/json'), self.wfile)
+                    return
+                if url.path in ('/ask', '/ask/book', '/ask/open', '/ask/new', '/ask/highlights'):  # Ask Claude about the book
+                    data = json.loads(self.rfile.read(size) or b'{}')
+                    d = book_dir(data.get('key'), str(data.get('name', ''))[:200])
+                    res = {'folder': d}
+                    if url.path == '/ask/book':
+                        book_text(d, data)
+                    elif url.path == '/ask/highlights':
+                        with open(os.path.join(d, 'highlights.md'), 'w', encoding='utf-8') as f:
+                            f.write(str(data.get('highlights', '')))
+                    elif url.path == '/ask/open':
+                        subprocess.Popen(['open', d])
+                    elif url.path == '/ask/new':  # the next question starts a new conversation (the old one stays in conversation.md)
+                        meta = book_meta(d); meta['session'] = ''; book_meta_save(d, meta)
+                    else:
+                        with _ask_locks[d]:
+                            try:
+                                res['turn'] = ask_claude(d, data)
+                            except subprocess.TimeoutExpired:
+                                res['error'] = 'Claude took more than 10 minutes. Ask again, or ask a shorter question.'
+                            except Exception as e:
+                                res['error'] = str(e)[:300]
+                    self.copyfile(self.reply(json.dumps(res, ensure_ascii=False).encode(), 'application/json'), self.wfile)
                     return
                 if url.path == '/youtube/secret':  # the client_secret.json file from Google Cloud
                     data = json.loads(self.rfile.read(size) or b'{}')
