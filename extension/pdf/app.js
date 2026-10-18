@@ -43,7 +43,7 @@ const els = {
 
 const viewer = window.__viewer = new PdfViewer(pdfjsLib, els.pages);
 let notesUI = { reload() {} };  // Read Aloud 2: highlights, set up below once the page is ready
-let askUI = { reload() {}, highlightsChanged() {} };  // Read Aloud 2: Ask Claude about the book
+let askUI = { reload() {}, highlightsChanged() {}, stopReading() {} };  // Read Aloud 2: Ask Claude about the book
 
 // Exposed for debugging in the console: window.__pr.sentences etc.
 const state = window.__pr = {
@@ -795,24 +795,17 @@ async function requestPersistentStorage() {
 
 notesUI = setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId: LIB_ID, onChange: () => askUI.highlightsChanged() });
 
-// Read Aloud 2: an answer from Claude read aloud with the chosen voice, in pieces the voice server takes (1500 characters)
-function speakText(text) {
-  stop();
-  const parts = (text.match(/[^.!?\n]+[.!?]*["')\]]*\s*/g) || [text]).reduce((out, s) => {
-    if (out.length && (out[out.length - 1] + s).length < 900) out[out.length - 1] += s; else out.push(s);
-    return out;
-  }, []).map((t) => t.trim()).filter(Boolean);
-  const token = ++speakText.token;
-  const next = (i) => {
-    if (i >= parts.length || token !== speakText.token || state.playing) return;
-    engine.speak({ text: parts[i], charOwners: [] }, { voiceId: els.voiceSel.value, rate: Number(els.rateSel.value),
-      onEnd: () => next(i + 1), onError: () => {} });
-  };
-  next(0);
-}
-speakText.token = 0;
-els.playBtn.addEventListener('click', () => { speakText.token++; }, true);  // Play goes back to the book
-askUI = setupAsk({ state, els, libId: LIB_ID, jumpTo, highlights: () => notesUI.markdown(), speakText });
+// Read Aloud 2: Claude's answers are read with the chosen voice, one piece at a time (ask.js keeps its own place
+// and underlines the words); pressing Play goes back to the book.
+const voice = {
+  say(text, cb) {
+    if (state.playing) stop();
+    engine.speak({ text, charOwners: [] }, { voiceId: els.voiceSel.value, rate: Number(els.rateSel.value), ...cb });
+  },
+  hush() { engine.stop(); },
+};
+els.playBtn.addEventListener('click', () => askUI.stopReading(), true);
+askUI = setupAsk({ state, els, libId: LIB_ID, jumpTo, highlights: () => notesUI.markdown(), voice });
 
 // Read Aloud 2: scroll freely while it reads. Scrolling yourself stops the page from following the voice;
 // the target button in the player takes you back to the word being read and follows again.

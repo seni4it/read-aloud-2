@@ -635,13 +635,85 @@ Semion (an endodontist) asks these questions while he listens to the book in Rea
   of the question (and their other forms): the answer is often in another chapter.
 - Answer from the book first. Give the page for each point, like this: (p. 23). Take the page from the [p. N] at
   the start of the paragraph. Never give a line number from a search as a page.
-- When a point does not come from the book, start that part with "Outside the book:".
+- Each question says which sources are allowed. When a point does not come from this book, start that part with
+  "I looked outside the book:" and name the source (another book and its page, a web link, or "my own knowledge").
 - If the book does not answer the question, say so.
 - Write in ASD-STE100 Simplified Technical English: short sentences, active voice, simple words.
 - No tables. The answer is read aloud.
 - highlights.md has what he marked, by group. conversation.md has the earlier questions and answers.
+- His other books are in the folders next to this one (../<book>/book.md), when a question allows them.
 - Do not change any file.
 """
+
+SOURCES = {
+    'book': 'Sources for this question: ONLY this book. Do not use your own knowledge or other books. If the book does '
+            'not answer the question, say so.',
+    'knowledge': 'Sources for this question: this book first. If the book is not enough, you may also use his other books '
+                 '(../<book>/book.md) and your own knowledge. Start each such part with "I looked outside the book:" and '
+                 'name the source.',
+    'web': 'Sources for this question: this book first. If the book is not enough, you may also use his other books '
+           '(../<book>/book.md), your own knowledge and the internet (WebSearch, WebFetch). Start each such part with '
+           '"I looked outside the book:" and name the source, with the link for a web page.',
+}
+CHECK_PROMPT = """You are a hostile examiner. Another assistant answered a question about this book. Try to prove the
+answer wrong. The book's text is in book.md; every paragraph starts with its page, like [p. 23]. Search it yourself.
+
+For every claim that the answer says comes from the book, find the passage and give one verdict:
+- SUPPORTED: give the page and a short quote (25 words at most).
+- PARTLY: say what is overstated, changed or missing.
+- NOT IN THE BOOK: you cannot find it.
+- WRONG PAGE: it is in the book, but on another page (give the right one).
+Then list: passages in the book that contradict or limit the answer; steps of logic that the book does not make;
+parts of the question that the answer does not answer. Parts that start with "I looked outside the book" are not
+from the book: only say that you did not check them.
+End with one line: "Overall: reliable", "Overall: partly reliable" or "Overall: not reliable", and why in one sentence.
+Give pages, never line numbers from a search. Write in ASD-STE100 Simplified Technical English: short sentences. No tables. Do not change any file.
+
+The question: {q}
+
+The answer to examine:
+<<<
+{a}
+>>>
+"""
+
+
+def run_claude(d, prompt, model, tools=('Read', 'Grep', 'Glob'), resume='', extra=()):
+    """Claude Code in the book's folder, read-only tools; returns its JSON result."""
+    banned = [t for t in ('Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch') if t not in tools]
+    cmd = [CLAUDE, '-p', prompt, '--output-format', 'json', '--model', model, '--allowedTools', *tools,
+           '--disallowedTools', *banned, '--permission-mode', 'dontAsk', '--strict-mcp-config', *extra]
+    if resume:
+        cmd += ['--resume', resume]
+    env = {k: v for k, v in os.environ.items() if not k.startswith('CLAUDE_CODE_') and k not in ('CLAUDECODE', 'ANTHROPIC_API_KEY')}
+    env['PATH'] = os.path.dirname(CLAUDE) + os.pathsep + env.get('PATH', '/usr/bin:/bin')
+    r = subprocess.run(cmd, cwd=d, env=env, capture_output=True, text=True, timeout=600)
+    try:
+        out = json.loads(r.stdout)
+    except ValueError:
+        raise RuntimeError((r.stderr or r.stdout or 'Claude did not answer').strip()[:300])
+    if out.get('is_error') or not out.get('result'):
+        raise RuntimeError(str(out.get('result') or out.get('subtype') or 'Claude did not answer')[:300])
+    return out
+
+
+def check_answer(d, data):
+    """A separate, fresh Claude reads the book and tries to prove one answer wrong. Stored with the answer."""
+    meta = book_meta(d)
+    i = int(data.get('i', -1))
+    turns = meta.get('turns', [])
+    if not 0 <= i < len(turns):
+        raise ValueError('no such answer')
+    t = turns[i]
+    out = run_claude(d, CHECK_PROMPT.format(q=t['q'], a=t['a']), MODELS.get(data.get('model'), 'sonnet'),
+                     extra=('--no-session-persistence',))
+    t['check'] = out['result'].strip()
+    meta = book_meta(d)  # read again: a question may have been answered meanwhile
+    meta['turns'][i]['check'] = t['check']
+    book_meta_save(d, meta)
+    with open(os.path.join(d, 'conversation.md'), 'a', encoding='utf-8') as f:
+        f.write(f"### Hostile check of the answer above ({time.strftime('%d %b %Y %H:%M')})\n\n{t['check']}\n\n")
+    return t['check']
 
 
 def book_dir(key, name, make=True):
@@ -707,23 +779,16 @@ def ask_claude(d, data):
         prompt += ['The passage I am reading:', '"""', str(data['passage'])[:3000], '"""']
     if data.get('selection'):
         prompt += ['The words I selected:', '"""', str(data['selection'])[:2000], '"""']
-    prompt += ['', 'My question: ' + q]
+    sources = data.get('sources') if data.get('sources') in SOURCES else 'knowledge'
+    prompt += ['', SOURCES[sources], '', 'My question: ' + q]
     model = MODELS.get(data.get('model'), 'sonnet')
-    cmd = [CLAUDE, '-p', '\n'.join(prompt), '--output-format', 'json', '--model', model,
-           '--allowedTools', 'Read', 'Grep', 'Glob', '--disallowedTools', 'Bash', 'Edit', 'Write', 'WebFetch', 'WebSearch',
-           '--permission-mode', 'dontAsk', '--strict-mcp-config']
-    if meta.get('session') and not data.get('fresh'):
-        cmd += ['--resume', meta['session']]
-    env = {k: v for k, v in os.environ.items() if not k.startswith('CLAUDE_CODE_') and k not in ('CLAUDECODE', 'ANTHROPIC_API_KEY')}
-    env['PATH'] = os.path.dirname(CLAUDE) + os.pathsep + env.get('PATH', '/usr/bin:/bin')
-    r = subprocess.run(cmd, cwd=d, env=env, capture_output=True, text=True, timeout=600)
-    try:
-        out = json.loads(r.stdout)
-    except ValueError:
-        raise RuntimeError((r.stderr or r.stdout or 'Claude did not answer').strip()[:300])
-    if out.get('is_error') or not out.get('result'):
-        raise RuntimeError(str(out.get('result') or out.get('subtype') or 'Claude did not answer')[:300])
-    turn = {'q': q, 'a': out['result'].strip(), 'page': page, 'chapter': chapter, 't': time.time(), 'model': model}
+    with open(os.path.join(d, 'CLAUDE.md'), 'w', encoding='utf-8') as f:  # the rules as they are now
+        f.write(BOOK_RULES)
+    tools = ('Read', 'Grep', 'Glob') + (('WebSearch', 'WebFetch') if sources == 'web' else ())
+    out = run_claude(d, '\n'.join(prompt), model, tools, '' if data.get('fresh') else meta.get('session', ''),
+                     ('--add-dir', BOOKS) if sources != 'book' else ())
+    turn = {'q': q, 'a': out['result'].strip(), 'page': page, 'chapter': chapter, 't': time.time(), 'model': model, 'sources': sources}
+    meta = book_meta(d)  # read again: a check may have been saved meanwhile
     meta['session'] = out.get('session_id') or meta.get('session', '')
     meta.setdefault('turns', []).append(turn)
     book_meta_save(d, meta)
@@ -911,7 +976,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         body = json.dumps({'error': str(e)[:300]}).encode()
                     self.copyfile(self.reply(body, 'application/json'), self.wfile)
                     return
-                if url.path in ('/ask', '/ask/book', '/ask/open', '/ask/new', '/ask/highlights'):  # Ask Claude about the book
+                if url.path in ('/ask', '/ask/book', '/ask/open', '/ask/new', '/ask/highlights', '/ask/check'):  # Ask Claude about the book
                     data = json.loads(self.rfile.read(size) or b'{}')
                     d = book_dir(data.get('key'), str(data.get('name', ''))[:200])
                     res = {'folder': d}
@@ -924,6 +989,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         subprocess.Popen(['open', d])
                     elif url.path == '/ask/new':  # the next question starts a new conversation (the old one stays in conversation.md)
                         meta = book_meta(d); meta['session'] = ''; book_meta_save(d, meta)
+                    elif url.path == '/ask/check':
+                        try:
+                            res['check'] = check_answer(d, data)
+                        except subprocess.TimeoutExpired:
+                            res['error'] = 'The check took more than 10 minutes.'
+                        except Exception as e:
+                            res['error'] = str(e)[:300]
                     else:
                         with _ask_locks[d]:
                             try:

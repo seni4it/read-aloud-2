@@ -73,7 +73,14 @@ server when needed and opens your library in its own window (Chrome, without tab
   `Documents/Read Aloud Library/.notes/<id>.json`; PDFs opened in Chrome keep them in the browser.
 - **Ask Claude:** the **Ask** tab beside Highlights. Type a question about the book, or select words on the page
   and press **Ask Claude**. Claude answers from the book first, gives the pages (click one to go there), and marks
-  what comes from outside the book. **Read this answer aloud** uses the chosen voice. Each book has its own
+  what comes from outside the book. **Read aloud** under an answer reads it with the chosen voice: the button
+  becomes **Pause** / **Go on reading**, the word being read is underlined, a click on any word reads from there,
+  and Space plays or pauses the answer. **Sources**: Only this book; Book, then my other books (their folders in
+  Books/) and Claude's knowledge; or Also search the internet. Anything not from the book starts with "I looked
+  outside the book:" and names its source. **Hostile check** (automatic, or the button under an answer): a second,
+  separate Claude searches the book and tries to prove the book parts of the answer wrong, claim by claim
+  (supported, partly, not in the book, wrong page), lists passages that contradict or limit it, and ends with
+  "Overall: reliable / partly reliable / not reliable". The check is saved with the answer in conversation.md. Each book has its own
   conversation and its own folder, `Documents/Read Aloud Library/Books/<book>/`: `book.md` (the book's text, each
   paragraph with its page), `highlights.md`, `conversation.md` (every question and answer) and `CLAUDE.md` (how
   Claude answers). A question sends only the page you are on; Claude searches `book.md` for the rest. It uses the
