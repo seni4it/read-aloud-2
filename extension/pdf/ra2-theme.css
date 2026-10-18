@@ -150,3 +150,6 @@
 .ask .ask-links { padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 @media (max-width: 900px) { .askbar { flex-wrap: wrap; } .askbar textarea { flex-basis: 100%; order: -1; } }
 .player .askbar { padding: 0 0 10px; margin-bottom: 2px; }
+/* a highlight chosen in the list flashes where it is on the page */
+@keyframes ra2-flash { 0%, 100% { box-shadow: none; } 30%, 70% { box-shadow: 0 0 0 4px rgba(255, 140, 0, .55); } }
+.mark-box.flash { animation: ra2-flash 1.2s ease-in-out 2; }

@@ -305,6 +305,9 @@ function jumpTo(i, { resume = state.playing } = {}) {
   clearTimeout(state.pauseTimer);
   engine.stop();
   state.index = Math.max(0, Math.min(i, Math.max(0, state.sentences.length - 1)));
+  // Read Aloud 2: a jump you ask for (a highlight, Contents, a page in an answer, the keys) always shows that place,
+  // also after you scrolled away yourself
+  viewer.follow = true; document.getElementById('findBtn')?.classList.remove('away');
   render();
   if (resume && wasPlaying) {
     state.playing = true;

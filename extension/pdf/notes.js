@@ -267,6 +267,19 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
         const t = state.sentences[si].text; let a = n.segs[0].a;
         while (a > 0 && !/\s/.test(t[a - 1])) a--;
         state.from = a;  // Play starts at the highlight, not at the top of its paragraph
+        // then the underline itself to the middle of the screen, with a short flash (its page may still be drawing)
+        let tries = 0;
+        const show = () => {
+          const box = els.pages.querySelector(`.mark-box[data-id="${n.id}"]`);
+          if (!box) { if (++tries < 20) setTimeout(show, 150); return; }
+          box.scrollIntoView({ block: 'center' });
+          setTimeout(() => {  // the page's own scroll to the paragraph can land after this one: center it again if needed
+            const r = box.getBoundingClientRect();
+            if (r.top < 80 || r.bottom > innerHeight - 160) box.scrollIntoView({ block: 'center' });
+          }, 450);
+          for (const b of els.pages.querySelectorAll(`.mark-box[data-id="${n.id}"]`)) { b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash'); }
+        };
+        setTimeout(show, 100);
       });
       box.appendChild(b);
     }
