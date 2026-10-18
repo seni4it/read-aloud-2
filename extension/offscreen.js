@@ -28,9 +28,11 @@ function pump() {
 }
 const send = (evt, extra) => cur && chrome.runtime.sendMessage({ to: 'bg-evt', tab: cur.tab, id: cur.id, evt, ...extra }).catch(() => {});
 
-function stop() { clearInterval(timer); audio.onended = audio.onerror = null; audio.pause(); audio.removeAttribute('src'); cur = null; }
+// where the audio is, 14 times a second, while it plays (not while paused: nothing moves then)
+function ticking(on) { clearInterval(timer); if (on) timer = setInterval(() => send('tick', { t: audio.currentTime, d: audio.duration }), 70); }
+function stop() { ticking(false); audio.onended = audio.onerror = null; audio.pause(); audio.removeAttribute('src'); cur = null; }
 
-chrome.runtime.onMessage.addListener((m) => {
+chrome.runtime.onMessage.addListener((m, sender, reply) => {
   if (m.to !== 'offscreen') return;
   if (m.cmd === 'speak') {
     stop(); cur = m;
@@ -38,17 +40,21 @@ chrome.runtime.onMessage.addListener((m) => {
     audio.onloadeddata = () => early(m.next, m.voice);  // then the next ones are prepared while this one plays
     fetch(url(m.text, m.voice).replace('/speak?', '/times?')).then((r) => r.json())  // when each word starts (Kokoro's own timings)
       .then(({ starts }) => { if (cur === m) send('times', { starts }); }).catch(() => {});
-    audio.onended = () => { clearInterval(timer); send('end'); };
-    audio.onerror = () => { clearInterval(timer); send('error', { why: 'The voice server on this Mac did not answer.' }); };
+    audio.onended = () => { ticking(false); send('end'); };
+    audio.onerror = () => { ticking(false); send('error', { why: 'The voice server on this Mac did not answer.' }); };
     audio.play().then(() => {
       if (cur !== m) return;
       audio.playbackRate = m.rate;
       send('start', { d: audio.duration });
-      timer = setInterval(() => send('tick', { t: audio.currentTime, d: audio.duration }), 70);
+      ticking(true);
     }).catch((e) => { if (cur === m && e.name !== 'AbortError') send('error', { why: 'The voice could not play: ' + e.message }); });
   } else if (m.cmd === 'warm') early(m.texts, m.voice, m.prio, m.batch);
   else if (m.cmd === 'stop') stop();
-  else if (m.cmd === 'pause') audio.pause();
-  else if (m.cmd === 'resume') audio.play().catch(() => {});
+  else if (m.cmd === 'pause') { audio.pause(); ticking(false); }
+  else if (m.cmd === 'resume') {  // answers whether there was audio to go on with
+    if (!cur || !audio.src) { reply(false); return; }
+    audio.play().then(() => ticking(true)).catch(() => {});
+    reply(true);
+  }
   else if (m.cmd === 'rate') audio.playbackRate = m.rate;
 });

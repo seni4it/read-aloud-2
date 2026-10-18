@@ -5,11 +5,24 @@
 const SERVER = 'http://127.0.0.1:8793';
 let owner = null;  // { tab, id, engine }: who is speaking now
 
-let made = null;
-async function offscreen() {  // one offscreen page plays the audio; asking twice only finds the one already there
-  made = made || chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: ['AUDIO_PLAYBACK'], justification: 'Play the natural voice' })
-    .catch((e) => { if (!/single offscreen/i.test(String(e && e.message))) { made = null; throw e; } });
-  await made;
+// One offscreen page plays the audio. Chrome closes it after 30 s without sound (a long pause), so look each time
+// whether it is still there, and make it again when it is not.
+let making = null;
+const hasOffscreen = () => chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] }).then((c) => c.length > 0, () => false);
+async function offscreen() {
+  if (await hasOffscreen()) return;
+  making = making || chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: ['AUDIO_PLAYBACK'], justification: 'Play the natural voice' })
+    .catch((e) => { if (!/single offscreen/i.test(String(e && e.message))) throw e; })
+    .finally(() => { making = null; });
+  await making;
+}
+
+// Resume after a pause: when the audio is gone (the offscreen page was closed, or this background was restarted
+// and forgot who was speaking), the page says the sentence again from the word it reached.
+async function resume(tab, id) {
+  const ok = owner && owner.tab === tab && owner.engine === 'kokoro' && await hasOffscreen()
+    && await chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'resume' }).catch(() => false);
+  if (!ok) tell(tab, { evt: 'lost', id });
 }
 
 async function tell(tab, msg) {
@@ -53,8 +66,9 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     if (m.cmd === 'speak') speak(tab, m);
     else if (m.cmd === 'stop') { if (owner && owner.tab === tab) stopOwner(tab); }
     else if (m.cmd === 'warm') offscreen().then(() => chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'warm', texts: m.texts, voice: m.voice, prio: m.prio, batch: m.batch })).catch(() => {});
-    else if (['pause', 'resume', 'rate'].includes(m.cmd) && owner && owner.tab === tab && owner.engine === 'kokoro') {
-      chrome.runtime.sendMessage({ to: 'offscreen', cmd: m.cmd, rate: m.rate });
+    else if (m.cmd === 'resume') resume(tab, m.id);
+    else if (['pause', 'rate'].includes(m.cmd) && owner && owner.tab === tab && owner.engine === 'kokoro') {
+      chrome.runtime.sendMessage({ to: 'offscreen', cmd: m.cmd, rate: m.rate }).catch(() => {});
     } else if (m.cmd === 'voices') { voices().then(reply); return true; }
     else if (m.cmd === 'myTab') reply(tab);
   } else if (m.to === 'bg-evt') {  // from the offscreen page

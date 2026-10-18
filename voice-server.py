@@ -190,6 +190,18 @@ def _make(key, text, voice, ahead=False, prio=1, batch=0):
             _turn.notify_all()
 
 
+def synth_low(text, voice):
+    """synth() for the MP3 export: it takes the engine like read-ahead, after everything else, so the export never runs
+    on the GPU at the same time as a sentence you are listening to, and never holds one up for long."""
+    _take(True, 0, 0)
+    try:
+        return synth(text, voice)
+    finally:
+        _gen.release()
+        with _turn:
+            _turn.notify_all()
+
+
 def warm_up():
     for lang, voice in (('a', 'af_heart'), ('b', 'bf_emma'), ('i', 'if_sara')):
         try:
@@ -268,7 +280,8 @@ def lib_cover(bid):
     out = os.path.join(COVERS, bid + '.png')
     if os.path.exists(out):
         return out
-    b = lib_index().get(bid)
+    with _lib:
+        b = lib_index().get(bid)
     if not b:
         return None
     with tempfile.TemporaryDirectory() as tmp:
@@ -310,7 +323,7 @@ def export_book(bid, job):
                 for i, text in enumerate(pieces):
                     if st.get('cancel'):
                         break
-                    audio, _ = synth(text[:MAX_CHARS], voice)
+                    audio, _ = synth_low(text[:MAX_CHARS], voice)
                     a, _ = trim(audio, text)
                     f.write(a.astype(np.float32))
                     f.write(pause(0.9 if i == 0 else 0.3))
@@ -480,6 +493,13 @@ def yt_upload_one(item, q):
 
 def yt_worker():
     """Every 5 minutes: one pending upload, while connected and not paused by the daily quota."""
+    with _yt:  # an upload cut off when the server stopped goes again (it stayed "uploading")
+        q = yt_load(YT_QUEUE, {})
+        stuck = [i for i in q.get('items', []) if i.get('state') == 'uploading']
+        for i in stuck:
+            i['state'] = 'pending'
+        if stuck:
+            yt_save(YT_QUEUE, q)
     while True:
         time.sleep(300)
         try:
@@ -494,18 +514,29 @@ def yt_worker():
                     continue
                 item['state'] = 'uploading'
                 yt_save(YT_QUEUE, q)
+            # The upload takes minutes, without the lock: chapters exported meanwhile join the queue, and the
+            # buttons keep working. Only this item's result and the playlists are written back into the queue as it is then.
+            item, lists, pause = dict(item), {'playlists': dict(q.get('playlists', {}))}, False
             try:
-                yt_upload_one(item, q)
+                yt_upload_one(item, lists)
             except urllib.error.HTTPError as e:
                 body = e.read().decode(errors='replace')[:300]
                 if e.code == 403 and 'quota' in body.lower():
                     item['state'] = 'pending'
-                    q['paused_until'] = time.time() + 6 * 3600  # Google's quota comes back each day; look again in 6 hours
+                    pause = True  # Google's quota comes back each day; look again in 6 hours
                 else:
                     item.update(state='error', error=f'{e.code} {body[:150]}')
             except Exception as e:
                 item.update(state='error', error=str(e)[:200])
             with _yt:
+                q = yt_load(YT_QUEUE, {'items': [], 'auto': True, 'paused_until': 0})
+                for i in q['items']:
+                    if i['mp3'] == item['mp3'] and i['state'] == 'uploading':
+                        i.update(state=item['state'], video=item.get('video', ''), error=item.get('error', ''))
+                        break
+                q.setdefault('playlists', {}).update(lists['playlists'])
+                if pause:
+                    q['paused_until'] = time.time() + 6 * 3600
                 yt_save(YT_QUEUE, q)
         except Exception:
             pass
@@ -666,7 +697,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.reply(body, 'application/json')
         m = re.match(r'^/library/(file|cover)/([0-9a-f]{12})$', url.path)
         if m:
-            b = lib_index().get(m.group(2))
+            with _lib:
+                b = lib_index().get(m.group(2))
             path = (os.path.join(LIB, b['file']) if m.group(1) == 'file' else lib_cover(m.group(2))) if b else None
             if not path or not os.path.exists(path):
                 self.send_error(404, 'Not found')
@@ -777,7 +809,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 m = re.match(r'^/youtube/upload/([0-9a-f]{12})$', url.path)
                 if m:  # queue every MP3 already made for this book
                     st = _exports.get(m.group(1)) or {}
-                    b = lib_index().get(m.group(1)) or {}
+                    with _lib:
+                        b = lib_index().get(m.group(1)) or {}
                     folder = st.get('folder') or os.path.join(AUDIO, b.get('name', ''))
                     n = 0
                     if os.path.isdir(folder):

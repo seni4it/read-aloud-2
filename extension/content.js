@@ -143,12 +143,19 @@
   // The voice follows the text: Russian (Cyrillic) is read by the Mac's Russian voice, an Italian page by Sara,
   // everything else by the voice you chose.
   const PAGE_IT = /^it/i.test(document.documentElement.lang || '');
+  let natOff = false, natTimer = null;  // the voice server failed: the Mac voice reads until it answers again
   function voiceFor(text) {
     if (/[\u0400-\u04FF]/.test(text || '')) return 'system:Milena';
+    if (natOff && cfg.voice.startsWith('kokoro:')) return 'system:';
     if (PAGE_IT && /^kokoro:(a|b)/.test(cfg.voice)) return 'kokoro:if_sara';
     return cfg.voice;
   }
-  let cur = cfg.voice;  // the voice of the sentence being read
+  function retryNatural() {  // ask the server every 5 s; the next sentence after it answers is natural again
+    clearTimeout(natTimer);
+    natTimer = setTimeout(() => chrome.runtime.sendMessage({ to: 'bg', cmd: 'voices' })
+      .then((v) => { if (v && v.server) natOff = false; else retryNatural(); }).catch(retryNatural), 5000);
+  }
+  let cur = cfg.voice;  // the voice of the sentence being read (set by play)
   const engine = () => (cur.startsWith('kokoro:') ? 'kokoro' : 'system');
   const voiceId = () => cur.replace(/^(kokoro|system):/, '');
 
@@ -186,7 +193,7 @@
   }
   function resume() {
     if (!S.paused) return;
-    if (engine() === 'kokoro') { S.paused = false; send({ cmd: 'resume' }); ui(); } else play(S.i, S.w);
+    if (engine() === 'kokoro') { S.paused = false; send({ cmd: 'resume', id: S.id }); ui(); } else play(S.i, S.w);
   }
   function stop() {
     S.id++; S.playing = false; S.paused = false; send({ cmd: 'stop' });
@@ -210,8 +217,9 @@
       let k = 0; while (k < S.words.length - 1 && S.words[k + 1] <= m.char) k++;
       mark(S.base + k);
     } else if (m.evt === 'end') play(S.i + 1);
+    else if (m.evt === 'lost') { if (!S.paused) play(S.i, S.w); }  // the audio was gone after a long pause: say it again from this word
     else if (m.evt === 'error') {
-      if (engine() === 'kokoro') { ui('The natural voice is off. Using the Mac voice.'); cfg.voice = 'system:'; cur = 'system:'; play(S.i, S.w); }
+      if (engine() === 'kokoro') { ui('The natural voice is not answering. Using the Mac voice for now.'); natOff = true; retryNatural(); play(S.i, S.w); }
       else { stop(); ui(m.why || 'The voice stopped.'); }
     }
   }
@@ -239,13 +247,13 @@
   }
   // the mouse rests on a paragraph or the listen button: prepare its first sentence, so reading starts at once
   function warm(blocks, at, given, prio = 2) {
-    cur = voiceFor(document.body ? document.body.innerText.slice(0, 400) : '');
-    if (engine() !== 'kokoro' || S.playing || hiddenHere()) return;
+    const v = voiceFor(document.body ? document.body.innerText.slice(0, 400) : '');  // never into cur: Pause must keep the voice being read
+    if (!v.startsWith('kokoro:') || S.playing || hiddenHere()) return;
     const segs = given || segments(blocks); const i = segs.length ? Math.max(0, at(segs)) : -1;
     if (i < 0) return;
     const first = quick(segs[i]);
     const next = first.length === 1 && first[0].words.length < 6 && segs[i + 1] ? quick(segs[i + 1]) : [segs[i + 1]];
-    send({ cmd: 'warm', voice: voiceId(), prio, texts: [...first, ...next].filter(Boolean).map((x) => x.say).slice(0, 2) });
+    send({ cmd: 'warm', voice: v.slice(7), prio, texts: [...first, ...next].filter(Boolean).map((x) => x.say).slice(0, 2) });
   }
   const onScreen = (segs) => segs.findIndex((s) => { const r = rangeOf(s.b, s.start, s.end).getBoundingClientRect(); return r.bottom > 60 && r.height > 0; });
   function readPage() {  // from the first sentence on screen, or the top of the article
@@ -361,8 +369,8 @@
   // everything on screen, top first: each paragraph's opening is cut short the same way a start would cut it
   let screenNo = 0;
   function warmScreen() {
-    cur = voiceFor('');
-    if (document.visibilityState !== 'visible' || engine() !== 'kokoro' || S.playing || hiddenHere()) return;
+    const v = voiceFor('');
+    if (document.visibilityState !== 'visible' || !v.startsWith('kokoro:') || S.playing || hiddenHere()) return;
     const texts = [];
     for (const s of pageSegs(root())) {
       const r = rangeOf(s.b, s.start, s.end).getBoundingClientRect();
@@ -370,7 +378,7 @@
       if (r.top > innerHeight || texts.length >= 30) break;
       texts.push(...(s.start === firstOf(s.b) || !texts.length ? quick(s) : [s]).map((x) => x.say));
     }
-    if (texts.length) send({ cmd: 'warm', voice: voiceId(), prio: 1, batch: Date.now() + ++screenNo, texts });
+    if (texts.length) send({ cmd: 'warm', voice: v.slice(7), prio: 1, batch: Date.now() + ++screenNo, texts });
   }
   const firstOf = (b) => { const m = /\S/.exec(b.text); return m ? m.index : 0; };
   setTimeout(() => (window.requestIdleCallback || setTimeout)(warmScreen), 1200);

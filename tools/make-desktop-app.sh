@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds "Read Aloud.app" in ~/Applications: the desktop PDF reader with a library.
+# Builds "Read Aloud.app" in /Applications: the desktop PDF reader with a library.
 # It starts the voice server (voice-server.py) when needed and opens the library in its own window.
 set -e
 DIR="$(cd "$(dirname "$0")/.." && pwd)"

@@ -61,7 +61,7 @@ Without the voice server the add-on still works, with the voices built into the 
 
 ## Desktop reader with a library
 
-`tools/make-desktop-app.sh` builds **Read Aloud.app** in `~/Applications`. Open it like any app: it starts the voice
+`tools/make-desktop-app.sh` builds **Read Aloud.app** in `/Applications`. Open it like any app: it starts the voice
 server when needed and opens your library in its own window (Chrome, without tabs).
 - Add PDFs with **+ Add PDF** or by dragging them onto the window. They are kept in `Documents/Read Aloud Library`;
   PDFs you copy into that folder yourself appear too.
