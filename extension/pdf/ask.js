@@ -25,8 +25,13 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
   const pageOf = (s) => { const o = s && s.charOwners && s.charOwners.find(Boolean); return o ? o.page : (s && s.page) || 0; };
   const chapterAt = (i) => { let t = ''; for (const s of state.sections || []) if (s.startSentence <= i) t = s.title; return t; };
   const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const post = async (path, body) => (await fetch(SERVER + path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ key: key(), name: name(), ...body }) })).json();
+  const post = async (path, body) => {
+    let r;
+    try { r = await fetch(SERVER + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: key(), name: name(), ...body }) }); }
+    catch { throw new Error('the voice server did not answer'); }
+    if (!r.ok) throw new Error(r.status === 404 ? 'the voice server is an older version: restart it (or the Read Aloud app)' : `the voice server answered ${r.status}`);
+    return r.json();
+  };
 
   // An answer as HTML: paragraphs, "- " lists, **bold**, and page references that jump to the page.
   function format(text) {
@@ -105,6 +110,15 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
   function pauseReading() { rd.token++; rd.playing = false; voice.hush(); buttons(); }
   function finishReading() { rd.token++; rd.playing = false; rd.pos = 0; rd.id = ''; if (hl) hl.clear(); buttons(); }
   function buttons() {  // the Play / Pause labels, without redrawing the answers
+    const bar = $('askPlayer');
+    if (bar) {
+      bar.hidden = !rd.id;
+      const what = rd.id ? (rd.id[0] === 'c' ? 'Hostile check of answer ' : 'Answer ') + (Number(rd.id.slice(1)) + 1) : '';
+      bar.querySelector('.ap-what').textContent = what;
+      const pp = bar.querySelector('#apPlay');
+      pp.textContent = rd.playing ? ICON.pause : ICON.play;
+      pp.setAttribute('aria-label', rd.playing ? 'Pause' : 'Play');
+    }
     for (const b of box.querySelectorAll('button.say')) {
       const on = b.dataset.id === rd.id && rd.playing;
       b.textContent = on ? `${ICON.pause} Pause` : (b.dataset.id === rd.id && rd.pos ? `${ICON.play} Go on reading` : `${ICON.play} Read aloud`);
@@ -131,6 +145,10 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
     const turns = st.turns.map((t, i) => `<div class="turn"><p class="q">${esc(t.q)}<small>page ${esc(t.page)}${t.chapter ? ' · ' + esc(t.chapter) : ''}${t.sources ? ' · ' + esc(SOURCES[t.sources] || '') : ''}</small></p>
       <div class="a readable" data-id="a${i}">${format(t.a)}</div><div class="turn-extra" data-i="${i}">${extra(t, i)}</div></div>`).join('');
     box.innerHTML = `<div class="turns" id="askTurns">${turns || '<p class="notes-empty">Ask about anything in this book. Claude answers from the book first and gives the pages. Select words on the page and press “Ask Claude” to ask about them. While an answer is read, click any word in it to read from there.</p>'}</div>
+      <div class="ask-player" id="askPlayer" hidden><span class="ap-what"></span>
+        <button type="button" id="apBack" title="Back to the start of the answer" aria-label="Back to the start">⏮</button>
+        <button type="button" id="apPlay" class="ap-pp" aria-label="Play">${ICON.play}</button>
+        <button type="button" id="apStop" title="Stop reading" aria-label="Stop reading">■</button></div>
       ${busy ? `<p class="ask-busy" role="status">Claude is reading the book… <span id="askSecs">0</span> s</p>` : ''}
       ${note ? `<p class="kp-note" role="status">${esc(note)}</p>` : ''}
       ${selection ? `<p class="ask-sel">About: “${esc(selection.length > 160 ? selection.slice(0, 160) + '…' : selection)}” <button type="button" class="rename" id="askNoSel">×</button></p>` : ''}
@@ -165,7 +183,7 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
     try {
       const r = await post('/ask/check', { i, model });
       if (r.error) note = 'The check did not finish: ' + r.error; else st.turns[i].check = r.check;
-    } catch { note = 'The check did not finish: the voice server did not answer.'; }
+    } catch (err) { note = 'The check did not finish: ' + err.message + '.'; }
     checking.delete(i); paintExtra(i);
     if (note) { const n = box.querySelector('.kp-note'); if (!n && !rd.playing) paint(); }
   }
@@ -182,7 +200,7 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
       const r = await post('/ask', { question, page: pageOf(cur), chapter: chapterAt(i), passage, selection, highlights: highlights(), model, sources });
       if (r.error) note = 'No answer: ' + r.error;
       else { st.turns.push(r.turn); st.folder = r.folder; selection = ''; }
-    } catch { note = 'No answer: the voice server did not answer.'; }
+    } catch (err) { note = 'No answer: ' + err.message + '.'; }
     clearInterval(tick); busy = false; paint();
     if (note) $('askQ').value = question;
     else if (autoCheck) check(st.turns.length - 1);
@@ -209,6 +227,9 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
     else if (t.id === 'askOpen') { const r = await post('/ask/open', {}).catch(() => null); if (!r) { note = 'The voice server did not answer.'; paint(); } }
     else if (t.id === 'askNew') { await post('/ask/new', {}).catch(() => {}); note = 'The next question starts a new conversation. The old one stays in conversation.md.'; paint(); }
     else if (t.dataset.check !== undefined) check(Number(t.dataset.check));
+    else if (t.id === 'apPlay') { if (rd.playing) pauseReading(); else if (rd.id) readFrom(rd.pos); }
+    else if (t.id === 'apBack') { if (rd.id) readFrom(0); }
+    else if (t.id === 'apStop') { voice.hush(); finishReading(); }
     else if (t.classList.contains('say')) {
       const el = box.querySelector(`.readable[data-id="${t.dataset.id}"]`);
       if (rd.id === t.dataset.id && rd.playing) pauseReading();

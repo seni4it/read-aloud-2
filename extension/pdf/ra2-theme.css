@@ -107,3 +107,10 @@
 .ask .check p { margin: 0 0 6px; }
 .ask .ask-opt { display: flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--muted); }
 .ask .ask-opt select { flex: 1 1 auto; font: inherit; font-size: 12.5px; padding: 3px 4px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+.ask .ask-player { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 999px; background: var(--navy); color: #fff; }
+.ask .ask-player[hidden] { display: none; }
+.ask .ask-player .ap-what { flex: 1 1 auto; font-size: 13px; font-weight: 600; padding-left: 8px; }
+.ask .ask-player button { all: unset; cursor: pointer; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 999px; font-size: 15px; }
+.ask .ask-player button:hover { background: rgba(255,255,255,.15); }
+.ask .ask-player .ap-pp { background: var(--accent); color: #111; }
+.ask .ask-player button:focus-visible { outline: 3px solid #6ea8ff; }
