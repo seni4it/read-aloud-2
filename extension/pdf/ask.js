@@ -38,6 +38,7 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
     return esc(text).split(/\n{2,}/).map((block) => {
       const lines = block.split('\n');
       const inline = (t) => t.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
         .replace(/\(pp?\. ?(\d+)([–-]\d+)?\)/g, (m, p) => `<a href="#" class="pg" data-page="${p}">${m}</a>`);
       if (lines.every((l) => /^\s*([-*•]|\d+\.)\s/.test(l))) return '<ul>' + lines.map((l) => `<li>${inline(l.replace(/^\s*([-*•]|\d+\.)\s/, ''))}</li>`).join('') + '</ul>';
       return `<p>${inline(lines.join('<br>'))}</p>`;
@@ -139,7 +140,7 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
   }
   // the question box grows with what you type (up to half the panel), and keeps your words when the panel is redrawn
   let draft = '';
-  function grow(q) { q.style.height = 'auto'; q.style.height = Math.min(q.scrollHeight + 2, Math.max(120, box.clientHeight * 0.5)) + 'px'; }
+  function grow(q) { q.style.height = 'auto'; q.style.height = Math.max(130, Math.min(q.scrollHeight + 2, box.clientHeight * 0.5)) + 'px'; }
   box.addEventListener('input', (e) => { if (e.target.id === 'askQ') { draft = e.target.value; grow(e.target); } });
   function paint() {
     if (rd.playing) pauseReading();
@@ -148,7 +149,12 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
     if (!st.claude) { box.innerHTML = '<p class="notes-empty">Claude Code was not found on this Mac. Install it, then open the book again.</p>'; return; }
     const turns = st.turns.map((t, i) => `<div class="turn"><p class="q">${esc(t.q)}<small>page ${esc(t.page)}${t.chapter ? ' · ' + esc(t.chapter) : ''}${t.sources ? ' · ' + esc(SOURCES[t.sources] || '') : ''}</small></p>
       <div class="a readable" data-id="a${i}">${format(t.a)}</div><div class="turn-extra" data-i="${i}">${extra(t, i)}</div></div>`).join('');
-    box.innerHTML = `<div class="turns" id="askTurns">${turns || '<p class="notes-empty">Ask about anything in this book. Claude answers from the book first and gives the pages. Select words on the page and press “Ask Claude” to ask about them. While an answer is read, click any word in it to read from there.</p>'}</div>
+    box.innerHTML = `<div class="ask-top">
+      <div class="ask-row"><select id="askModel" aria-label="Claude model">${Object.entries(MODELS).map(([k, v]) => `<option value="${k}" ${k === model ? 'selected' : ''}>${v}</option>`).join('')}</select>
+        <select id="askSources" aria-label="Sources">${Object.entries(SOURCES).map(([k, v]) => `<option value="${k}" ${k === sources ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+      <label class="ask-opt"><input type="checkbox" id="askCheck" ${autoCheck ? 'checked' : ''}> Hostile check of every answer (a second Claude tries to prove the book parts wrong)</label>
+      <div class="note-tools"><button type="button" class="rename" id="askContinue">Continue in Claude (Terminal)</button> · <button type="button" class="rename" id="askConv">Open the whole conversation</button> · <button type="button" class="rename" id="askOpen">Open the book folder</button> · <button type="button" class="rename" id="askNew">New conversation</button></div></div>
+      <div class="turns" id="askTurns">${turns || '<p class="notes-empty">Ask about anything in this book. Claude answers from the book first and gives the pages. Select words on the page and press “Ask Claude” to ask about them. While an answer is read, click any word in it to read from there.</p>'}</div>
       <div class="ask-player" id="askPlayer" hidden><span class="ap-what"></span>
         <button type="button" id="apBack" title="Back to the start of the answer" aria-label="Back to the start">⏮</button>
         <button type="button" id="apPlay" class="ap-pp" aria-label="Play">${ICON.play}</button>
@@ -156,12 +162,8 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
       ${busy ? `<p class="ask-busy" role="status">Claude is reading the book… <span id="askSecs">0</span> s</p>` : ''}
       ${note ? `<p class="kp-note" role="status">${esc(note)}</p>` : ''}
       ${selection ? `<p class="ask-sel">About: “${esc(selection.length > 160 ? selection.slice(0, 160) + '…' : selection)}” <button type="button" class="rename" id="askNoSel">×</button></p>` : ''}
-      <textarea id="askQ" rows="4" placeholder="Your question (Enter to ask, Shift+Enter for a new line)" ${busy ? 'disabled' : ''}></textarea>
-      <div class="ask-row"><button type="button" class="btn small" id="askGo" ${busy ? 'disabled' : ''}>Ask Claude</button>
-        <select id="askModel" aria-label="Claude model">${Object.entries(MODELS).map(([k, v]) => `<option value="${k}" ${k === model ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
-      <label class="ask-opt">Sources <select id="askSources">${Object.entries(SOURCES).map(([k, v]) => `<option value="${k}" ${k === sources ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-      <label class="ask-opt"><input type="checkbox" id="askCheck" ${autoCheck ? 'checked' : ''}> Hostile check of every answer (a second Claude tries to prove the book parts wrong)</label>
-      <div class="note-tools"><button type="button" class="rename" id="askContinue">Continue in Claude (Terminal)</button> · <button type="button" class="rename" id="askConv">Open the whole conversation</button> · <button type="button" class="rename" id="askOpen">Open the book folder</button> · <button type="button" class="rename" id="askNew">New conversation</button></div>`;
+      <textarea id="askQ" rows="5" placeholder="Your question. Type or dictate. Enter to ask, Shift+Enter for a new line." ${busy ? 'disabled' : ''}></textarea>
+      <button type="button" class="btn ask-go" id="askGo" ${busy ? 'disabled' : ''}>Ask Claude</button>`;
     const t = $('askTurns'); t.scrollTop = t.scrollHeight;
     const q = $('askQ'); q.value = draft; grow(q);
   }
@@ -262,22 +264,30 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
     }
   });
 
-  const tabs = ['contentsTab', 'notesTab', 'askTab'];
+  // the panel on the right side of the page; its width is dragged at its left edge and remembered
+  const pane = $('askPane');
+  pane.style.width = Math.max(340, Math.min(Number(pref('ra2.askWidth', 520)), innerWidth - 300)) + 'px';
   function show() {
-    for (const id of tabs) $(id).classList.toggle('on', id === 'askTab');
-    els.toc.hidden = true; $('notes').hidden = true; box.hidden = false;
-    els.sidebar.hidden = false; els.sidebar.classList.add('asking');
-    note = ''; if (loadedFor !== key()) refresh(); else paint();
-    setTimeout(() => $('askQ')?.focus(), 0);
+    pane.hidden = false; $('askTab').classList.add('on');
+    note = '';
+    const focus = () => { const q = $('askQ'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } };
+    if (loadedFor !== key()) refresh().then(focus); else { paint(); focus(); }
   }
-  $('askTab').addEventListener('click', show);
-  for (const id of ['contentsTab', 'notesTab']) $(id).addEventListener('click', () => { box.hidden = true; els.sidebar.classList.remove('asking'); $('askTab').classList.remove('on'); });
+  function hide() { if (rd.playing) pauseReading(); pane.hidden = true; $('askTab').classList.remove('on'); }
+  $('askTab').addEventListener('click', () => (pane.hidden ? show() : hide()));
+  $('askClose').addEventListener('click', hide);
+  $('askGrip').addEventListener('pointerdown', (e) => {
+    e.preventDefault(); $('askGrip').setPointerCapture(e.pointerId);
+    const move = (m) => { pane.style.width = Math.max(340, Math.min(innerWidth - m.clientX, innerWidth - 300)) + 'px'; };
+    const up = () => { $('askGrip').removeEventListener('pointermove', move); setPref('ra2.askWidth', parseInt(pane.style.width, 10)); };
+    $('askGrip').addEventListener('pointermove', move); $('askGrip').addEventListener('pointerup', up, { once: true });
+  });
   // "Ask Claude" in the bar that appears over selected text
   document.addEventListener('ra2-ask', (e) => { selection = String(e.detail || '').replace(/\s+/g, ' ').trim().slice(0, 2000); show(); });
 
   let hlTimer = null;
   return {
-    reload() { finishReading(); loadedFor = null; st = { folder: '', hasBook: false, turns: [], claude: true }; if (!box.hidden) refresh(); },
+    reload() { finishReading(); loadedFor = null; st = { folder: '', hasBook: false, turns: [], claude: true }; if (!pane.hidden) refresh(); },
     stopReading() { if (rd.playing || rd.id) finishReading(); },  // Play in the player goes back to the book
     highlightsChanged() {  // keep highlights.md in the book's folder up to date
       clearTimeout(hlTimer);

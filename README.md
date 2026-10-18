@@ -71,7 +71,7 @@ server when needed and opens your library in its own window (Chrome, without tab
   list), or press the marker button in the player while it reads to keep the sentence being read. The
   **Highlights** tab beside Contents lists them by group; click one to go to it. Library books keep them in
   `Documents/Read Aloud Library/.notes/<id>.json`; PDFs opened in Chrome keep them in the browser.
-- **Ask Claude:** the **Ask** tab beside Highlights. Type a question about the book, or select words on the page
+- **Ask Claude:** the **Ask** tab beside Highlights opens a panel on the right side of the page (drag its left edge to make it wider); the question box is at the bottom. Type a question about the book, or select words on the page
   and press **Ask Claude**. Claude answers from the book first, gives the pages (click one to go there), and marks
   what comes from outside the book. **Read aloud** under an answer reads it with the chosen voice: the button
   becomes **Pause** / **Go on reading**, the word being read is underlined, a click on any word reads from there,

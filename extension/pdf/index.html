@@ -45,7 +45,6 @@
     </div>
     <nav class="toc" id="toc"></nav>
     <div class="notes" id="notes" hidden></div>
-    <div class="notes ask" id="ask" hidden></div>
     <div class="opts">
       <label class="opt"><input type="checkbox" id="optCitations" checked><span>Skip citations</span></label>
       <label class="opt"><input type="checkbox" id="optCaptions" checked><span>Skip figure captions</span></label>
@@ -70,6 +69,12 @@
       <p class="hint">Everything runs on your Mac. Nothing is uploaded.</p>
     </div>
   </section>
+
+  <aside class="askpane" id="askPane" hidden aria-label="Ask Claude">
+    <div class="askpane-grip" id="askGrip" title="Drag to make the panel wider or narrower"></div>
+    <div class="askpane-head"><span>Ask Claude</span><button class="icon-btn" id="askClose" title="Close" aria-label="Close Ask Claude">×</button></div>
+    <div class="ask" id="ask"></div>
+  </aside>
 </main>
 
 <footer class="player" id="player" hidden>
