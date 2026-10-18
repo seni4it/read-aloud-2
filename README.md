@@ -76,7 +76,7 @@ server when needed and opens your library in its own window (Chrome, without tab
   what comes from outside the book. **Read aloud** under an answer reads it with the chosen voice: the button
   becomes **Pause** / **Go on reading**, the word being read is underlined, a click on any word reads from there,
   and Space plays or pauses the answer. **Sources**: Only this book; Book, then my other books (their folders in
-  Books/) and Claude's knowledge; or Also search the internet. Anything not from the book starts with "I looked
+  Books/) and Claude's knowledge; Also search the internet; or Find papers that support or dispute the book (Claude searches PubMed and Europe PMC, reads the abstracts, and lists for each claim of the book the papers that support, dispute or limit it, with links; **Find papers on this** under an answer does the same for that answer). Every cited paper is checked against PubMed or the DOI register, the answer ends with a citation check (papers not found are named), and the list goes to papers.md in the book folder. Anything not from the book starts with "I looked
   outside the book:" and names its source. **Hostile check** (automatic, or the button under an answer): a second,
   separate Claude searches the book and tries to prove the book parts of the answer wrong, claim by claim
   (supported, partly, not in the book, wrong page), lists passages that contradict or limit it, and ends with

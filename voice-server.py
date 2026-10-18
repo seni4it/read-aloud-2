@@ -645,6 +645,26 @@ Semion (an endodontist) asks these questions while he listens to the book in Rea
 - Do not change any file.
 """
 
+PAPERS_PROMPT = '''Sources for this question: this book, and published research papers.
+1. Find the claims of the book that matter for the question, with their pages.
+2. Search the research literature for each claim:
+   - PubMed: WebFetch https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&retmax=15&sort=relevance&term=<words>
+     then the abstracts: https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&rettype=abstract&retmode=text&id=<PMID,PMID>
+   - Europe PMC: https://www.ebi.ac.uk/europepmc/webservices/rest/search?format=json&resultType=core&pageSize=15&query=<words>
+   - WebSearch when these find too little.
+   Prefer systematic reviews, meta-analyses and well-made laboratory or clinical studies, and newer papers. Read the
+   abstract before you cite a paper.
+3. For each claim, list the papers that SUPPORT, DISPUTE or LIMIT it: first author, year, journal, what they found
+   (one or two sentences, with numbers when the abstract has them), and the link (https://pubmed.ncbi.nlm.nih.gov/<PMID>/
+   or https://doi.org/<DOI>). Say how strong the evidence is. Say when the book is older than the evidence.
+4. Cite only papers that you found and read in this search. Never cite a paper from memory. Never invent a PMID or DOI.
+5. Start the part about papers with "I looked outside the book:".
+6. At the very end, add this block (it is saved in papers.md and removed from the answer):
+```papers
+[{"claim": "...", "page": 39, "verdict": "supports", "cite": "Author A, et al. Year. Title. Journal.", "link": "https://..."}]
+```
+   verdict is one of: supports, disputes, limits.'''
+
 SOURCES = {
     'book': 'Sources for this question: ONLY this book. Do not use your own knowledge or other books. If the book does '
             'not answer the question, say so.',
@@ -654,6 +674,7 @@ SOURCES = {
     'web': 'Sources for this question: this book first. If the book is not enough, you may also use his other books '
            '(../<book>/book.md), your own knowledge and the internet (WebSearch, WebFetch). Start each such part with '
            '"I looked outside the book:" and name the source, with the link for a web page.',
+    'papers': PAPERS_PROMPT,
 }
 CHECK_PROMPT = """You are a hostile examiner. Another assistant answered a question about this book. Try to prove the
 answer wrong. The book's text is in book.md; every paragraph starts with its page, like [p. 23]. Search it yourself.
@@ -678,7 +699,53 @@ The answer to examine:
 """
 
 
-def run_claude(d, prompt, model, tools=('Read', 'Grep', 'Glob'), resume='', extra=()):
+def paper_exists(link):
+    """True when a PubMed or DOI link points to a real record (PubMed esummary, doi.org handle API); None when unknown."""
+    try:
+        pm = re.search(r'pubmed\.ncbi\.nlm\.nih\.gov/(\d+)', link or '')
+        if pm:
+            u = f'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&retmode=json&id={pm.group(1)}'
+            with urllib.request.urlopen(u, timeout=20) as r:
+                rec = json.loads(r.read()).get('result', {}).get(pm.group(1), {})
+            return bool(rec.get('title')) and 'error' not in rec
+        doi = re.search(r'doi\.org/(10\.\S+)', link or '')
+        if doi:
+            u = 'https://doi.org/api/handles/' + urllib.parse.quote(doi.group(1).rstrip('.,);'), safe='/')
+            with urllib.request.urlopen(u, timeout=20) as r:
+                return json.loads(r.read()).get('responseCode') == 1
+    except urllib.error.HTTPError as e:
+        return False if e.code == 404 else None
+    except Exception:
+        return None
+    return None
+
+
+def save_papers(d, papers, question):
+    """Check that each cited paper exists, add them to papers.md, and return a short citation report for the answer."""
+    found, missing, unknown = 0, [], 0
+    lines = [f"## {time.strftime('%d %b %Y %H:%M')} · {question[:120]}", '']
+    for p in papers:
+        ok = paper_exists(str(p.get('link', '')))
+        mark = 'checked' if ok else ('NOT FOUND' if ok is False else 'not checked')
+        found += ok is True; unknown += ok is None
+        if ok is False:
+            missing.append(str(p.get('cite', p.get('link', '')))[:120])
+        lines.append(f"- **{str(p.get('verdict', '?')).upper()}** the book (p. {p.get('page', '?')}): {str(p.get('claim', ''))[:300]}\n"
+                     f"  {str(p.get('cite', ''))[:400]} {p.get('link', '')} ({mark})")
+    path = os.path.join(d, 'papers.md')
+    with open(path, 'a', encoding='utf-8') as f:
+        if os.path.getsize(path) == 0:
+            f.write('# Papers that support or dispute the book\n\nFound by Claude in Read Aloud 2. "checked" means the PubMed or DOI record exists.\n\n')
+        f.write('\n'.join(lines) + '\n\n')
+    report = f'Citation check: {found} of {len(papers)} papers were found in PubMed or the DOI register.'
+    if unknown:
+        report += f' {unknown} could not be checked (no PubMed or DOI link).'
+    if missing:
+        report += ' NOT FOUND, do not trust: ' + '; '.join(missing) + '.'
+    return report + ' The list is in papers.md in the book folder.'
+
+
+def run_claude(d, prompt, model, tools=('Read', 'Grep', 'Glob'), resume='', extra=(), timeout=600):
     """Claude Code in the book's folder, read-only tools; returns its JSON result."""
     banned = [t for t in ('Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch') if t not in tools]
     # only the book folder's own settings (CLAUDE.md): no user plugins, hooks or MCP servers in these answers
@@ -688,7 +755,7 @@ def run_claude(d, prompt, model, tools=('Read', 'Grep', 'Glob'), resume='', extr
         cmd += ['--resume', resume]
     env = {k: v for k, v in os.environ.items() if not k.startswith('CLAUDE_CODE_') and k not in ('CLAUDECODE', 'ANTHROPIC_API_KEY')}
     env['PATH'] = os.path.dirname(CLAUDE) + os.pathsep + env.get('PATH', '/usr/bin:/bin')
-    r = subprocess.run(cmd, cwd=d, env=env, capture_output=True, text=True, timeout=600)
+    r = subprocess.run(cmd, cwd=d, env=env, capture_output=True, text=True, timeout=timeout)
     try:
         out = json.loads(r.stdout)
     except ValueError:
@@ -785,10 +852,21 @@ def ask_claude(d, data):
     model = MODELS.get(data.get('model'), 'sonnet')
     with open(os.path.join(d, 'CLAUDE.md'), 'w', encoding='utf-8') as f:  # the rules as they are now
         f.write(BOOK_RULES)
-    tools = ('Read', 'Grep', 'Glob') + (('WebSearch', 'WebFetch') if sources == 'web' else ())
+    tools = ('Read', 'Grep', 'Glob') + (('WebSearch', 'WebFetch') if sources in ('web', 'papers') else ())
     out = run_claude(d, '\n'.join(prompt), model, tools, '' if data.get('fresh') else meta.get('session', ''),
-                     ('--add-dir', BOOKS) if sources != 'book' else ())
-    turn = {'q': q, 'a': out['result'].strip(), 'page': page, 'chapter': chapter, 't': time.time(), 'model': model, 'sources': sources}
+                     ('--add-dir', BOOKS) if sources != 'book' else (), timeout=1200 if sources == 'papers' else 600)
+    answer = out['result'].strip()
+    papers = []
+    m = re.search(r'```papers\s*(\[.*?\])\s*```', answer, re.S)
+    if m:
+        answer = (answer[:m.start()] + answer[m.end():]).strip()
+        try:
+            papers = [x for x in json.loads(m.group(1)) if isinstance(x, dict)][:40]
+        except ValueError:
+            papers = []
+    if papers:
+        answer += '\n\n' + save_papers(d, papers, q)
+    turn = {'q': q, 'a': answer, 'page': page, 'chapter': chapter, 't': time.time(), 'model': model, 'sources': sources}
     meta = book_meta(d)  # read again: a check may have been saved meanwhile
     meta['session'] = out.get('session_id') or meta.get('session', '')
     meta.setdefault('turns', []).append(turn)
@@ -977,7 +1055,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         body = json.dumps({'error': str(e)[:300]}).encode()
                     self.copyfile(self.reply(body, 'application/json'), self.wfile)
                     return
-                if url.path in ('/ask', '/ask/book', '/ask/open', '/ask/new', '/ask/highlights', '/ask/check', '/ask/continue', '/ask/conversation'):  # Ask Claude about the book
+                if url.path in ('/ask', '/ask/book', '/ask/open', '/ask/new', '/ask/highlights', '/ask/check', '/ask/continue', '/ask/conversation', '/ask/papers'):  # Ask Claude about the book
                     data = json.loads(self.rfile.read(size) or b'{}')
                     d = book_dir(data.get('key'), str(data.get('name', ''))[:200])
                     res = {'folder': d}
@@ -993,6 +1071,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         line = f"cd {shlex.quote(d)} && {shlex.quote(CLAUDE)}" + (f" --resume {sid}" if sid else '')
                         subprocess.Popen(['osascript', '-e', f'tell application "Terminal" to do script {json.dumps(line)}',
                                           '-e', 'tell application "Terminal" to activate'])
+                    elif url.path == '/ask/papers':
+                        f = os.path.join(d, 'papers.md')
+                        subprocess.Popen(['open', '-e', f] if os.path.exists(f) else ['open', d])
                     elif url.path == '/ask/conversation':
                         subprocess.Popen(['open', '-e', os.path.join(d, 'conversation.md')] if os.path.exists(os.path.join(d, 'conversation.md')) else ['open', d])
                     elif url.path == '/ask/new':  # the next question starts a new conversation (the old one stays in conversation.md)
@@ -1009,7 +1090,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                             try:
                                 res['turn'] = ask_claude(d, data)
                             except subprocess.TimeoutExpired:
-                                res['error'] = 'Claude took more than 10 minutes. Ask again, or ask a shorter question.'
+                                res['error'] = 'Claude took too long (10 minutes, 20 for papers). Ask again, or ask a shorter question.'
                             except Exception as e:
                                 res['error'] = str(e)[:300]
                     self.copyfile(self.reply(json.dumps(res, ensure_ascii=False).encode(), 'application/json'), self.wfile)

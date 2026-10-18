@@ -6,7 +6,7 @@
 // separate Claude) tries to prove the book parts of an answer wrong.
 const SERVER = location.origin.startsWith('http') ? '' : 'http://127.0.0.1:8793';
 const MODELS = { normal: 'Normal (Sonnet)', fast: 'Fast (Haiku)', deep: 'Deep (Opus)' };
-const SOURCES = { book: 'Only this book', knowledge: 'Book, then my other books and Claude’s knowledge', web: 'Also search the internet' };
+const SOURCES = { book: 'Only this book', knowledge: 'Book, then my other books and Claude’s knowledge', web: 'Also search the internet', papers: 'Find papers that support or dispute the book' };
 const ICON = { play: '▶', pause: '❚❚' };
 
 export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
@@ -129,7 +129,7 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
 
   // ---------- the panel ----------
   // under each answer: Read aloud, the hostile check (button, "checking…", or its result with its own Read aloud)
-  const extra = (t, i) => `<div class="note-tools"><button type="button" class="rename say" data-id="a${i}">${ICON.play} Read aloud</button>${t.check || checking.has(i) ? '' : ` · <button type="button" class="rename" data-check="${i}">Hostile check</button>`}</div>
+  const extra = (t, i) => `<div class="note-tools"><button type="button" class="rename say" data-id="a${i}">${ICON.play} Read aloud</button>${t.check || checking.has(i) ? '' : ` · <button type="button" class="rename" data-check="${i}">Hostile check</button>`} · <button type="button" class="rename" data-papers="${i}">Find papers on this</button></div>
       ${checking.has(i) ? '<p class="ask-busy" role="status">A second Claude is checking this answer against the book…</p>' : ''}
       ${t.check ? `<div class="check"><p class="check-h">Hostile check</p><div class="readable" data-id="c${i}">${format(t.check)}</div>
         <div class="note-tools"><button type="button" class="rename say" data-id="c${i}">${ICON.play} Read aloud</button></div></div>` : ''}`;
@@ -148,9 +148,9 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
     if (!st.claude) { box.innerHTML = '<p class="notes-empty">Claude Code was not found on this Mac. Install it, then open the book again.</p>'; return; }
     const turns = st.turns.map((t, i) => `<div class="turn"><p class="q">${esc(t.q)}<small>page ${esc(t.page)}${t.chapter ? ' · ' + esc(t.chapter) : ''}${t.sources ? ' · ' + esc(SOURCES[t.sources] || '') : ''}</small></p>
       <div class="a readable" data-id="a${i}">${format(t.a)}</div><div class="turn-extra" data-i="${i}">${extra(t, i)}</div></div>`).join('');
-    box.innerHTML = `<div class="ask-links note-tools"><button type="button" class="rename" id="askContinue">Continue in Claude (Terminal)</button> · <button type="button" class="rename" id="askConv">Open the whole conversation</button> · <button type="button" class="rename" id="askOpen">Open the book folder</button> · <button type="button" class="rename" id="askNew">New conversation</button></div>
+    box.innerHTML = `<div class="ask-links note-tools"><button type="button" class="rename" id="askContinue">Continue in Claude (Terminal)</button> · <button type="button" class="rename" id="askConv">Open the whole conversation</button> · <button type="button" class="rename" id="askPapers">Open papers.md</button> · <button type="button" class="rename" id="askOpen">Open the book folder</button> · <button type="button" class="rename" id="askNew">New conversation</button></div>
       <div class="turns" id="askTurns">${turns || '<p class="notes-empty">Ask about anything in this book. The question box is in the bar at the bottom of the page. Claude answers from the book first and gives the pages. Select words on the page and press “Ask Claude” to ask about them. While an answer is read, click any word in it to read from there.</p>'}</div>
-      ${busy ? `<p class="ask-busy" role="status">Claude is reading the book… <span id="askSecs">0</span> s</p>` : ''}
+      ${busy ? `<p class="ask-busy" role="status">Claude is ${busy === 'papers' ? 'searching PubMed and Europe PMC (this can take several minutes)' : 'reading the book'}… <span id="askSecs">0</span> s</p>` : ''}
       ${note ? `<p class="kp-note" role="status">${esc(note)}</p>` : ''}
       ${selection ? `<p class="ask-sel">About: “${esc(selection.length > 160 ? selection.slice(0, 160) + '…' : selection)}” <button type="button" class="rename" id="askNoSel">×</button></p>` : ''}`;
     const t = $('askTurns'); t.scrollTop = t.scrollHeight;
@@ -198,16 +198,16 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
     if (note) { const n = box.querySelector('.kp-note'); if (!n && !rd.playing) paint(); }
   }
 
-  async function ask(question) {
+  async function ask(question, only) {
     question = question.trim();
     if (!question || busy || !state.sentences.length) return;
-    busy = true; note = ''; draft = ''; const qq = $('askQ'); qq.value = ''; grow(qq); paint();
+    busy = (only || sources) === 'papers' ? 'papers' : true; note = ''; draft = ''; const qq = $('askQ'); qq.value = ''; grow(qq); paint();
     const t0 = Date.now(), tick = setInterval(() => { const e = $('askSecs'); if (e) e.textContent = Math.round((Date.now() - t0) / 1000); }, 1000);
     try {
       if (!st.hasBook) await sendBook();
       const i = state.index, cur = state.sentences[i];
       const passage = [state.sentences[i - 1], cur].filter(Boolean).map((s) => s.text).join('\n\n').slice(-3000);
-      const r = await post('/ask', { question, page: pageOf(cur), chapter: chapterAt(i), passage, selection, highlights: highlights(), model, sources });
+      const r = await post('/ask', { question, page: pageOf(cur), chapter: chapterAt(i), passage, selection, highlights: highlights(), model, sources: only || sources });
       if (r.error) note = 'No answer: ' + r.error;
       else { st.turns.push(r.turn); st.folder = r.folder; selection = ''; }
     } catch (err) { note = 'No answer: ' + err.message + '.'; }
@@ -235,13 +235,17 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
     const t = e.target;
     if (t.id === 'askGo') ask($('askQ').value);
     else if (t.id === 'askNoSel') { selection = ''; paint(); }
-    else if (t.id === 'askContinue' || t.id === 'askConv') {
-      try { await post(t.id === 'askContinue' ? '/ask/continue' : '/ask/conversation', {}); note = t.id === 'askContinue' ? 'Terminal opens this book’s conversation in Claude Code. Type there to go on; the next question here continues the same conversation.' : ''; }
+    else if (t.id === 'askContinue' || t.id === 'askConv' || t.id === 'askPapers') {
+      try { await post({ askContinue: '/ask/continue', askConv: '/ask/conversation', askPapers: '/ask/papers' }[t.id], {}); note = t.id === 'askContinue' ? 'Terminal opens this book’s conversation in Claude Code. Type there to go on; the next question here continues the same conversation.' : ''; }
       catch (err) { note = 'Could not open it: ' + err.message + '.'; }
       paint();
     } else if (t.id === 'askOpen') { const r = await post('/ask/open', {}).catch(() => null); if (!r) { note = 'The voice server did not answer.'; paint(); } }
     else if (t.id === 'askNew') { await post('/ask/new', {}).catch(() => {}); note = 'The next question starts a new conversation. The old one stays in conversation.md.'; paint(); }
     else if (t.dataset.check !== undefined) check(Number(t.dataset.check));
+    else if (t.dataset.papers !== undefined) {  // papers on one answer: search the literature for what the book says there
+      const old = st.turns[Number(t.dataset.papers)];
+      ask(`Find published research papers that support, dispute or limit what the book says in your answer to my question "${old.q}". Search PubMed and Europe PMC.`, 'papers');
+    }
     else if (t.id === 'apPlay') { if (rd.playing) pauseReading(); else if (rd.id) readFrom(rd.pos); }
     else if (t.id === 'apBack') { if (rd.id) readFrom(0); }
     else if (t.id === 'apStop') { voice.hush(); finishReading(); }
