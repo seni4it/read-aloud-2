@@ -154,10 +154,14 @@ export async function readPage(doc, pageNumber) {
     const txt0 = ([, es]) => es.map(e => e.item.str).join('').trim().length >= 10;
     const sizes = ordered.filter(txt0).map(sz).sort((a, b) => a - b);
     const body = sizes.length ? sizes[Math.floor(sizes.length / 2)] : 0;
-    const txt = (r) => txt0(r) && sz(r) >= body * 0.9;
+    const txt = txt0;
     const L = ordered.filter(r => txt(r) && r[1].every(e => e.x + e.w <= x + 1));
     const R = ordered.filter(r => txt(r) && r[1].every(e => e.x >= x - 1));
-    const gap = L.length && R.length ? Math.min(...R.map(([, es]) => Math.min(...es.map(e => e.x)))) - Math.max(...L.map(([, es]) => Math.max(...es.map(e => e.x + e.w)))) : 0;
+    // the gap is measured on the body-size lines when both sides have some (a caption in small type beside a body
+    // column, with no body line on its side, is measured as it is)
+    const big = (rows) => rows.filter(r => sz(r) >= body * 0.9);
+    const [Lg, Rg] = big(L).length && big(R).length ? [big(L), big(R)] : [L, R];
+    const gap = Lg.length && Rg.length ? Math.min(...Rg.map(([, es]) => Math.min(...es.map(e => e.x)))) - Math.max(...Lg.map(([, es]) => Math.max(...es.map(e => e.x + e.w)))) : 0;
     return { l: L.length, r: R.length, gap };
   };
   // Read Aloud 2: a diagram's labels (8pt, "200 cattle" / "Treatment cost") line up in columns of their own, and
