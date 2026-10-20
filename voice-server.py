@@ -1019,6 +1019,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         url = urllib.parse.urlsplit(self.path)
         size = int(self.headers.get('Content-Length') or 0)
         try:
+            if url.path == '/server/restart':  # the restart button: answer first, then start this server again in place
+                self.copyfile(self.reply(b'{"restarting": true}', 'application/json'), self.wfile)
+                self.wfile.flush()
+                def again():
+                    time.sleep(0.5)
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
+                threading.Thread(target=again, daemon=True).start()
+                return
             if url.path == '/ocr':  # the text in a picture (a page of a scanned book), by Apple's Vision
                 if not 0 < size <= 40_000_000:
                     self.send_error(413, 'Picture too large')

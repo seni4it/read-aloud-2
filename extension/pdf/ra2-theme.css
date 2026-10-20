@@ -153,3 +153,4 @@
 /* a highlight chosen in the list flashes where it is on the page */
 @keyframes ra2-flash { 0%, 100% { box-shadow: none; } 30%, 70% { box-shadow: 0 0 0 4px rgba(255, 140, 0, .55); } }
 .mark-box.flash { animation: ra2-flash 1.2s ease-in-out 2; }
+.askpane-tools { display: flex; align-items: center; gap: 8px; text-transform: none; letter-spacing: 0; font-weight: 500; }

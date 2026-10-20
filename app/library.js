@@ -110,6 +110,13 @@
     }));
   }
   $('ytBtn').addEventListener('click', () => { panel.hidden = !panel.hidden; if (!panel.hidden) show(); });
+  // the restart button: the voice server (the Claude helper and the natural voices) starts again
+  $('restartBtn').addEventListener('click', async () => {
+    const b = $('restartBtn'); b.disabled = true;
+    const { restartServer } = await import('/reader/restart.js');
+    await restartServer((t) => { b.textContent = t.length > 30 ? '↻ ' + t.replace(/\.$/, '') : t; b.title = t; });
+    setTimeout(() => { b.textContent = '↻ Restart helper'; b.disabled = false; }, 2500);
+  });
   $('ytSecret').addEventListener('change', async (e) => {
     const f = e.target.files[0]; if (!f) return;
     const r = await post('/youtube/secret', JSON.parse(await f.text()).valueOf());

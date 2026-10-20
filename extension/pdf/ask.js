@@ -4,6 +4,7 @@
 // so the whole book is not sent each time. "(p. 23)" in an answer goes to that page. Answers are read aloud with
 // Play / Pause, the word being read is underlined, and a click on a word reads from there. A hostile check (a second,
 // separate Claude) tries to prove the book parts of an answer wrong.
+import { restartServer } from './restart.js';
 const SERVER = location.origin.startsWith('http') ? '' : 'http://127.0.0.1:8793';
 const MODELS = { normal: 'Normal (Sonnet)', fast: 'Fast (Haiku)', deep: 'Deep (Opus)' };
 const SOURCES = { book: 'Only this book', knowledge: 'Book, then my other books and Claude’s knowledge', web: 'Also search the internet', papers: 'Find papers that support or dispute the book' };
@@ -285,6 +286,12 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
   function hide() { if (rd.playing) pauseReading(); pane.hidden = true; bar.hidden = true; $('askTab').classList.remove('on'); }
   $('askTab').addEventListener('click', () => (pane.hidden ? show() : hide()));
   $('askClose').addEventListener('click', hide);
+  $('askRestart').addEventListener('click', async () => {
+    if (busy || checking.size) { if (!confirm('Claude is still working. A restart stops that answer. Restart anyway?')) return; }
+    $('askRestart').disabled = true;
+    await restartServer((t) => { note = t; paint(); });
+    $('askRestart').disabled = false; loadedFor = null; refresh();
+  });
   $('askGrip').addEventListener('pointerdown', (e) => {
     e.preventDefault(); $('askGrip').setPointerCapture(e.pointerId);
     const move = (m) => { pane.style.width = Math.max(340, Math.min(innerWidth - m.clientX, innerWidth - 300)) + 'px'; };
