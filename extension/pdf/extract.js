@@ -147,8 +147,14 @@ export async function readPage(doc, pageNumber) {
   // Columns on their own line grids have no row with text on both sides. Then whole lines count: at least five
   // wholly left of x and five wholly right, with a real gap between the left lines' right edge and the right
   // lines' left edge.
+  // Read Aloud 2: only lines in the body size count. A small boxed note beside a figure (8pt, starting just past the
+  // gap) made the gap between 12pt columns look 3.7pt wide, and a two-column page was read line across line.
   const whole = (x) => {
-    const txt = ([, es]) => es.map(e => e.item.str).join('').trim().length >= 10;
+    const sz = ([, es]) => Math.max(...es.map(e => Math.abs(e.item.transform[0]) || 10));
+    const txt0 = ([, es]) => es.map(e => e.item.str).join('').trim().length >= 10;
+    const sizes = ordered.filter(txt0).map(sz).sort((a, b) => a - b);
+    const body = sizes.length ? sizes[Math.floor(sizes.length / 2)] : 0;
+    const txt = (r) => txt0(r) && sz(r) >= body * 0.9;
     const L = ordered.filter(r => txt(r) && r[1].every(e => e.x + e.w <= x + 1));
     const R = ordered.filter(r => txt(r) && r[1].every(e => e.x >= x - 1));
     const gap = L.length && R.length ? Math.min(...R.map(([, es]) => Math.min(...es.map(e => e.x)))) - Math.max(...L.map(([, es]) => Math.max(...es.map(e => e.x + e.w)))) : 0;
@@ -176,6 +182,7 @@ export async function readPage(doc, pageNumber) {
     const w = whole(x);
     const total = lined + Math.min(w.l, w.r);
     const ok = ((lined >= 2 && wide && (lined >= rows.length * 0.4 || rows.length >= 6)) || (w.l >= 5 && w.r >= 5 && w.gap >= minGap)) && !figureNot(x, total);
+    if (globalThis.RA2_DEBUG) console.log('judge', Math.round(g), '->', Math.round(x), 'lined', lined, 'rows', rows.length, 'wide', wide, 'whole', JSON.stringify(w), 'minGap', minGap.toFixed(1), 'figureNot', figureNot(x, total));
     return { x, split: rows.length, lined: total, cross: crossAt(x), ok };
   };
   const scores = [];
@@ -273,10 +280,13 @@ export async function readPage(doc, pageNumber) {
     // Read Aloud 2: the left column stops mid-sentence above a full-width block ("Consequently, endodontists" /
     // quote / "often needlessly spend"): the columns carry on below it, so read each column whole and the block
     // after them. A column that ends a sentence there meets a real break (a heading, a new section).
+    // Both columns must stop mid-sentence: a left column that stops mid-sentence while the right column ends its
+    // sentence simply goes on at the top of the right column (a page with two short columns above a chart, then
+    // full-width text: the text below was held back as a "box" and its short last line was read first).
     const midSentence = () => {
       if (!left.length || !right.length) return false;
-      const t = makeLine(...left[left.length - 1]).text.trim();
-      return t.length > 0 && !/[.!?:]["'”’)\]]?$/.test(t);
+      const open = (rows) => { const t = makeLine(...rows[rows.length - 1]).text.trim(); return t.length > 0 && !/[.!?:]["'”’)\]]?$/.test(t); };
+      return open(left) && open(right);
     };
     const breaks = ([, es]) => es.some(e => e.x < g && e.x + e.w > g)
       || (es.some(e => e.x + e.w / 2 < g) && es.some(e => e.x + e.w / 2 >= g) && !hasGutterGap(es, g));
@@ -359,7 +369,14 @@ export async function readPage(doc, pageNumber) {
       }
       // A box only if the left column goes on below it with the same sentence (a small first letter). A heading
       // such as "References" followed by a new list is a real break: read it where it is, and do not skip it.
+      // A word split at the end of the box ("require-" / "ments of the obturation technique used.") goes on in the
+      // box's own text, not in the column, and so does a line set as small as the box's last line (a caption's tail).
       if (inset.length && !insetSure && l.length) {
+        const lastBox = inset[inset.length - 1];
+        const here = makeLine(y, entries);
+        if (/[-‐]$/.test(lastBox.text.trim()) || (here.size < lastBox.size * 1.05 && lastBox.size < 0.9 * makeLine(...left[left.length - 1] || [y, entries]).size)) {
+          inset.push({ ...here, inset: true }); continue;
+        }
         if (/^[a-z]/.test(makeLine(y, l).text.trim())) insetSure = true;
         else {
           const real = inset.map(({ inset: _, ...line }) => line);
@@ -815,7 +832,10 @@ const GREEK = {
   'σ': 'sigma', 'τ': 'tau', 'φ': 'phi', 'χ': 'chi', 'ψ': 'psi', 'ω': 'omega',
   'Δ': 'delta', 'Σ': 'sum', 'Ω': 'omega', '°': ' degrees', '±': ' plus or minus ',
   '×': ' by ', '≈': ' approximately ', '≤': ' at most ', '≥': ' at least ',
-  '→': ' to ', '™': '', '®': '', '©': ''
+  '→': ' to ', '™': '', '®': '', '©': '',
+  // Read Aloud 2: fractions ("½ mm per second" lost its ½: the unmapped-glyph filter dropped it)
+  '½': ' one half ', '¼': ' one quarter ', '¾': ' three quarters ', '⅓': ' one third ', '⅔': ' two thirds ',
+  '⅛': ' one eighth ', '⅜': ' three eighths ', '⅝': ' five eighths ', '⅞': ' seven eighths ', '⅕': ' one fifth ', '‰': ' per mille '
 };
 
 /**

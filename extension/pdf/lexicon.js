@@ -217,7 +217,7 @@ export function repairWord(word) {
 // Everything a Latin-script document legitimately contains. Anything outside
 // this that survived ligature repair is an unmapped glyph — the tofu box you
 // see on the page — and must not reach the speech engine or the UI.
-const KEEPABLE = /[A-Za-z0-9\u00C0-\u024F\s.,;:!?'"“”‘’()\[\]{}\-–—/&%$#@+=<>*°²³…]/;
+const KEEPABLE = /[A-Za-z0-9\u00C0-\u024F\u00B5\u03BC\s.,;:!?'"“”‘’()\[\]{}\-–—/&%$#@+=<>*°²³…]/;  // µ kept: µm is read as micrometre
 
 /**
  * Replace leftover unmapped glyphs with a space. A space rather than nothing:
