@@ -26,3 +26,7 @@ Evidence: audit/pdf-text.md findings 8, 12, 13, 14, 15, 19. Each audit finding i
 ## Blocked by
 
 - 10 (pdf-text-said-right)
+
+## Note from ticket 09
+
+`learnRepeatedLines` takes the first 3 and the last 3 lines of each sample page. On a page with fewer than 6 lines, one line is in both groups and is counted twice, so it can be removed as a running head from one page alone. Repair it here, with a test.

@@ -1,7 +1,7 @@
 # 09. PDF text: no body line is lost
 
 GitHub issue: #10
-Status: ready-for-agent
+Status: done; reviewed; tests pass; 3 private books read no worse
 Type: AFK
 
 ## Parent

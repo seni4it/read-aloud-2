@@ -86,6 +86,13 @@ function confidence(candidate) {
  * unambiguous sightings, and at least twice the runner-up. A tie-break never
  * votes, so a guess cannot reinforce itself.
  */
+function dominantLigature() {
+  const ranked = [...votes.entries()].sort((a, b) => b[1] - a[1]);
+  const top = ranked[0];
+  const next = ranked[1] ? ranked[1][1] : 0;
+  return top && top[1] >= 8 && top[1] >= Math.max(1, next) * 3 ? top[0] : null;
+}
+
 function decide(hits) {
   if (hits.size === 0) return { result: null, ambiguous: false };
 
@@ -100,13 +107,7 @@ function decide(hits) {
   // is a worse answer than leaving it alone. What the record actually
   // supports is narrower — a font drops one or two ligatures, not a
   // distribution — so trust only a dominant candidate and let the rest go.
-  const ranked = [...votes.entries()].sort((a, b) => b[1] - a[1]);
-  const top = ranked[0];
-  const next = ranked[1] ? ranked[1][1] : 0;
-  const dominant = top && top[1] >= 8 && top[1] >= Math.max(1, next) * 3
-    ? top[0]
-    : null;
-
+  const dominant = dominantLigature();
   if (dominant) {
     const supported = [...hits].filter(([, cands]) => cands.has(dominant));
     if (supported.length === 1) return { result: supported[0][0], ambiguous: false };
@@ -273,6 +274,10 @@ export function isWord(token) {
  * two fragments into a real word. Ambiguity, or two fragments that are both
  * already words, means we leave them alone.
  */
+// The one- and two-letter words of ordinary English text, for repairSplit.
+const SHORT_WORDS = new Set(('a i ad ah am an as at aw ax be by do eh ex go ha he hi ho id if in is it la lo ma me ' +
+  'mr ms my no of oh ok on or ox pa so to uh um up us vs we ye yo al cf dr eg et ie st').split(' '));
+
 export function repairSplit(a, b) {
   if (!lexicon) return null;
   if (!/^[A-Za-z]+$/.test(a) || !/^[A-Za-z]+$/.test(b)) return null;
@@ -280,13 +285,20 @@ export function repairSplit(a, b) {
 
   // Two ordinary words next to each other are just two words. The word list has no "a" and no "I", but
   // they are words: "Once" + "a" was bridged to "Oncetta" (which the list does have).
-  const isWord = (w) => lexicon.has(w.toLowerCase()) || /^[aiAI]$/.test(w);
+  // Read Aloud 2: the word list also holds hundreds of one- and two-letter entries ("er", "en", "le") that
+  // are the usual pieces of a split word ("A er", "o en"). A piece that short is a word only when it is a
+  // common one.
+  const isWord = (w) => w.length <= 2 ? SHORT_WORDS.has(w.toLowerCase()) : lexicon.has(w.toLowerCase());
   const aWord = isWord(a);
   const bWord = isWord(b);
   if (aWord && bWord) return null;
+  // Both parts are in the word list, only not common short words ("a" + "de", "his" + "e"): join them only
+  // with the ligature the document is known to drop, and cast no vote.
+  const inList = (w) => lexicon.has(w.toLowerCase()) || /^[aiAI]$/.test(w);
+  const onlyByRecord = inList(a) && inList(b);
 
-  // The join has to be the only reading. "a" + "er" could take several
-  // bridges; "A" + "er" takes exactly one.
+  // The join has to be the only reading. "A" + "er" can take several bridges
+  // ("After", "Aster"); the document's own record of repairs settles it.
   const hits = new Map();
   for (const cand of CANDIDATES) {
     const joined = a + cand + b;
@@ -294,6 +306,11 @@ export function repairSplit(a, b) {
       if (!hits.has(joined)) hits.set(joined, new Set());
       hits.get(joined).add(cand);
     }
+  }
+  if (onlyByRecord) {
+    const dominant = dominantLigature();
+    const supported = [...hits].filter(([, cands]) => cands.has(dominant));
+    return dominant && supported.length === 1 ? supported[0][0] : null;
   }
   return decide(hits).result;
 }

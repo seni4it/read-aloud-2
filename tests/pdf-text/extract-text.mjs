@@ -59,7 +59,7 @@ export const DEFAULT_OPTIONS = {
   stripCitations: true,
   stripCaptions: true,
   skipInsets: false,
-  skipTables: false,
+  skipTables: true,   // "Skip tables" starts on in the reader (index.html, app.js)
   skipParens: false,
   stopAtReferences: true
 };

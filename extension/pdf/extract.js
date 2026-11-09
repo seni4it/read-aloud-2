@@ -12,7 +12,21 @@ const HEADING_WORDS = /^(?:\d+(?:\.\d+)*\.?\s*)?(abstract|introduction|backgroun
 const STOP_SECTION = /^(references|bibliography|literature\s+cited|works\s+cited)\s*:?\s*$/i;
 
 // Conference/copyright boilerplate that sits in a footnote block on page 1.
-const BOILERPLATE = /^(permission to make digital or hard copies|copyright\s*[©c]|acm\s+\d|isbn\b|doi\b|\d{3}-\d|to copy otherwise|this work is licensed|©\s*\d{4})/i;
+const BOILERPLATE = /^(permission to make digital or hard copies|copyright\s*[©c]|acm\s+\d|isbn\b|doi\b|\d{3}-\d{1,5}-\d|to copy otherwise|this work is licensed|©\s*\d{4})/i;
+
+// Read Aloud 2: a sure sign of a copyright page, which a body line does not carry.
+const COPYRIGHT_SIGN = /^(permission to make digital or hard copies|copyright\b|©|isbn\b|this work is licensed|to copy otherwise)|all rights reserved|library of congress/i;
+const copyrightSign = text => COPYRIGHT_SIGN.test(text) || /^Printed in [A-Z]/.test(text);
+
+// Read Aloud 2: copyright lines are skipped as a block when they are in small type or carry a sure sign
+// (a copyright page is often set at body size). A weaker match at body size skips only its own line: a body
+// line can start "DOI" or a number range, and the block skip took the rest of the page.
+// Returns 'block', 'line' or null.
+function boilerplate(line, bodySize) {
+  const sure = copyrightSign(line.text);
+  if (!sure && !BOILERPLATE.test(line.text)) return null;
+  return sure || !bodySize || line.size < bodySize * 0.95 ? 'block' : 'line';
+}
 
 const CAPTION_START = /^(fig(ure)?\.?|table|chart|scheme|plate|graph)\s*\.?\s*([0-9]+|[ivxlcIVXLC]+)\b/i;
 
@@ -478,7 +492,7 @@ function dropPageFurniture(lines) {
   let bodySize = 0;
   let best = -1;
   for (const [size, w] of weight) if (w > best) { best = w; bodySize = size; }
-  if (!bodySize) return lines;
+  if (!bodySize) return { lines, furniture: [] };
 
   const byY = [...lines].sort((a, b) => b.y - a.y);
 
@@ -1248,7 +1262,26 @@ export class DocumentBuilder {
     if (lines.length >= 2) {
       const ys = lines.map(l => l.y), top = Math.max(...ys), bottom = Math.min(...ys);
       const RUNNING = /^\d{1,4}\s+\D.{0,70}$|^.{1,70}\D\s+\d{1,4}$|^\d{1,4}$/;
-      lines = lines.filter(l => !((l.y >= top - 6 || l.y <= bottom + 6) && l.text.length < 80 && RUNNING.test(l.text.trim())));
+      // A body line can start or end with a number too ("15 patients were", "the mean age was 45"). A header
+      // or footer is a page number alone, or set smaller than the body, or set apart from the text block.
+      const rowYs = [...new Set(ys.map(y => Math.round(y)))].sort((a, b) => b - a);
+      const rowGaps = rowYs.slice(1).map((y, k) => rowYs[k] - y).sort((a, b) => a - b);
+      const leading = rowGaps.length ? rowGaps[Math.floor(rowGaps.length / 2)] : 0;
+      const apart = l => {
+        if (!leading) return true;
+        const k = rowYs.indexOf(Math.round(l.y));
+        const gap = l.y >= top - 6 ? rowYs[k] - (rowYs[k + 1] ?? -Infinity) : (rowYs[k - 1] ?? Infinity) - rowYs[k];
+        return gap > leading * 1.5;
+      };
+      // A running head at body size that sits close to the text still names the book's chapter or a heading.
+      const nameKey = t => t.replace(/^\d{1,4}\s*[.|:]?\s*|\s*\|?\s*\d{1,4}$/g, '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+      const head = chapterFromHead(pageData.furniture);
+      const names = new Set([...this.sections.slice(1).map(s => s.title), this.chapter?.title, head?.title]
+        .filter(Boolean).map(nameKey).filter(k => k.length >= 4));
+      const runningHead = l => !this.bodySize || /^\d{1,4}$/.test(l.text.trim()) ||
+        l.size < this.bodySize * 0.95 || apart(l) || names.has(nameKey(l.text));
+      lines = lines.filter(l => !((l.y >= top - 6 || l.y <= bottom + 6) && l.text.length < 80 &&
+        RUNNING.test(l.text.trim()) && runningHead(l)));
     }
     // Read Aloud 2: a quote box between the columns, on request ("Skip boxed quotes")
     if (this.options.skipInsets) lines = lines.filter(l => !l.inset);
@@ -1275,8 +1308,21 @@ export class DocumentBuilder {
 
     // The contents page is a map of the book, not part of it. Read Aloud 2: so is its last, shorter page,
     // which follows a contents page and still lists titles with page numbers ("Develop a Product Plan 253").
-    const numbered = lines.filter(l => /\s(\d{1,4}|[ivxlc]{1,6})$/i.test(l.text)).length;
-    if (isContentsPage(lines) || (this.inContents && numbered >= Math.max(2, lines.length * 0.25))) {
+    // Read Aloud 2: a copyright page set at body size (two or more sure signs in body type) is not part of the
+    // book. A footnote block in small type on the first page of a paper is not counted: that page has the abstract.
+    if (this.bodySize > 0 &&
+        lines.filter(l => l.size >= this.bodySize * 0.95 && copyrightSign(l.text)).length >= 2) {
+      this.flush(); return;
+    }
+    // Read Aloud 2: rows of a number table end in a number too, and a page that is mostly a table was dropped
+    // whole, with its body text. Judge the page on its lines outside tables. A contents page whose own rows
+    // look like a table (number, title, page) has few lines outside tables: then only the rows with three or
+    // more numbers, which no contents line has, are left out.
+    const outside = lines.filter(l => !l.table);
+    const judged = outside.filter(l => l.text.length > 3).length >= 8 ? outside
+      : lines.filter(l => !(l.table && (l.text.match(/\d+(?:[.,]\d+)*/g) || []).length >= 3));
+    const numbered = judged.filter(l => /\s(\d{1,4}|[ivxlc]{1,6})$/i.test(l.text)).length;
+    if (isContentsPage(judged) || (this.inContents && numbered >= Math.max(2, judged.length * 0.25))) {
       this.inContents = true; this.flush(); return;
     }
     this.inContents = false;
@@ -1330,7 +1376,9 @@ export class DocumentBuilder {
         continue;
       }
 
-      if (BOILERPLATE.test(text)) {
+      const furnitureKind = boilerplate(line, this.bodySize);
+      if (furnitureKind === 'line') { this.flush(); continue; }
+      if (furnitureKind === 'block') {
         // Skip the whole footnote block, not just its first line.
         this.flush();
         while (i < lines.length && lines[i].size <= line.size + 0.5 &&
@@ -1436,7 +1484,7 @@ export class DocumentBuilder {
         const next = lines[i + 1].text;
         const nextKey = next.replace(/\d+/g, '#').toLowerCase().trim();
         const nextSkipped = this.repeated.has(nextKey) || isPageNumber(next) ||
-          isPhotoTag(next) || BOILERPLATE.test(next) ||
+          isPhotoTag(next) || boilerplate(lines[i + 1], this.bodySize) ||
           (this.options.stripCaptions && CAPTION_START.test(next));
 
         if (/^[a-z]/.test(next) && !nextSkipped) {
@@ -1484,8 +1532,11 @@ function repairSplitWords(chars, owners) {
   const edits = [];
   let m;
   while ((m = re.exec(text)) !== null) {
-    const fixed = repairSplit(m[1], m[2]);
-    if (!fixed) continue;
+    // Read Aloud 2: a part of a hyphenated word or of a code name ("e-mails", "mul3") is not a ligature split.
+    const before = text[m.index - 1] || ' ', after = text[m.index + m[0].length] || ' ';
+    const fixed = /[\w-]/.test(before) || /[\w-]/.test(after) ? null : repairSplit(m[1], m[2]);
+    // Read Aloud 2: not joined, so test the second word with the word after it ("the A er": "A" + "er").
+    if (!fixed) { re.lastIndex = m.index + m[1].length + 1; continue; }
     edits.push({ at: m.index, len: m[0].length, out: fixed });
     // Let the next match start after this pair so a three-way split does not
     // cascade into a guess.
@@ -1537,14 +1588,24 @@ export async function buildDocument(doc, options = {}, onPage = null) {
   }
 
   const cached = new Map();
-  for (const n of [...new Set(want)]) cached.set(n, await readPage(doc, n));
+  // Read Aloud 2: a damaged page (its text or its font cannot be read) is passed over, not the end of the book.
+  const tryRead = async n => {
+    try { return await readPage(doc, n); } catch (e) {
+      // A closed document or a cancelled read-in is not a damaged page: it ends the read-in.
+      if (/^Abort/.test(e?.name) || /destroyed|terminated|cancel/i.test(e?.message)) throw e;
+      console.warn('page', n, 'cannot be read:', e);
+      return null;
+    }
+  };
+  for (const n of [...new Set(want)]) cached.set(n, await tryRead(n));
 
-  const sample = [...cached.values()];
+  const sample = [...cached.values()].filter(Boolean);
   builder.setRepeatedLines(learnRepeatedLines(sample));
   builder.setTypography(learnTypography(sample));
 
   for (let n = 1; n <= total; n++) {
-    builder.addPage(cached.get(n) || await readPage(doc, n));
+    const pd = cached.has(n) ? cached.get(n) : await tryRead(n);
+    if (pd) builder.addPage(pd);
     if (onPage && (await onPage(n, total, builder)) === false) return null;
     if (builder.stopped) break;
   }

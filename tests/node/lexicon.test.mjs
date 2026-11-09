@@ -43,8 +43,27 @@ test('a word split in two at a lost ligature is joined again', () => {
 });
 
 test('two real words side by side are not joined', () => {
-  // "A" + "er" stays apart: "er" is in the word list, so both parts are words.
-  assert.equal(lexicon.repairSplit('A', 'er'), null);
+  assert.equal(lexicon.repairSplit('Once', 'a'), null);
+  assert.equal(lexicon.repairSplit('to', 'be'), null);
+});
+
+test('"A" + "er" is joined only when the document shows that its font drops "ft"', async () => {
+  // A fresh copy of the module, so that the repairs of the tests above cast no votes here.
+  const fresh = await import('../../extension/pdf/lexicon.js?a-er');
+  await loadLexiconFromFile(fresh);
+  // "er" is in the word list, but a piece that short is a word only when it is a common one.
+  // "A" + "er" can be "After" or "Aster": with no record of the document's repairs it is left alone.
+  assert.equal(fresh.repairSplit('A', 'er'), null);
+  for (let k = 0; k < 10; k++) assert.equal(fresh.repairSplit('o', 'en'), 'often');
+  assert.equal(fresh.repairSplit('A', 'er'), 'After');
+});
+
+test('two short words are not joined by a ligature the document does not drop', async () => {
+  const fresh = await import('../../extension/pdf/lexicon.js?short-words');
+  await loadLexiconFromFile(fresh);
+  for (let k = 0; k < 10; k++) assert.equal(fresh.repairSplit('o', 'en'), 'often');
+  // "a" + "si" + "de" is a word, but this document drops "ft", not "si": "a de facto rule" stays.
+  assert.equal(fresh.repairSplit('a', 'de'), null);
 });
 
 test('stripUnmapped turns a leftover unmapped glyph into a space and keeps µ', () => {
