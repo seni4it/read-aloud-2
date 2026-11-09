@@ -26,6 +26,7 @@ const isAlien = ch => ALIEN.test(ch.normalize('NFD')[0]);
 const hasAlien = word => [...word].some(isAlien);
 
 let lexicon = null;
+let sorted = null;   // Read Aloud 2: the same words in sorted order, for the prefix test of the ligature search
 let loading = null;
 
 export function lexiconReady() {
@@ -42,7 +43,9 @@ export async function loadLexicon(url) {
       const res = await fetch(url);
       if (!res.ok) throw new Error('lexicon ' + res.status);
       const text = await res.text();
-      lexicon = new Set(text.split('\n'));
+      const words = text.split('\n');
+      lexicon = new Set(words);
+      sorted = words.every((w, i) => i === 0 || words[i - 1] <= w) ? words : [...words].sort();
       return lexicon;
     } finally {
       loading = null;
@@ -57,6 +60,17 @@ const cache = new Map();
 function known(word) {
   return lexicon.has(word);
 }
+
+// Read Aloud 2: does some word of the list start with this text? A binary search in the sorted list.
+function startsAWord(prefix) {
+  let lo = 0, hi = sorted.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (sorted[mid] < prefix) lo = mid + 1; else hi = mid; }
+  return lo < sorted.length && sorted[lo].startsWith(prefix);
+}
+
+// Read Aloud 2: the letters found for an unknown word, kept while the document is read. An ambiguous word is
+// decided again by the document's record each time, but it is not searched again.
+const searched = new Map();
 
 /**
  * Try to rebuild a damaged word.
@@ -94,6 +108,7 @@ function confidence(candidate) {
 export function resetRepairs() {
   votes.clear();
   cache.clear();
+  searched.clear();
 }
 
 /**
@@ -170,27 +185,34 @@ function solve(lower) {
 
   // One insertion covers most damage and is cheap. Only pay for the quadratic
   // two-insertion search when one fails, and only on shorter words.
+  // Read Aloud 2: the insertions go from left to right, and the search stops at the first place where no word
+  // of the list starts with the text before it: every repair keeps that text as it is. A name that is not in
+  // the list ("Schilderberg") stops after a few letters, and the result is the same as the full search.
   const search = maxDepth => {
     const hits = new Map();
-    const insert = (text, depth, used) => {
+    const insert = (text, from, depth, used) => {
       if (depth > 0 && known(text) && text !== lower) {
         if (!hits.has(text)) hits.set(text, new Set());
         for (const c of used) hits.get(text).add(c);
       }
       if (depth >= maxDepth) return;
-      for (let i = 1; i < text.length; i++) {
+      for (let i = Math.max(1, from); i < text.length; i++) {
+        if (!startsAWord(text.slice(0, i))) break;
         for (const c of CANDIDATES) {
-          insert(text.slice(0, i) + c + text.slice(i), depth + 1, [...used, c]);
+          insert(text.slice(0, i) + c + text.slice(i), i + 1, depth + 1, [...used, c]);
         }
       }
     };
-    insert(lower, 0, []);
+    insert(lower, 1, 0, []);
     return hits;
   };
 
-  let hits = search(1);
-  if (hits.size === 0 && lower.length <= 14) hits = search(2);
-  return decide(hits);
+  if (!searched.has(lower)) {
+    let hits = search(1);
+    if (hits.size === 0 && lower.length <= 14) hits = search(2);
+    searched.set(lower, hits);
+  }
+  return decide(searched.get(lower));
 }
 
 /**

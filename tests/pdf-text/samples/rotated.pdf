@@ -1,0 +1,73 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Length 367 >>
+stream
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Sample-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<00> <FF>
+endcodespacerange
+1 beginbfrange
+<20> <7E> <0020>
+endbfrange
+1 beginbfchar
+<80> <E000>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+endstream
+endobj
+2 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding /ToUnicode 1 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Length 928 >>
+stream
+BT 0 1 -1 0 72.0 72 Tm /F1 10 Tf (This page is a landscape page. ) Tj /F2 10 Tf (Its text is turned a quarter,) Tj ET
+BT 0 1 -1 0 86.0 72 Tm /F1 10 Tf (and the page is turned back a ) Tj /F2 10 Tf (quarter, so the text stands) Tj ET
+BT 0 1 -1 0 100.0 72 Tm /F1 10 Tf (upright on the screen. In the ) Tj /F2 10 Tf (file, each line runs up the) Tj ET
+BT 0 1 -1 0 114.0 72 Tm /F1 10 Tf (sheet and the next line sits to ) Tj /F2 10 Tf (its right. Each line here is) Tj ET
+BT 0 1 -1 0 128.0 72 Tm /F1 10 Tf (drawn in two pieces, so a reader ) Tj /F2 10 Tf (that sorts the pieces by) Tj ET
+BT 0 1 -1 0 142.0 72 Tm /F1 10 Tf (their height on the sheet mixes ) Tj /F2 10 Tf (the lines. A good reader) Tj ET
+BT 0 1 -1 0 156.0 72 Tm /F1 10 Tf (turns the page first: the reader ) Tj /F2 10 Tf (must read each line from) Tj ET
+BT 0 1 -1 0 170.0 72 Tm /F1 10 Tf (its start to its end, and the ) Tj /F2 10 Tf (lines from the top down.) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 7 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 2 0 R /F2 3 0 R /F3 4 0 R >> >> /Rotate 90 >>
+endobj
+7 0 obj
+<< /Type /Pages /Kids [6 0 R] /Count 1 >>
+endobj
+8 0 obj
+<< /Type /Catalog /Pages 7 0 R >>
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000432 00000 n 
+0000000529 00000 n 
+0000000643 00000 n 
+0000000745 00000 n 
+0000001723 00000 n 
+0000001880 00000 n 
+0000001937 00000 n 
+trailer
+<< /Size 9 /Root 8 0 R >>
+startxref
+1986
+%%EOF

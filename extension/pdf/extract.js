@@ -28,6 +28,14 @@ function boilerplate(line, bodySize) {
   return sure || !bodySize || line.size < bodySize * 0.95 ? 'block' : 'line';
 }
 
+// Read Aloud 2: a printer's slug in the margin: the whole line is the layout file, its date and time
+// ("Book_ch1.qxp 2/19/2007 10:08 AM Page 95"). It was learned as a running head only when a short page counted it
+// twice. A body line that names such a file is read.
+const SLUG = /^\S+\.(?:qxp|qxd|indd)\s+\d{1,2}\/\d{1,2}\/\d{2,4}\s+\d{1,2}:\d{2}(?:\s*[AP]M)?(?:\s+Page\s+\S+)?$/i;
+
+// Read Aloud 2: a page number in small Roman numerals: two letters or more, a real numeral ("xiv", not "c" or "x").
+const ROMAN = '(?=[ivxlc]{2,}\\b)c{0,3}(?:xc|xl|l?x{0,3})(?:ix|iv|v?i{0,3})';
+
 const CAPTION_START = /^(fig(ure)?\.?|table|chart|scheme|plate|graph)\s*\.?\s*([0-9]+|[ivxlcIVXLC]+)\b/i;
 
 // Runs of affiliation markers left between author names once the symbols are
@@ -45,9 +53,13 @@ const ABBREV = [
 // bracketed numerics first, then author-year, then leftovers.
 const NOISE = [
   /\s*\[\s*\d+(\s*[-–,;]\s*\d+)*\s*\]/g,
-  /\s*\((?:see\s+|e\.g\.,?\s+|cf\.\s+)?[A-Z][A-Za-z'’-]+(?:\s+(?:et\s+al\.?|and|&|,)\s*[A-Z]?[A-Za-z'’-]*)*,?\s*(?:19|20)\d{2}[a-z]?(?:\s*[;,]\s*[^()]{0,60}?(?:19|20)\d{2}[a-z]?)*\)/g,
-  // Read Aloud 2: figure and table references in brackets: "(Fig. 14)", "(Figs. 12, 13 and 14)", "(see Table 2-1)"
-  /\s*\((?:see\s+)?(?:Figs?|Figures?|Tables?|Plates?|Diagrams?)\.?\s*[\w.-]+(?:\s*(?:,|and|&|–|-|to)\s*[\w.-]+)*\)/gi,
+  // Read Aloud 2: each name is one pattern with one way to match ("[A-Z]?[A-Za-z]*" had two for each name, and a
+  // list of names with no closing bracket took seconds).
+  /\s*\((?:see\s+|e\.g\.,?\s+|cf\.\s+)?[A-Z][A-Za-z'’-]+(?:\s+(?:et\s+al\.?|and|&|,)\s*[A-Za-z'’-]*)*,?\s*(?:19|20)\d{2}[a-z]?(?:\s*[;,]\s*[^()]{0,60}?(?:19|20)\d{2}[a-z]?)*\)/g,
+  // Read Aloud 2: figure and table references in brackets: "(Fig. 14)", "(Figs. 12, 13 and 14)", "(see Table 2-1)".
+  // Each number is taken whole, with no way back ("(?=(...))\1"): a "-" is in the number and is also a separator,
+  // and "(Fig. 1-2-3-...-25" with no closing bracket tried every way to cut the numbers, for seconds.
+  /\s*\((?:see\s+)?(?:Figs?|Figures?|Tables?|Plates?|Diagrams?)\.?\s*(?=([\w.-]+))\1(?:\s*(?:,|and|&|–|-|to)\s*(?=([\w.-]+))\2)*\)/gi,
   /https?:\/\/\S+/g,
   /\bdoi:\s*\S+/gi,
   MARKER_RUN,
@@ -64,19 +76,26 @@ export async function readPage(doc, pageNumber) {
   const page = await doc.getPage(pageNumber);
   const content = await page.getTextContent();
   const viewport = page.getViewport({ scale: 1 });
-  const pageWidth = viewport.width;
-  const items = content.items.filter(i => typeof i.str === 'string');
+  const { items, pageWidth } = uprightItems(content.items.filter(i => typeof i.str === 'string'), viewport);
 
-  const rows = new Map();
-  items.forEach((item, index) => {
-    if (!item.str.trim()) return;
-    const y = Math.round(item.transform[5] / 2) * 2;
-    if (!rows.has(y)) rows.set(y, []);
-    rows.get(y).push({ item, index, x: item.transform[4], w: item.width || 0 });
-  });
-
-  const ordered = [...rows.entries()].sort((a, b) => b[0] - a[0]);
-  for (const [, entries] of ordered) entries.sort((a, b) => a.x - b.x);
+  // Read Aloud 2: rows by the real distance from the row's baseline. Fixed 2pt steps cut one line with items at
+  // y 4.99 and 5.01 into two rows, read out of place. An item joins the row within 0.15 of the type size (a
+  // bullet sits 1pt above its 8pt text), or, when it is a subscript (smaller type, a little below the baseline,
+  // right next to a letter of the row: "L" + "R"), within 0.4 of the row's size. A superscript stays apart.
+  const placed = [];
+  items.forEach((item, index) => { if (item.str.trim()) placed.push({ item, index, x: item.transform[4], w: item.width || 0 }); });
+  placed.sort((a, b) => b.item.transform[5] - a.item.transform[5] || a.index - b.index);
+  const ordered = [];
+  let base = null;  // the baseline and the size of the last row
+  const touches = (es, e) => es.some(r => Math.abs(e.x - (r.x + r.w)) < 2 || Math.abs(r.x - (e.x + e.w)) < 2);
+  for (const e of placed) {
+    const y = e.item.transform[5], size = Math.abs(e.item.transform[0]) || 10;
+    const row = ordered[ordered.length - 1];
+    const d = base ? base.y - y : Infinity;
+    if (base && (d < Math.max(size, base.size) * 0.15 || (size < base.size * 0.85 && d < base.size * 0.4 && touches(row[1], e)))) row[1].push(e);
+    else { ordered.push([y, [e]]); base = { y, size }; }
+  }
+  for (const row of ordered) row[1].sort((a, b) => a.x - b.x);
 
 
   // Read Aloud 2: look for the gap between columns in the middle of the TEXT AREA, not of the sheet. A book's
@@ -130,8 +149,10 @@ export async function readPage(doc, pageNumber) {
     const mid = (blockX0 + blockX1) / 2;
     const oneSide = ([, es]) => es.map(e => e.item.str).join('').trim().length >= 15
       && (es.every(e => e.x + e.w <= mid) || es.every(e => e.x >= mid));
-    for (let k = 1, found = false; k < ordered.length * 0.6 && !found; k++) {
-      if (oneSide(ordered[k])) { const g = gutterIn(ordered.slice(k), blockX0, blockX1) ?? findGutter(ordered.slice(k), pageWidth); if (g !== null) { consider(g); found = true; } }
+    // Read Aloud 2: only where a run of one-sided rows starts, and three times at most: a one-column page of
+    // short lines (a list, an index) made a gap search from every row, and the work grew with rows x rows.
+    for (let k = 1, tries = 0, found = false; k < ordered.length * 0.6 && !found && tries < 3; k++) {
+      if (oneSide(ordered[k]) && (k === 1 || !oneSide(ordered[k - 1]))) { tries++; const g = gutterIn(ordered.slice(k), blockX0, blockX1) ?? findGutter(ordered.slice(k), pageWidth); if (g !== null) { consider(g); found = true; } }
     }
   }
   // Rows split by x: text on both sides and a gap at x. In real columns those rows line up: the left column
@@ -212,7 +233,9 @@ export async function readPage(doc, pageNumber) {
     let best = null;
     for (const [g, count] of known) {
       const j = judge(g); scores.push(['known', g, j.split, j.lined, j.cross]);
-      if (!j.ok) continue;
+      // Read Aloud 2: another page's gap that 3 rows in 4 of this page run across is not a gap here (a
+      // one-column page whose header row has the page number and the title far apart split at the title).
+      if (!j.ok || j.cross > ordered.length * 0.75) continue;
       if (!best || j.lined > best.lined || (j.lined === best.lined && (j.cross < best.cross || (j.cross === best.cross && count > best.count)))) best = { ...j, count };
     }
     if (best) gutter = best.x;
@@ -270,7 +293,9 @@ export async function readPage(doc, pageNumber) {
       y,
       text: tokens.map(t => t.str).join('').replace(/\s+/g, ' ').trim(),
       tokens,
-      size: Math.abs(entries[0].item.transform[0]) || 10,
+      size: lineSize(entries),
+      // the size where the line meets the line before it (see addPage)
+      first: Math.abs(entries[0].item.transform[0]) || 10,
       x0: Math.min(...entries.map(e => e.x)),
       x1: Math.max(...entries.map(e => e.x + e.w))
     };
@@ -420,13 +445,15 @@ export async function readPage(doc, pageNumber) {
   // column share a row: the cells are marked by where they sit (x), and a line is table only when it lies
   // within the cells' span.
   const tableSpans = new Map();  // y -> [[x0, x1], ...]
+  const tableBoxes = [];  // the area of each table: its rows down to a line of text
   {
     const cellsOf = (es) => {
       const cells = [];
       for (const e of es) {
         const size = Math.abs(e.item.transform[0]) || 10;
         const last = cells[cells.length - 1];
-        if (last && e.x - last.end < size * 2.5) { last.end = Math.max(last.end, e.x + e.w); last.text += e.item.str; }
+        // Read Aloud 2: a bullet starts a cell; it sits a point above its text and now shares the text's row
+        if (last && e.x - last.end < size * 2.5 && !/^\s*[•▪●◦‣]/.test(e.item.str)) { last.end = Math.max(last.end, e.x + e.w); last.text += e.item.str; }
         else cells.push({ start: e.x, end: e.x + e.w, text: e.item.str });
       }
       return cells.map(c => ({ ...c, text: c.text.trim() })).filter(c => c.text);
@@ -453,15 +480,77 @@ export async function readPage(doc, pageNumber) {
       const lined = sp.cells.filter(c => (count.get(c.key) || 0) >= 3);
       if (lined.length >= 2) table.push({ y: sp.y, a: Math.min(...lined.map(c => c.start)), b: Math.max(...lined.map(c => c.end)) });
     }
-    if (table.length >= 3) for (const { y, a, b } of table) tableSpans.set(y, [...(tableSpans.get(y) || []), [a, b]]);
+    if (table.length >= 3) {
+      for (const { y, a, b } of table) tableSpans.set(y, [...(tableSpans.get(y) || []), [a, b]]);
+      // One box for each table: a row of text between table rows (a sentence, or 40 letters or more) ends it.
+      const inTable = new Map(table.map(t => [t.y, t]));
+      let run = [];
+      const close = () => {
+        if (run.length >= 2) tableBoxes.push({ top: run[0].y, bottom: run[run.length - 1].y, a: Math.min(...run.map(t => t.a)), b: Math.max(...run.map(t => t.b)) });
+        run = [];
+      };
+      for (const [y, es] of ordered) {
+        if (inTable.has(y)) { run.push(inTable.get(y)); continue; }
+        const t = es.map(e => e.item.str).join('').trim();
+        if (t.length >= 40 || /[.!?]["')\]]?$/.test(t)) close();
+      }
+      close();
+    }
   }
   const lines = order(ordered, 0, pageWidth, 0);
-  for (const l of lines) if ((tableSpans.get(l.y) || []).some(([a, b]) => l.x0 >= a - 2 && l.x1 <= b + 2)) l.table = true;
+  // Read Aloud 2: a short line inside the table's area is a cell's second line ("Cancer" / "Rsrch"), not text.
+  const inBox = l => l.text.length < 40 && !/[.!?]["')\]]?$/.test(l.text) && tableBoxes.some(box =>
+    l.y <= box.top + 1 && l.y >= box.bottom - 1 && l.x0 >= box.a - 2 && l.x1 <= box.b + 2);
+  for (const l of lines) if ((tableSpans.get(l.y) || []).some(([a, b]) => l.x0 >= a - 2 && l.x1 <= b + 2) || inBox(l)) l.table = true;
 
   // Deliberately NOT calling page.cleanup(): pdf.js hands the same page proxy
   // to the viewer, and cleaning it up mid-render makes render() hang forever.
   const split = dropPageFurniture(lines.filter(l => l.text));
   return { page: pageNumber, lines: split.lines, furniture: split.furniture, gutter };
+}
+
+/**
+ * Read Aloud 2: the type size of a line is the size of most of its characters. The first item alone made a
+ * line with a raised drop cap (one 30pt letter, then 10pt text) a 30pt line, and so a heading.
+ */
+function lineSize(entries) {
+  const weight = new Map();
+  for (const e of entries) {
+    const size = Math.abs(e.item.transform[0]) || 10;
+    weight.set(size, (weight.get(size) || 0) + e.item.str.trim().length);
+  }
+  let size = 10, best = -1;
+  for (const [s, w] of weight) if (w > best) { best = w; size = s; }
+  return size;
+}
+
+/**
+ * Read Aloud 2: a page whose text is drawn turned (a landscape page set with /Rotate 90 or 270) is read in the
+ * text's own direction. pdf.js gives each item's place on the unturned sheet, where those lines run up or down
+ * the page: in rows by height, the lines came out mixed. The direction of most characters, in quarter turns,
+ * is turned back on every item, and the page width is measured along the lines. A page of upright text is
+ * left as it is.
+ */
+function uprightItems(items, viewport) {
+  const weight = [0, 0, 0, 0];
+  const turnOf = ({ transform: t }) => ((Math.round(Math.atan2(t[1], t[0]) / (Math.PI / 2)) % 4) + 4) % 4;
+  for (const item of items) weight[turnOf(item)] += item.str.length;
+  const q = weight.indexOf(Math.max(...weight));
+  if (q === 0) return { items, pageWidth: viewport.width };
+  // turn a point or a direction back by q quarter turns
+  const turn = ([u, v]) => (q === 1 ? [v, -u] : q === 2 ? [-u, -v] : [-v, u]);
+  const [x0, y0, x1, y1] = viewport.viewBox || [0, 0, viewport.width, viewport.height];
+  const corners = [[x0, y0], [x1, y0], [x0, y1], [x1, y1]].map(turn);
+  const minX = Math.min(...corners.map(c => c[0])), minY = Math.min(...corners.map(c => c[1]));
+  const pageWidth = Math.max(...corners.map(c => c[0])) - minX;
+  return {
+    pageWidth,
+    items: items.map(item => {
+      const [a, b, c, d, e, f] = item.transform;
+      const [e2, f2] = turn([e, f]);
+      return { ...item, transform: [...turn([a, b]), ...turn([c, d]), e2 - minX, f2 - minY] };
+    })
+  };
 }
 
 /**
@@ -789,14 +878,17 @@ export function learnRepeatedLines(samplePages) {
 
   for (const p of samplePages) {
     if (!p.lines.length) continue;
+    // Read Aloud 2: each page counts a line once. On a page of fewer than 6 lines the first 3 and the last 3
+    // share lines, and one page alone made its own lines running heads.
+    const keys = new Set();
     for (const line of [...p.lines.slice(0, 3), ...p.lines.slice(-3)]) {
       // Running heads and folios are short. A long line is body copy, and
       // eating it as furniture silently deletes a sentence.
       if (line.text.length > 90) continue;
       const key = line.text.replace(/\d+/g, '#').toLowerCase().trim();
-      if (key.length < 4) continue;
-      counts.set(key, (counts.get(key) || 0) + 1);
+      if (key.length >= 4) keys.add(key);
     }
+    for (const key of keys) counts.set(key, (counts.get(key) || 0) + 1);
   }
 
   const threshold = Math.max(2, Math.floor(samplePages.length * 0.25));
@@ -1329,7 +1421,9 @@ export class DocumentBuilder {
     // Read Aloud 2: the page's header and footer: the top or bottom line, short, with the page number at one end
     if (lines.length >= 2) {
       const ys = lines.map(l => l.y), top = Math.max(...ys), bottom = Math.min(...ys);
-      const RUNNING = /^\d{1,4}\s+\D.{0,70}$|^.{1,70}\D\s+\d{1,4}$|^\d{1,4}$/;
+      // Read Aloud 2: a folio in small Roman numerals counts too ("xiv Preface"); its line is set smaller than the
+      // body, now that a line's size is the size of most of its letters.
+      const RUNNING = new RegExp(`^(?:\\d{1,4}|${ROMAN})\\s+\\D.{0,70}$|^.{1,70}\\D\\s+(?:\\d{1,4}|${ROMAN})$|^\\d{1,4}$`);
       // A body line can start or end with a number too ("15 patients were", "the mean age was 45"). A header
       // or footer is a page number alone, or set smaller than the body, or set apart from the text block.
       const rowYs = [...new Set(ys.map(y => Math.round(y)))].sort((a, b) => b - a);
@@ -1389,8 +1483,22 @@ export class DocumentBuilder {
     const outside = lines.filter(l => !l.table);
     const judged = outside.filter(l => l.text.length > 3).length >= 8 ? outside
       : lines.filter(l => !(l.table && (l.text.match(/\d+(?:[.,]\d+)*/g) || []).length >= 3));
-    const numbered = judged.filter(l => /\s(\d{1,4}|[ivxlc]{1,6})$/i.test(l.text)).length;
-    if (isContentsPage(judged) || (this.inContents && numbered >= Math.max(2, judged.length * 0.25))) {
+    // Read Aloud 2: a page number at a line end is a number or a Roman numeral in small letters (not any word
+    // that ends in "i", "v" or "x"). A page after a contents page goes on with it only when its lines are short
+    // like contents lines: body text can end a line in a year.
+    const numbered = judged.filter(l => new RegExp(`\\s(?:\\d{1,4}|${ROMAN})$`).test(l.text)).length;
+    const lengths = judged.map(l => l.text.length).sort((a, b) => a - b);
+    const shortLines = lengths.length > 0 && lengths[Math.floor(lengths.length / 2)] <= 45;
+    // Read Aloud 2: the first page of the index, under its big heading "Index", is a map of the book too; its two
+    // columns of short lines did not always reach the half of lines that end in a page number. It must look like
+    // an index: most of its other lines end in a page number or a range of pages. A section named "Index" in the
+    // middle of a book is read.
+    const pointer = /[\s,]\d{1,4}(?:[–-]\d{1,4})?\.?$/;
+    const indexRows = lines.filter(l => l.text.length > 3 && !/^index$/i.test(l.text.trim()));
+    const indexHead = this.bodySize > 0 && lines.some(l => /^index$/i.test(l.text.trim()) && l.size >= this.bodySize * 1.6) &&
+      indexRows.length >= 8 && indexRows.filter(l => pointer.test(l.text)).length >= indexRows.length * 0.4;
+    if (indexHead) { this.flush(); return; }
+    if (isContentsPage(judged) || (this.inContents && shortLines && numbered >= Math.max(2, judged.length * 0.25))) {
       this.inContents = true; this.flush(); return;
     }
     this.inContents = false;
@@ -1423,6 +1531,7 @@ export class DocumentBuilder {
       if (this.repeated.has(key)) continue;
       if (isPageNumber(text)) continue;
       if (isPhotoTag(text)) continue;
+      if (SLUG.test(text)) continue;
 
       // A change of type size ends the paragraph. Page 63 of the test book
       // sets the body at 7pt, its captions at 6pt, the figure number at
@@ -1433,8 +1542,13 @@ export class DocumentBuilder {
       // the 'wait This ACE Class II patient left untreated his fractured
       // incisal and see' strategy". Nothing about the words says they do not
       // belong together; the typography says it plainly.
-      if (this.lastSize && Math.abs(this.lastSize - line.size) >
-          Math.max(this.lastSize, line.size) * 0.08) {
+      // Read Aloud 2: the main size of the last line is compared with the size where this line starts. A line
+      // can hold two sizes ("16mm. (Note that ...)": the end of a sentence in body type, then a note in small
+      // type); its main size broke the sentence before "16mm.". The last line's own last item is not used: a
+      // subscript or a word in small capitals at a line end ("T23,1", "JSFUNFUZZ") broke the sentence after it.
+      const start = line.first ?? line.size;
+      if (this.lastSize && Math.abs(this.lastSize - start) >
+          Math.max(this.lastSize, start) * 0.08) {
         this.flush();
       }
       this.lastSize = line.size;
@@ -1481,10 +1595,15 @@ export class DocumentBuilder {
 
       if (this.options.stripCaptions && CAPTION_START.test(text)) {
         this.flush();
-        // Read Aloud 2: a caption in small type ends where the small type ends; one in body type ends at its
-        // sentence end. The old rule ran past a caption that ended in ")" and swallowed body text.
-        const cap = line.size, small = this.bodySize > 0 && cap < this.bodySize * 0.95;
-        while (i + 1 < lines.length && Math.abs(lines[i + 1].size - cap) < 0.6 && (small || !/[.!?]["')\]]?$/.test(lines[i].text))) i++;
+        // Read Aloud 2: a caption ends at the end of its first sentence, at a change of size, or at a gap wider
+        // than a line. A label alone on its line ("Fig. 70") is the whole caption: the text below it can be body
+        // text set small, and when in doubt the text is read. (Before, a caption in small type took all the small
+        // type after it, whole paragraphs too.)
+        const rest = text.replace(CAPTION_START, '');
+        if (/^[\s.:)–-]*(?:[\d.]+[a-z]?)?[\s.:)–-]*$/.test(rest)) continue;
+        const cap = line.size;
+        while (i + 1 < lines.length && !/[.!?]["')\]]?$/.test(lines[i].text) && Math.abs(lines[i + 1].size - cap) < 0.6 &&
+               Math.abs(lines[i].y - lines[i + 1].y) <= cap * 1.8) i++;
         continue;
       }
 

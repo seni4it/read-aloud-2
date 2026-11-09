@@ -46,8 +46,9 @@ def line(font, size, x, y, text):
         esc(text).encode("latin-1") + b") Tj ET\n"
 
 
-def write_pdf(name, pages):
-    """pages: a list of content streams (bytes). Writes samples/<name>."""
+def write_pdf(name, pages, rotate=0):
+    """pages: a list of content streams (bytes). Writes samples/<name>.
+    rotate: the /Rotate of every page (0 writes no /Rotate)."""
     objects = []
 
     def add(body):
@@ -65,8 +66,8 @@ def write_pdf(name, pages):
         c = add(b"<< /Length %d >>\nstream\n" % len(content) + content + b"endstream")
         kids.append(add(
             b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 612 792] /Contents %d 0 R "
-            b"/Resources << /Font << /F1 %d 0 R /F2 %d 0 R /F3 %d 0 R >> >> >>"
-            % (pages_id, c, f1, f2, f3)))
+            b"/Resources << /Font << /F1 %d 0 R /F2 %d 0 R /F3 %d 0 R >> >>%s >>"
+            % (pages_id, c, f1, f2, f3, b" /Rotate %d" % rotate if rotate else b"")))
     assert add(b"<< /Type /Pages /Kids [%s] /Count %d >>"
                % (b" ".join(b"%d 0 R" % k for k in kids), len(kids))) == pages_id
     catalog = add(b"<< /Type /Catalog /Pages %d 0 R >>" % pages_id)
@@ -163,10 +164,31 @@ def hyphen():
     return [b"".join(line("F1", 10, 72, 700 - i * 13, t) for i, t in enumerate(lines))]
 
 
+ROTATED = (
+    "This page is a landscape page. Its text is turned a quarter, and the page is turned back "
+    "a quarter, so the text stands upright on the screen. In the file, each line runs up the "
+    "sheet and the next line sits to its right. Each line here is drawn in two pieces, so a "
+    "reader that sorts the pieces by their height on the sheet mixes the lines. A good reader "
+    "turns the page first: the reader must read each line from its start to its end, and the "
+    "lines from the top down."
+)
+
+
+def rotated():
+    """A /Rotate 90 page whose text is drawn turned (0 1 -1 0 Tm), so it reads upright."""
+    out = b""
+    for i, t in enumerate(textwrap.wrap(ROTATED, 60)):
+        cut = t.find(" ", len(t) // 2) + 1
+        out += b"BT 0 1 -1 0 %.1f 72 Tm /F1 10 Tf (" % (72 + i * 14) + esc(t[:cut]).encode("latin-1") + \
+            b") Tj /F2 10 Tf (" + esc(t[cut:]).encode("latin-1") + b") Tj ET\n"
+    return [out]
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     write_pdf("two-columns.pdf", two_columns())
     write_pdf("number-start.pdf", number_start())
     write_pdf("ligature.pdf", ligature())
     write_pdf("hyphen.pdf", hyphen())
+    write_pdf("rotated.pdf", rotated(), rotate=90)
     print("wrote", ", ".join(sorted(os.listdir(OUT))), "in", OUT)
