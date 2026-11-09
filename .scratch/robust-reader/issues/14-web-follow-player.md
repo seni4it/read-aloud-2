@@ -14,6 +14,8 @@ Repair Follow and the player of the web-page reader: no jump when the site repla
 
 Evidence: audit/web-page-and-library.md findings 2, 11, 12, 13, 22, 25. Each audit finding is a claim: confirm it in the code first.
 
+From ticket 16: the content.js half of web finding 6 is still open. On a `stopped` event, content.js must raise its sentence id (`S.id++`), so that a late event of the stopped sentence is ignored.
+
 ## Acceptance criteria
 
 - [ ] On a test page that replaces its content while it reads, the page does not jump.

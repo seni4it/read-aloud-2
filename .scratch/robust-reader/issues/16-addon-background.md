@@ -1,7 +1,7 @@
 # 16. Add-on background: no lost events, no wrong owner, safe self-update
 
 GitHub issue: #17
-Status: ready-for-agent
+Status: done in code, 13 Node tests pass; real Chrome checks open (see `../manual-checks.md`)
 Type: AFK
 
 ## Parent

@@ -38,7 +38,7 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     stop(); cur = m;
     audio.src = url(m.text, m.voice); audio.playbackRate = m.rate;  // the sentence to hear goes first
     audio.onloadeddata = () => early(m.next, m.voice);  // then the next ones are prepared while this one plays
-    fetch(url(m.text, m.voice).replace('/speak?', '/times?')).then((r) => r.json())  // when each word starts (Kokoro's own timings)
+    fetch(url(m.text, m.voice).replace('/speak?', '/times?'), { signal: AbortSignal.timeout(5000) }).then((r) => r.json())  // when each word starts (Kokoro's own timings)
       .then(({ starts }) => { if (cur === m) send('times', { starts }); }).catch(() => {});
     audio.onended = () => { ticking(false); send('end'); };
     audio.onerror = () => { ticking(false); send('error', { why: 'The voice server on this Mac did not answer.' }); };
@@ -48,6 +48,7 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
       send('start', { d: audio.duration });
       ticking(true);
     }).catch((e) => { if (cur === m && e.name !== 'AbortError') send('error', { why: 'The voice could not play: ' + e.message }); });
+    reply(true);  // tells the background that the sentence was taken
   } else if (m.cmd === 'warm') early(m.texts, m.voice, m.prio, m.batch);
   else if (m.cmd === 'stop') stop();
   else if (m.cmd === 'pause') { audio.pause(); ticking(false); }

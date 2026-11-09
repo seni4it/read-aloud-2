@@ -3,7 +3,10 @@
 // Two engines: "kokoro" = natural voices from voice-server.py on this Mac (played in an offscreen page),
 // "system" = the voices built into the Mac and Chrome (chrome.tts).
 const SERVER = 'http://127.0.0.1:8793';
-let owner = null;  // { tab, id, engine }: who is speaking now
+let owner = null;  // { tab, id, engine, ext }: who is speaking now; ext = an add-on page (the paste page)
+// An add-on page has no content script: it hears events only by a runtime broadcast. A web tab hears them
+// by tabs.sendMessage alone, so its 14 ticks a second are not copied to every add-on page.
+const isAddonPage = (sender) => !sender.tab || String(sender.url || '').startsWith(chrome.runtime.getURL(''));
 
 // One offscreen page plays the audio. Chrome closes it after 30 s without sound (a long pause), so look each time
 // whether it is still there, and make it again when it is not.
@@ -19,67 +22,75 @@ async function offscreen() {
 
 // Resume after a pause: when the audio is gone (the offscreen page was closed, or this background was restarted
 // and forgot who was speaking), the page says the sentence again from the word it reached.
-async function resume(tab, id) {
+async function resume(tab, id, ext) {
   const ok = owner && owner.tab === tab && owner.engine === 'kokoro' && await hasOffscreen()
     && await chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'resume' }).catch(() => false);
-  if (!ok) tell(tab, { evt: 'lost', id });
+  if (!ok) tell(tab, { evt: 'lost', id }, ext);
 }
 
-async function tell(tab, msg) {
+async function tell(tab, msg, ext) {
   msg.to = 'page';
   chrome.tabs.sendMessage(tab, msg).catch(() => {});
-  chrome.runtime.sendMessage({ ...msg, tab }).catch(() => {});  // the paste page is an extension page, not a content script
+  if (ext) chrome.runtime.sendMessage({ ...msg, tab }).catch(() => {});  // the paste page is an extension page, not a content script
 }
 
 function stopOwner(except) {
   if (!owner) return;
   if (owner.engine === 'system') chrome.tts.stop();
   else chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'stop' }).catch(() => {});
-  if (owner.tab !== except) tell(owner.tab, { evt: 'stopped' });
+  if (owner.tab !== except) tell(owner.tab, { evt: 'stopped' }, owner.ext);
   owner = null;
 }
 
-async function speak(tab, m) {
+async function speak(tab, m, ext) {
   if (owner && (owner.tab !== tab || owner.engine !== m.engine)) stopOwner(tab);
-  owner = { tab, id: m.id, engine: m.engine };
+  owner = { tab, id: m.id, engine: m.engine, ext };
+  const mine = () => owner && owner.tab === tab && owner.id === m.id;
   if (m.engine === 'system') {
     chrome.tts.stop();
     chrome.tts.speak(m.text, {
       voiceName: m.voice || undefined, rate: m.rate, enqueue: false,
       onEvent: (e) => {
-        if (!owner || owner.id !== m.id) return;
-        if (e.type === 'word') tell(tab, { evt: 'word', id: m.id, char: e.charIndex });
-        else if (e.type === 'start') tell(tab, { evt: 'start', id: m.id });
-        else if (e.type === 'end') tell(tab, { evt: 'end', id: m.id });
-        else if (e.type === 'error') tell(tab, { evt: 'error', id: m.id, why: e.errorMessage || 'voice error' });
+        if (!mine()) return;  // a late event of a tab that lost the voice (ids are counted per tab and can be equal)
+        if (e.type === 'word') tell(tab, { evt: 'word', id: m.id, char: e.charIndex }, ext);
+        else if (e.type === 'start') tell(tab, { evt: 'start', id: m.id }, ext);
+        else if (e.type === 'end') tell(tab, { evt: 'end', id: m.id }, ext);
+        else if (e.type === 'error') tell(tab, { evt: 'error', id: m.id, why: e.errorMessage || 'voice error' }, ext);
       },
     });
     return;
   }
-  try { await offscreen(); } catch (e) { tell(tab, { evt: 'error', id: m.id, why: 'Audio player did not open: ' + (e && e.message) }); return; }
-  chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'speak', tab, id: m.id, text: m.text, voice: m.voice, rate: m.rate, next: m.next || [] });
+  try { await offscreen(); } catch (e) { tell(tab, { evt: 'error', id: m.id, why: 'Audio player did not open: ' + (e && e.message) }, ext); return; }
+  // The sound page answers true when it took the sentence. No answer (it was closing, or not listening yet):
+  // the page gets an error, so it does not stay in 'playing' with no sound.
+  chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'speak', tab, id: m.id, text: m.text, voice: m.voice, rate: m.rate, next: m.next || [] })
+    .then((took) => { if (took !== true && mine()) tell(tab, { evt: 'error', id: m.id, why: 'Audio player did not take the sentence.' }, ext); },
+      (e) => { if (mine()) tell(tab, { evt: 'error', id: m.id, why: 'Audio player: ' + (e && e.message) }, ext); });
 }
 
 chrome.runtime.onMessage.addListener((m, sender, reply) => {
   if (m.to === 'bg') {
     const tab = sender.tab ? sender.tab.id : m.tab;
-    if (m.cmd === 'speak') speak(tab, m);
+    const ext = isAddonPage(sender);
+    if (m.cmd === 'speak') speak(tab, m, ext);
     else if (m.cmd === 'stop') { if (owner && owner.tab === tab) stopOwner(tab); }
     else if (m.cmd === 'warm') offscreen().then(() => chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'warm', texts: m.texts, voice: m.voice, prio: m.prio, batch: m.batch })).catch(() => {});
-    else if (m.cmd === 'resume') resume(tab, m.id);
+    else if (m.cmd === 'resume') resume(tab, m.id, ext);
     else if (['pause', 'rate'].includes(m.cmd) && owner && owner.tab === tab && owner.engine === 'kokoro') {
       chrome.runtime.sendMessage({ to: 'offscreen', cmd: m.cmd, rate: m.rate }).catch(() => {});
     } else if (m.cmd === 'voices') { voices().then(reply); return true; }
     else if (m.cmd === 'myTab') reply(tab);
   } else if (m.to === 'bg-evt') {  // from the offscreen page
-    if (owner && owner.id === m.id) tell(m.tab, { evt: m.evt, id: m.id, t: m.t, d: m.d, why: m.why, starts: m.starts });
+    // the tab as well as the id: ids are counted per tab, so tab A's late 'end' can carry tab B's id
+    if (owner && owner.id === m.id && owner.tab === m.tab) tell(m.tab, { evt: m.evt, id: m.id, t: m.t, d: m.d, why: m.why, starts: m.starts }, owner.ext);
   }
 });
 
 async function voices() {
   const out = { natural: [], system: [], server: false };
   try {
-    const r = await fetch(SERVER + '/voices');
+    // a time limit: a server that accepts and then waits (the model still loading) must not hold the voice list
+    const r = await fetch(SERVER + '/voices', { signal: AbortSignal.timeout(2000) });
     out.natural = (await r.json()).voices; out.server = true;
   } catch { /* voice server off: system voices only */ }
   // built-in voices: only Russian (Kokoro has none); Milena, the Mac's own, first
@@ -120,19 +131,18 @@ async function pictureText(src, tab) {
 
 // Installed from the folder (Load unpacked): when the files there change (a new version), reload by itself,
 // so a fix reaches Chrome without pressing reload in chrome://extensions. The store version never changes on disk.
-let readersOpen = 0;  // reader pages hold a port while they are open
-chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== 'reader') return;
-  readersOpen++;
-  port.onDisconnect.addListener(() => { readersOpen = Math.max(0, readersOpen - 1); });
-});
+// 'A reader is open' is asked of the browser each time: Chrome stops this background when it is idle, and a
+// counter in memory then starts again at 0 while reader tabs are still open.
+const readerOpen = () => chrome.runtime.getContexts({ contextTypes: ['TAB'] })
+  .then((c) => c.some((x) => String(x.documentUrl || '').startsWith(READER)));
+chrome.runtime.onConnect.addListener(() => {});  // the reader still connects a port named 'reader'; nothing to count
 async function selfUpdate() {
   try {
     const disk = await (await fetch(chrome.runtime.getURL('manifest.json'), { cache: 'no-store' })).json();
     if (disk.version === chrome.runtime.getManifest().version) return;
     // A reload cuts every open reader page off from the add-on (no underlines, no copy, no voice) until the
     // page itself is reloaded. Wait until no reader page is open.
-    if (readersOpen > 0) return;
+    if (await readerOpen()) return;
     chrome.runtime.reload();
   } catch { /* nothing to compare */ }
 }
