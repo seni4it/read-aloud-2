@@ -25,3 +25,7 @@ Evidence: audit/reader-ui.md findings 12, 21, 22, 25. Each audit finding is a cl
 ## Blocked by
 
 - 03 (reader-transport)
+
+## Note from ticket 04 (9 Nov 2026)
+
+Ticket 04 found a related fault in `notes.js` and `app.js`: an add or a remove of a highlight during the read-in of a new book writes the old book's highlights under the new book's key. The exact change is in the Work report of `04-reader-drawing.md` ("Review round 2", item 5). Repair it in this ticket, with a test.
