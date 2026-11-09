@@ -106,7 +106,7 @@ function loadReader() {
     loadLexicon: async () => { if (fakes.lexiconGate) await fakes.lexiconGate; },
     repairStats: () => ({ repaired: 0 }),
     withOcr: async (doc) => doc,
-    setupNotes: () => ({ reload() {}, markdown() { return ''; } }),
+    setupNotes: () => ({ reload() {}, markdown() { return ''; }, reset() {}, markAt: () => null }),
     setupAsk: () => ({ reload() {}, highlightsChanged() {}, stopReading() {} }),
   };
 

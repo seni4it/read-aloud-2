@@ -42,7 +42,7 @@ const els = {
 };
 
 const viewer = window.__viewer = new PdfViewer(pdfjsLib, els.pages);
-let notesUI = { reload() {} };  // Read Aloud 2: highlights, set up below once the page is ready
+let notesUI = { reload() {}, reset() {}, markAt: () => null };  // Read Aloud 2: highlights, set up below once the page is ready
 let askUI = { reload() {}, highlightsChanged() {}, stopReading() {} };  // Read Aloud 2: Ask Claude about the book
 
 // Exposed for debugging in the console: window.__pr.sentences etc.
@@ -153,6 +153,7 @@ function setBusy(busy, message) {
 function engineLabel(eng) {
   if (!eng || eng.id === 'system') return '';
   if (eng.id !== 'kokoro') return 'ready · ' + (eng.device || eng.id);
+  if (String(eng.device).startsWith('Mac voice')) return eng.device;  // the voice server fell: tts.js reads with the Mac voice
   if (eng.device === 'webgpu') return 'ready · GPU';
   if (eng.device === 'wasm') {
     return 'Kokoro is on the CPU here (~1 min/paragraph) — pick System voices to read now';
@@ -168,7 +169,6 @@ function speakCurrent() {
   state.from = 0;
   const sentence = from ? { ...full, text: full.text.slice(from) } : full;
 
-  const readyLabel = engineLabel(engine);
   if (engine.id !== 'system') setStatus('generating…');
   let spoke = false;
 
@@ -178,7 +178,7 @@ function speakCurrent() {
     rate: Number(els.rateSel.value),
     onWord: (charIndex, charLength) => {
       if (!state.playing) return;
-      if (!spoke) { spoke = true; setStatus(readyLabel); }
+      if (!spoke) { spoke = true; setStatus(engineLabel(engine)); }  // now: the voice server may have fallen in this sentence
       state.at = charIndex + from;  // Read Aloud 2: the word being read, so Pause then Play goes on from here
       const parts = wordPartsAt(full, charIndex + from, charLength);
       if (parts.length) viewer.highlightWord(parts);
@@ -525,8 +525,9 @@ async function keyFor(file, buffer) {
 
 /* -------------------------------------------------------------- open + parse */
 
-/** Opens a PDF. Gives true when it opened, false when it could not (a message then shows). */
-async function openFile(file) {
+/** Opens a PDF. Gives true when it opened, false when it could not (a message then shows).
+ *  library: this is the library book of the page (?lib=), so its highlights are kept with that book. */
+async function openFile(file, { library = false } = {}) {
   stop();
   let doc;
   try {
@@ -543,6 +544,7 @@ async function openFile(file) {
     }).promise;
     // Read Aloud 2: from here the old document is gone. Its read-in stops, and none of its sentences show.
     state.parseToken++;
+    notesUI.reset(library ? LIB_ID : '');  // the old book's highlights go; a PDF that is not the library book keeps its own
     const old = state.doc;
     state.doc = doc;
     state.sentences = [];
@@ -578,6 +580,8 @@ async function openFile(file) {
       return false;
     }
     setStatus(`Could not show "${file.name}" (${err.message}).`);
+    // the old book's text is gone already (above), so no book can be read or marked: say so in the Highlights tab
+    notesUI.reset('', 'No book is open. Open a PDF to see its highlights.');
     return false;
   }
 
@@ -783,6 +787,7 @@ els.closeSidebar.addEventListener('click', () => { els.sidebar.hidden = true; })
 // Click any word on the page to start reading from there.
 els.pages.addEventListener('click', e => {
   if (String(getSelection()).trim()) return;  // Read Aloud 2: selecting text (to highlight it) does not start reading
+  if (notesUI.markAt(e.clientX, e.clientY)) return;  // a click on a saved highlight opens its menu (notes.js), the reading does not move
   const span = e.target.closest('.text-layer span');
   if (!span) return;
   const pageEl = span.closest('.page');
@@ -967,7 +972,7 @@ async function pollExport() {
       const res = await fetch(src, { credentials: 'include' });
       if (!res.ok) throw new Error(res.status);
       const name = new URLSearchParams(location.search).get('name') || decodeURIComponent(new URL(src, location.href).pathname.split('/').pop() || 'document.pdf');
-      if (await openFile(new File([await res.arrayBuffer()], name, { type: 'application/pdf' }))) document.title = name + ' · Read Aloud 2';
+      if (await openFile(new File([await res.arrayBuffer()], name, { type: 'application/pdf' }), { library: true })) document.title = name + ' · Read Aloud 2';
     } catch (err) {
       setStatus('Could not open this PDF (' + err.message + '). Use "Open PDF" to choose the file.');
     }

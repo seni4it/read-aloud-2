@@ -5,8 +5,20 @@
 const COLORS = ['yellow', 'green', 'blue', 'pink'];
 const DEFAULT_NAMES = { yellow: 'Important', green: 'Idea', blue: 'Question', pink: 'Review' };
 
+// A read or a save of the highlights waits at most this long for the voice server, as its other requests do.
+const LIMIT = 30000;
+const WAIT = 'Wait: the highlights show when the book is read in.';
+
 export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onChange = () => {} }) {
   let notes = [];
+  let lib = libId;  // the library id of the book that is open; '' for a PDF that is not the library book
+  let ready = false;  // the highlights of this book are read; before that, a change could write over them
+  let unread = WAIT;  // why the list is empty when the highlights are not read
+  let readFailed = false;  // the last read failed: the next change reads again
+  let loadId = 0;  // each read and each new book gets a new number: a late answer of an older read is dropped
+  let problem = '';  // a save that failed, shown on top of the list until a save works again
+  const saving = new Map();  // library id -> its saves: the saves of one book go to the voice server one after the other
+  let rowButtons = [];  // the buttons of the rows in the list, to move the focus after a delete
   let filter = 'all';
   let names = { ...DEFAULT_NAMES, ...(load('ra2.groups') || {}) };
   let lastColor = load('ra2.lastColor') || 'yellow';
@@ -19,7 +31,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
   const bookName = () => (document.getElementById('docTitle')?.textContent || document.title.replace(/ · Read Aloud 2$/, '')).trim();
   async function kpLoad() {
     try {
-      const r = await (await fetch(SERVER + '/claude/sessions', { cache: 'no-store' })).json();
+      const r = await ask(SERVER + '/claude/sessions', { cache: 'no-store' }, (res) => res.json());
       kp.sessions = r.sessions || []; kp.setting = { ...kp.setting, ...(r.setting || {}) }; kp.ok = true;
     } catch { kp.ok = false; }
   }
@@ -41,21 +53,76 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
   }
 
   function load(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }
-  function keep(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage blocked */ } }
+  function keep(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; /* storage blocked */ } }
   const fp = (t) => (t || '').replace(/\s+/g, ' ').trim().slice(0, 60);
 
   // ---------- storage ----------
+  // A request to the voice server with the time limit. take(response) reads the body; the limit covers it too.
+  async function ask(url, opts = {}, take = (r) => r) {
+    const ctl = new AbortController();
+    let t;
+    const late = new Promise((_, no) => { t = setTimeout(() => { ctl.abort(); no(new Error('no answer in time')); }, LIMIT); });
+    try { return await Promise.race([fetch(url, { ...opts, signal: ctl.signal }).then(take), late]); } finally { clearTimeout(t); }
+  }
+  // The whole list of this book, or null when it could not be read. "Nothing saved yet" is a good empty list;
+  // an error or a damaged value is not, because a change would then write over the saved highlights.
   async function read() {
-    if (libId) {
-      try { return await (await fetch(`/library/${libId}/notes`, { cache: 'no-store' })).json(); } catch { return []; }
+    if (lib) {
+      await saving.get(lib);  // a save of this book that is not finished comes first, so the read gets it
+      try {
+        // the voice server answers [] for a book with no highlights yet; any other answer that is not ok is an error
+        const all = await ask(`/library/${lib}/notes`, { cache: 'no-store' }, (r) => (r.ok ? r.json() : null));
+        return Array.isArray(all) ? all : null;
+      } catch { return null; }
     }
-    return load('ra2.notes.' + state.docKey) || [];
+    try {
+      const raw = localStorage.getItem('ra2.notes.' + state.docKey);
+      if (raw === null) return [];
+      const all = JSON.parse(raw);
+      return Array.isArray(all) ? all : null;
+    } catch { return null; }
+  }
+  function saveFailed(why) {
+    problem = `A change was not saved: ${why}. The next change saves all highlights again.`;
+    flash(problem); list();
   }
   function write() {
+    if (!ready) return;  // never write a list that is not this book's whole list
     const data = JSON.stringify(notes);
-    if (libId) fetch(`/library/${libId}/notes`, { method: 'POST', body: data, headers: { 'Content-Type': 'application/json' } }).catch(() => {});
-    else keep('ra2.notes.' + state.docKey, notes);
+    if (lib) {
+      const id = lib;  // a save that waits in the queue goes to its own book, also after another book is opened
+      // a save that fails or does not answer in time does not stop the saves after it
+      // the message is only about the book that is open now: a late answer of another book's save does not touch it
+      saving.set(id, (saving.get(id) || Promise.resolve()).then(() => ask(`/library/${id}/notes`, { method: 'POST', body: data, headers: { 'Content-Type': 'application/json' } }))
+        .then((r) => { if (!r.ok) throw new Error(r.status); if (problem && id === lib) { problem = ''; list(); } })
+        .catch(() => { if (id === lib) saveFailed('the voice server did not answer'); }));
+    } else if (keep('ra2.notes.' + state.docKey, notes)) { if (problem) problem = ''; } else saveFailed('the browser storage is full or blocked');
     onChange();
+  }
+  // A change before the highlights of this book are read is refused, with a short message on the mark button.
+  // After a failed read, the change starts a new read.
+  function canChange() {
+    if (ready) return true;
+    flash(unread);
+    if (readFailed) refresh();
+    return false;
+  }
+  async function refresh() {  // read this book's highlights and show them; exact duplicates are kept once
+    const my = ++loadId;
+    readFailed = false; unread = WAIT;
+    if (!kp.ok) await kpLoad();
+    const all = await read();
+    if (my !== loadId) return;  // a newer book or a newer read came: this answer is old
+    if (!all) {
+      readFailed = true; ready = false; notes = [];
+      unread = `The highlights could not be read (${lib ? 'the voice server did not answer' : 'the browser storage did not answer'}). Mark again in a moment: the highlights are read again.`;
+      draw(); return;
+    }
+    ready = true;
+    const seen = new Set();
+    notes = all.filter((n) => { const k = JSON.stringify(n.segs.map((g) => [g.si, g.a, g.b])); return !seen.has(k) && seen.add(k); });
+    if (notes.length !== all.length) write();
+    draw();
   }
 
   // A highlight remembers its sentence's first words: if the document is read again with other options
@@ -84,7 +151,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
   }
 
   function add(segs, color) {
-    if (!segs.length) return;
+    if (!segs.length || !canChange()) return;
     const text = segs.map((g) => state.sentences[g.si].text.slice(g.a, g.b)).join(' ').replace(/\s+/g, ' ').trim();
     if (!text) return;
     // the same text saved twice (the marker pressed twice on one sentence) is kept once
@@ -103,7 +170,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
   // ---------- 1. the sentence being read: the marker button in the player bar ----------
   function markReading() {
     const s = state.sentences[state.index];
-    if (!s) return;
+    if (!s || !canChange()) return;
     const at = Math.max(0, Math.min(state.at || 0, s.text.length - 1));
     const t = s.text;
     let a = 0;
@@ -116,19 +183,23 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
     flash('Highlighted');
   }
 
-  function remove(n) { notes = notes.filter((x) => x !== n); write(); draw(); }
+  function remove(n) { if (!canChange()) return false; notes = notes.filter((x) => x !== n); write(); draw(); return true; }
 
   // ---------- a click on an underline: a small bar to remove it or move it to another group ----------
   const markBar = document.createElement('div');
   markBar.className = 'selbar'; markBar.hidden = true;
   document.body.appendChild(markBar);
   let markHide = null;
+  // the underline under a point of the screen, or null; the reader asks this too, so a click on it does not start the reading
+  function markAt(x, y) {
+    return [...els.pages.querySelectorAll('.mark-box')].find((b) => {
+      const r = b.getBoundingClientRect();
+      return x >= r.left - 2 && x <= r.right + 2 && y >= r.top - 2 && y <= r.bottom + 2;  // the drawn box: a click near it still reads
+    }) || null;
+  }
   els.pages.addEventListener('click', (e) => {
     if (String(getSelection()).trim()) return;
-    const hit = [...els.pages.querySelectorAll('.mark-box')].find((b) => {
-      const r = b.getBoundingClientRect();
-      return e.clientX >= r.left - 6 && e.clientX <= r.right + 6 && e.clientY >= r.top - 6 && e.clientY <= r.bottom + 6;  // a generous target
-    });
+    const hit = markAt(e.clientX, e.clientY);
     if (!hit) { markBar.hidden = true; return; }
     const n = notes.find((x) => x.id === hit.dataset.id);
     if (!n) return;
@@ -145,7 +216,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
     const b = e.target.closest('button[data-act]'); if (!b) return;
     const n = notes.find((x) => x.id === markBar.dataset.id);
     if (n && b.dataset.act === 'remove') remove(n);
-    else if (n) { n.color = b.dataset.act; write(); draw(); }
+    else if (n && canChange()) { n.color = b.dataset.act; write(); draw(); }
     markBar.hidden = true;
   });
   document.addEventListener('mousedown', (e) => { if (!markBar.contains(e.target) && !els.pages.contains(e.target)) markBar.hidden = true; });
@@ -233,6 +304,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
       const text = segs.map((g) => state.sentences[g.si].text.slice(g.a, g.b)).join(' ').trim() || undouble(String(getSelection()));
       document.dispatchEvent(new CustomEvent('ra2-ask', { detail: text }));
     } else if (b.dataset.c === 'remove') {  // every underline that touches the selected text goes, however roughly it was selected
+      if (!canChange()) { getSelection().removeAllRanges(); bar.hidden = true; return; }
       const sel = selectionSegs();
       const touches = (n) => n.segs.some((g) => { const si = where(g); return sel.some((s) => s.si === si && s.a < g.b && g.a < s.b); });
       const before = notes.length;
@@ -244,6 +316,27 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
   document.addEventListener('mousedown', (e) => { if (!bar.contains(e.target)) bar.hidden = true; });
 
   // ---------- 3. the Highlights list in the side bar ----------
+  function go(n) {  // to the highlight: the reader jumps there, and Play starts at it
+    const si = where(n.segs[0]);
+    if (si < 0) return;
+    jumpTo(si, { resume: false });
+    const t = state.sentences[si].text; let a = n.segs[0].a;
+    while (a > 0 && !/\s/.test(t[a - 1])) a--;
+    state.from = a;  // Play starts at the highlight, not at the top of its paragraph
+    // then the underline itself to the middle of the screen, with a short flash (its page may still be drawing)
+    let tries = 0;
+    const show = () => {
+      const box = els.pages.querySelector(`.mark-box[data-id="${n.id}"]`);
+      if (!box) { if (++tries < 20) setTimeout(show, 150); return; }
+      box.scrollIntoView({ block: 'center' });
+      setTimeout(() => {  // the page's own scroll to the paragraph can land after this one: center it again if needed
+        const r = box.getBoundingClientRect();
+        if (r.top < 80 || r.bottom > innerHeight - 160) box.scrollIntoView({ block: 'center' });
+      }, 450);
+      for (const b of els.pages.querySelectorAll(`.mark-box[data-id="${n.id}"]`)) { b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash'); }
+    };
+    setTimeout(show, 100);
+  }
   function list() {
     const box = $('notes');
     const shown = notes.filter((n) => filter === 'all' || n.color === filter);
@@ -251,37 +344,31 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
     box.innerHTML = `<label class="show-marks"><input type="checkbox" id="showMarks" ${showMarks ? 'checked' : ''}> Show highlights on the page</label><div class="note-filter"><button type="button" data-f="all" class="${filter === 'all' ? 'on' : ''}">All</button>${
       COLORS.map((c) => `<button type="button" data-f="${c}" class="${filter === c ? 'on' : ''}"><span class="dot ${c}"></span>${esc(names[c])}</button>`).join('')
     }</div>`;
+    if (problem) box.insertAdjacentHTML('beforeend', `<p class="notes-empty" role="alert">${esc(problem)}</p>`);
     if (!shown.length) {
-      box.insertAdjacentHTML('beforeend', `<p class="notes-empty">${notes.length ? 'No highlights in this group.'
+      box.insertAdjacentHTML('beforeend', `<p class="notes-empty">${!ready ? esc(unread) : notes.length ? 'No highlights in this group.'
         : 'No highlights yet. Select text on the page and choose a group, or press the marker button while it reads.'}</p>`);
     }
+    rowButtons = [];
     for (const n of shown) {
-      const b = document.createElement('button');
-      b.type = 'button'; b.className = 'note'; b.dataset.color = n.color;
-      b.innerHTML = `${esc(n.text.length > 220 ? n.text.slice(0, 220) + '…' : n.text)}<small>${esc(names[n.color])} · page ${n.page}${n.sent ? ' · ✓ sent' : ''}</small><span class="del" role="button" title="Delete this highlight" aria-label="Delete this highlight">×</span>`;
-      b.addEventListener('click', (e) => {
-        if (e.target.closest('.del')) { remove(n); return; }
-        const si = where(n.segs[0]);
-        if (si < 0) return;
-        jumpTo(si, { resume: false });
-        const t = state.sentences[si].text; let a = n.segs[0].a;
-        while (a > 0 && !/\s/.test(t[a - 1])) a--;
-        state.from = a;  // Play starts at the highlight, not at the top of its paragraph
-        // then the underline itself to the middle of the screen, with a short flash (its page may still be drawing)
-        let tries = 0;
-        const show = () => {
-          const box = els.pages.querySelector(`.mark-box[data-id="${n.id}"]`);
-          if (!box) { if (++tries < 20) setTimeout(show, 150); return; }
-          box.scrollIntoView({ block: 'center' });
-          setTimeout(() => {  // the page's own scroll to the paragraph can land after this one: center it again if needed
-            const r = box.getBoundingClientRect();
-            if (r.top < 80 || r.bottom > innerHeight - 160) box.scrollIntoView({ block: 'center' });
-          }, 450);
-          for (const b of els.pages.querySelectorAll(`.mark-box[data-id="${n.id}"]`)) { b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash'); }
-        };
-        setTimeout(show, 100);
+      // a plain row with two real buttons: the text opens the highlight, the × deletes it (a button cannot hold a button)
+      const row = document.createElement('div');
+      row.className = 'note'; row.dataset.color = n.color;
+      const open = document.createElement('button');
+      open.type = 'button'; open.className = 'note-open';
+      open.style.cssText = 'display:block;width:100%;padding:0;margin:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer';
+      open.innerHTML = `${esc(n.text.length > 220 ? n.text.slice(0, 220) + '…' : n.text)}<small>${esc(names[n.color])} · page ${n.page}${n.sent ? ' · ✓ sent' : ''}</small>`;
+      const del = document.createElement('button');
+      del.type = 'button'; del.className = 'del'; del.title = 'Delete this highlight'; del.setAttribute('aria-label', 'Delete this highlight'); del.textContent = '×';
+      open.addEventListener('click', () => go(n));
+      row.addEventListener('click', (e) => { if (e.target === row) go(n); });  // the edge of the row opens it too
+      del.addEventListener('click', () => {
+        const i = shown.indexOf(n);
+        if (remove(n)) (rowButtons[i] || rowButtons[i - 1] || $('markBtn')).focus();  // the focus stays in the list, not on the page
       });
-      box.appendChild(b);
+      row.appendChild(open); row.appendChild(del);
+      box.appendChild(row);
+      rowButtons.push(open);
     }
     box.insertAdjacentHTML('beforeend', '<div class="note-tools"><button type="button" class="rename" id="exportMd">Export as Markdown (.md)</button> · <button type="button" class="rename" id="copyMd">Copy for Claude</button> · <button type="button" class="rename" id="renameGroups">Rename groups</button></div>');
     if (kp.ok) {
@@ -322,7 +409,9 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([markdown()], { type: 'text/markdown' }));
       a.download = (document.getElementById('docTitle')?.textContent || 'book').trim().replace(/[\\/:*?"<>|]/g, ' ').slice(0, 80) + ' - highlights.md';
-      document.body.appendChild(a); a.click(); a.remove(); return;
+      document.body.appendChild(a); a.click(); a.remove();
+      const url = a.href; setTimeout(() => URL.revokeObjectURL(url), 1000);  // the download has started: release the address
+      return;
     }
     if (e.target.id === 'kpSend') { kpSend(unsent()).then(list); return; }
     if (e.target.id === 'kpCopy') {  // the new key points as one message to paste into the conversation
@@ -354,7 +443,10 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
   };
   $('contentsTab').addEventListener('click', () => tab('toc'));
   $('notesTab').addEventListener('click', () => { tab('notes'); els.sidebar.hidden = false; });
-  $('markBtn').addEventListener('click', (e) => { if (e.detail) markReading(); });
+  // A mouse click and Enter both mark (Enter gives a click with detail 0). Space is Play and Pause (app.js): its
+  // preventDefault on keydown stops the button's own click, and the keyup here makes sure that Space never marks.
+  $('markBtn').addEventListener('click', () => markReading());
+  $('markBtn').addEventListener('keyup', (e) => { if (e.code === 'Space') e.preventDefault(); });
 
   function flash(t) {
     const b = $('markBtn'); const old = b.title; b.title = t; b.classList.add('flash');
@@ -363,12 +455,14 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
 
   return {
     markdown,
-    async reload() {  // after a document is read (or read again); exact duplicates are kept once
-      if (!kp.ok) await kpLoad();
-      const seen = new Set(), all = await read();
-      notes = all.filter((n) => { const k = JSON.stringify(n.segs.map((g) => [g.si, g.a, g.b])); return !seen.has(k) && seen.add(k); });
-      if (notes.length !== all.length) write();
-      draw();
+    markAt,
+    // A new book is opened: the old book's highlights go, a read that has not answered is dropped, and no change is
+    // written until reload(). id: the library id when this is the library book of the page, else '' (its own key).
+    // why: the text for the list and the mark button while no change is possible (default: wait for the read-in).
+    reset(id = '', why = WAIT) {
+      loadId++; lib = id; ready = false; readFailed = false; unread = why; problem = ''; notes = []; markBar.hidden = true;
+      viewer.setMarks([]); list();
     },
+    reload: refresh,  // after a document is read (or read again)
   };
 }
