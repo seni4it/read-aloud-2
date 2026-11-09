@@ -1,5 +1,6 @@
 # 05. Reader: voice requests with a time limit, cancel and correct priority
 
+GitHub issue: #6
 Status: ready-for-agent
 Type: AFK
 

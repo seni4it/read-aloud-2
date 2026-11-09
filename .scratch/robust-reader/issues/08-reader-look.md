@@ -1,5 +1,6 @@
 # 08. Reader look: focus marks, contrast, control size, dark mode, narrow window
 
+GitHub issue: #9
 Status: ready-for-agent
 Type: AFK
 
@@ -9,7 +10,7 @@ Type: AFK
 
 ## What to build
 
-Use the `key-design` skill. Add a focus mark to every control. Bring each text to a contrast of 4.5 to 1 or more. Make each control at least 32 px high. Make the word highlight and the saved highlights visible in dark mode. Keep the page readable when the Ask pane is open in a window of 821 to 1100 px. Reduce the font sizes to 3 and the corner radii to 2.
+Use the `key-design` skill. Add a focus mark to every control. Bring each text to a contrast of 4.5 to 1 or more. Make each control at least 32 px high. Make the word highlight and the saved highlights visible in dark mode. Keep the page readable when the Ask pane is open in a window of 821 to 1100 px. Use only the token names of ticket 20 for colour, size and radius. This ticket is the accessibility floor of the reader. The larger layout work is in tickets 21 and 22.
 
 Evidence: audit/reader-ui.md findings 8, 14, 19, 20, 24. Each audit finding is a claim: confirm it in the code first.
 
@@ -23,4 +24,4 @@ Evidence: audit/reader-ui.md findings 8, 14, 19, 20, 24. Each audit finding is a
 
 ## Blocked by
 
-None - can start immediately
+- 20 (tokens)

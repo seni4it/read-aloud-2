@@ -1,5 +1,6 @@
 # 18. Add-on popup and paste page: labels and font
 
+GitHub issue: #19
 Status: ready-for-agent
 Type: AFK
 

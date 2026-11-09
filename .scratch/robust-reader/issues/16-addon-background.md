@@ -1,5 +1,6 @@
 # 16. Add-on background: no lost events, no wrong owner, safe self-update
 
+GitHub issue: #17
 Status: ready-for-agent
 Type: AFK
 

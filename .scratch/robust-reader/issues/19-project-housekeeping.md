@@ -1,5 +1,6 @@
 # 19. Project housekeeping: clean tree, current README, version
 
+GitHub issue: #20
 Status: ready-for-human
 Type: HITL
 

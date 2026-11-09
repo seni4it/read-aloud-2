@@ -1,5 +1,6 @@
 # 07. Highlights: correct click, keyboard, save sequence
 
+GitHub issue: #8
 Status: ready-for-agent
 Type: AFK
 

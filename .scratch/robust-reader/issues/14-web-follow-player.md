@@ -1,5 +1,6 @@
 # 14. Web pages: Follow and the player work on every site
 
+GitHub issue: #15
 Status: ready-for-agent
 Type: AFK
 

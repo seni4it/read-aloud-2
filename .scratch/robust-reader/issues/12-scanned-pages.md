@@ -1,5 +1,6 @@
 # 12. Scanned pages: read ahead 2 pages only, with a time limit
 
+GitHub issue: #13
 Status: ready-for-agent
 Type: AFK
 

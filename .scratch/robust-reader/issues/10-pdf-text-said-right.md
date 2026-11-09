@@ -1,5 +1,6 @@
 # 10. PDF text: characters, units and hyphens said correctly
 
+GitHub issue: #11
 Status: ready-for-agent
 Type: AFK
 

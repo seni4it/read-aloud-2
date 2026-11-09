@@ -1,5 +1,6 @@
 # 03. Reader: the reading does not stop or start again by error
 
+GitHub issue: #4
 Status: ready-for-agent
 Type: AFK
 

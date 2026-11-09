@@ -1,5 +1,6 @@
 # 17. Library page: fast search and clear errors
 
+GitHub issue: #18
 Status: ready-for-agent
 Type: AFK
 

@@ -1,5 +1,6 @@
 # 13. Web pages: sentences are cut correctly
 
+GitHub issue: #14
 Status: ready-for-agent
 Type: AFK
 

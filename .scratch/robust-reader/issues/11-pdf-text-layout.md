@@ -1,5 +1,6 @@
 # 11. PDF text: line size, rotated pages, rows, speed
 
+GitHub issue: #12
 Status: ready-for-agent
 Type: AFK
 

@@ -1,5 +1,6 @@
 # 06. Speed that keeps the pitch of the voice
 
+GitHub issue: #7
 Status: ready-for-human
 Type: HITL
 

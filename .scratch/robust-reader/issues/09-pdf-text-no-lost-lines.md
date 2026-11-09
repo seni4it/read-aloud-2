@@ -1,5 +1,6 @@
 # 09. PDF text: no body line is lost
 
+GitHub issue: #10
 Status: ready-for-agent
 Type: AFK
 

@@ -1,6 +1,7 @@
 # 01. Voice server: bounded memory, clean errors, cached files
 
-Status: ready-for-agent
+GitHub issue: #2
+Status: done (commit aad23d2)
 Type: AFK
 
 ## Parent

@@ -1,5 +1,6 @@
 # 02. Test bench: one command, Node tests, PDF text comparison
 
+GitHub issue: #3
 Status: ready-for-agent
 Type: AFK
 
