@@ -11,3 +11,15 @@ Automatic tests cannot show these. Do them after the add-on is reloaded, at a ti
 5. No broadcast from a web tab: read in a web tab with the paste page open. The paste page must still show the word highlight when it reads itself.
 
 Not known until checked: that `chrome.runtime.getContexts` lists a reader tab with its full address, and that the reply `true` of the sound page reaches the background when other add-on pages also listen.
+
+## Ticket 17: library page (real browser necessary)
+
+1. Open the library page. The cards show, with the line "Audio: N MP3s" or "Making audio N%" where it applies.
+2. With the Network panel open, type 5 letters in the search box. No `/export` request is sent.
+3. For a book with no cover yet, no more than 5 `/library/cover/<id>` requests are sent. Hide the card with a search: the requests stop.
+4. With the voice server stopped, add a PDF. The message "Could not add …" shows, and "Adding…" does not stay.
+5. Choose a key file that is not JSON in the YouTube panel. The message "That is not the key file from Google." shows.
+6. With the voice server stopped, press the restart button. It shows "Restart failed" and can be pressed again after about 2.5 seconds.
+7. Look at a "PDF" cover placeholder in light mode and in dark mode.
+
+Not repaired, for ticket 23: the remove button has no message when the voice server is stopped. The light placeholder has a contrast of 4.05 to 1; the token rule asks for 4.5 to 1.

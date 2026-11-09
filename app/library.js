@@ -17,6 +17,12 @@
     try { books = await (await fetch('/library.json', { cache: 'no-store' })).json(); }
     catch { status('The Read Aloud server is not running. Open the Read Aloud app again.'); return; }
     show();
+    // audio export (MP3 files): ask one time per load, not on each search keystroke
+    const asked = await Promise.all(books.map(async (b) => {
+      try { b.exp = await (await fetch(`/library/${b.id}/export`, { cache: 'no-store' })).json(); return true; }
+      catch { return false; }
+    }));
+    if (asked.some(Boolean)) show();
   }
 
   function show() {
@@ -46,15 +52,20 @@
     const cover = el.querySelector('.cover');
     const img = new Image();
     img.onload = () => { cover.style.backgroundImage = `url(${img.src})`; };
-    img.onerror = () => { cover.textContent = 'PDF'; if (!b.cover) setTimeout(() => { img.src = `/library/cover/${b.id}?r=${Date.now()}`; }, 4000); };
+    // a cover that is not made yet: try again every 4 s, at most 5 tries, and only while the card is on the page
+    let tries = 1;
+    img.onerror = () => {
+      cover.textContent = 'PDF';
+      if (b.cover || tries >= 5 || !el.isConnected) return;
+      setTimeout(() => { if (el.isConnected) { tries++; img.src = `/library/cover/${b.id}?r=${Date.now()}`; } }, 4000);
+    };
     img.src = `/library/cover/${b.id}`;
     const open = () => { location.href = `/reader/index.html?lib=${b.id}&name=${encodeURIComponent(b.name)}&file=${encodeURIComponent('/library/file/' + b.id)}`; };
     el.addEventListener('click', (e) => { if (!e.target.closest('.remove')) open(); });
-    // audio export (MP3 files) in progress or ready: a line on the card
-    fetch(`/library/${b.id}/export`, { cache: 'no-store' }).then((r) => r.json()).then((st) => {
-      if (st.state === 'running' || st.state === 'starting') right.textContent = `Making audio ${st.total ? Math.round((st.done / st.total) * 100) : 0}%`;
-      else if (st.state === 'done') right.textContent = `Audio: ${st.files.length} MP3s`;
-    }).catch(() => {});
+    // audio export (MP3 files) in progress or ready: a line on the card (the state comes from load())
+    const st = b.exp;
+    if (st && (st.state === 'running' || st.state === 'starting')) right.textContent = `Making audio ${st.total ? Math.round((st.done / st.total) * 100) : 0}%`;
+    else if (st && st.state === 'done' && Array.isArray(st.files)) right.textContent = `Audio: ${st.files.length} MP3s`;
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target === el) open(); });
     el.querySelector('.remove').addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -68,12 +79,17 @@
   async function add(files) {
     const pdfs = [...files].filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
     if (!pdfs.length) { status('Only PDF files can be added.'); return; }
+    const failed = [];
     for (const [k, f] of pdfs.entries()) {
       status(`Adding ${f.name} (${k + 1} of ${pdfs.length})…`);
-      const r = await fetch('/library/add?name=' + encodeURIComponent(f.name), { method: 'POST', body: f });
-      if (!r.ok) status(`Could not add ${f.name}.`);
+      let ok = false;
+      try { ok = (await fetch('/library/add?name=' + encodeURIComponent(f.name), { method: 'POST', body: f })).ok; }
+      catch { status(`Could not add ${f.name}. The Read Aloud server is not running. Open the Read Aloud app again.`); return; }
+      if (!ok) failed.push(f.name);
     }
-    status(pdfs.length === 1 ? 'Added.' : `Added ${pdfs.length} books.`);
+    const added = pdfs.length - failed.length;
+    status(failed.length ? `Could not add ${failed.join(', ')}.` + (added ? ` Added ${added} of ${pdfs.length}.` : '')
+      : pdfs.length === 1 ? 'Added.' : `Added ${pdfs.length} books.`);
     $('sort').value = 'added';
     load();
   }
@@ -113,14 +129,25 @@
   // the restart button: the voice server (the Claude helper and the natural voices) starts again
   $('restartBtn').addEventListener('click', async () => {
     const b = $('restartBtn'); b.disabled = true;
-    const { restartServer } = await import('/reader/restart.js');
-    await restartServer((t) => { b.textContent = t.length > 30 ? '↻ ' + t.replace(/\.$/, '') : t; b.title = t; });
-    setTimeout(() => { b.textContent = '↻ Restart helper'; b.disabled = false; }, 2500);
+    try {
+      const { restartServer } = await import('/reader/restart.js');
+      await restartServer((t) => { b.textContent = t.length > 30 ? '↻ ' + t.replace(/\.$/, '') : t; b.title = t; });
+    } catch {
+      b.textContent = '↻ Restart failed'; b.title = 'The restart did not work. Press again to try again.';
+    } finally {
+      setTimeout(() => { b.textContent = '↻ Restart helper'; b.disabled = false; }, 2500);
+    }
   });
   $('ytSecret').addEventListener('change', async (e) => {
     const f = e.target.files[0]; if (!f) return;
-    const r = await post('/youtube/secret', JSON.parse(await f.text()).valueOf());
-    $('ytState').textContent = r.ok ? 'Key file saved.' : 'That is not the key file from Google.'; show();
+    let key;
+    try { key = JSON.parse(await f.text()); }
+    catch { $('ytState').textContent = 'That is not the key file from Google.'; return; }
+    try {
+      const r = await post('/youtube/secret', key);
+      $('ytState').textContent = r.ok ? 'Key file saved.' : 'That is not the key file from Google.';
+    } catch { $('ytState').textContent = 'The Read Aloud server is not running. Open the Read Aloud app again.'; return; }
+    show();
   });
   $('ytConnect').addEventListener('click', () => { window.open('/youtube/auth', '_blank'); setTimeout(show, 15000); });
   $('ytDisconnect').addEventListener('click', async () => { if (confirm('Disconnect YouTube?')) { await post('/youtube/disconnect'); show(); } });

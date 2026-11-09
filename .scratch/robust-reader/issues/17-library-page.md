@@ -1,7 +1,7 @@
 # 17. Library page: fast search and clear errors
 
 GitHub issue: #18
-Status: ready-for-agent
+Status: code done, tests pass; real browser checks open (see manual-checks.md)
 Type: AFK
 
 ## Parent
