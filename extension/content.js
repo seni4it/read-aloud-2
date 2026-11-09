@@ -220,7 +220,7 @@
   function play(i, w = 0) {
     const seg = S.segs[i];
     if (!seg) { finish(); return; }
-    S.i = i; S.w = w; S.base = w; S.playing = true; S.paused = false; S.id++; cur = voiceFor(seg.say); S.starts = null;
+    S.i = i; S.w = w; S.base = w; S.playing = true; S.paused = false; S.id++; cur = voiceFor(seg.say); S.starts = null; S.wait = true;
     S.box = scroller(seg.b.el);  // found once for each sentence: it reads the style of each box around the text
     const words = seg.words.slice(w);
     const text = seg.b.text.slice(words[0].start, seg.end).replace(/\s+/g, ' ').trim();
@@ -283,6 +283,7 @@
   function onEvent(m) {
     if (m.evt === 'stopped') { S.id++; if (S.playing) { S.playing = false; S.paused = false; idle(); ui(); } return; }
     if (m.id !== S.id) return;
+    if (S.wait && (m.evt === 'tick' || m.evt === 'word')) { S.wait = false; $('pp').classList.remove('waiting'); }  // the voice is heard
     if (m.evt === 'times') { S.starts = Array.isArray(m.starts) && m.starts.length === S.weights.length ? m.starts : null; return; }
     if (m.evt === 'tick' && S.starts && !S.paused) {  // natural voice with Kokoro's own word times: exact
       let k = 0;
@@ -371,53 +372,162 @@
   function back() { if (!S.playing) return; play(S.w - S.base > 1 || S.i === 0 ? S.i : S.i - 1); }
 
   // ---------- the player (inside a shadow root, so page styles never touch it) ----------
+  // The player bar has the look of the reader player bar (ticket 24): previous, play, next, position, speed, follow,
+  // settings, and close. A shadow root on another site cannot load the token file of the add-on, so the values that
+  // the player uses are copied here, in one block, and set on :host. tests/node/web-player-design.test.mjs fails when
+  // a value differs from extension/pdf/tokens.css. No other line of this file holds a colour value.
+  // tokens:start
+  const TOKENS = {
+    root: {
+      '--color-surface': '#ffffff', '--color-surface-raised': '#e8eef4', '--color-text': '#0f172a', '--color-text-muted': '#475569',
+      '--color-line': '#e2e8f0', '--color-control-border': '#7b8aa0', '--color-hover': 'rgba(15, 23, 42, 0.06)',
+      '--color-chrome': '#10233f', '--color-on-chrome': '#ffffff', '--color-chrome-hover': 'rgba(255, 255, 255, 0.14)',
+      '--color-play': '#ff8c00', '--color-play-hover': '#ffa033', '--color-on-play': '#0f172a', '--color-progress': '#c25e00',
+      '--color-focus': '#3b82f6',
+      '--font-ui': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+      '--text-12': '12px', '--leading-12': '16px', '--text-14': '14px', '--leading-14': '20px', '--text-16': '16px', '--leading-16': '24px',
+      '--space-1': '4px', '--space-2': '8px', '--space-3': '12px', '--space-4': '16px',
+      '--control-s': '32px', '--control-m': '40px', '--control-l': '48px',
+      '--radius-1': '8px', '--radius-2': '12px', '--radius-round': '999px',
+      '--shadow-3': '0 8px 24px rgba(0, 0, 0, 0.3)',
+      '--dur-hover': '100ms', '--dur-move': '200ms', '--dur-spin': '800ms', '--delay-tip': '500ms', '--delay-wait': '300ms',
+      '--ease-out': 'cubic-bezier(0.2, 0, 0, 1)',
+      '--focus-width': '3px', '--focus-offset': '2px',
+    },
+    dark: {
+      '--color-surface': '#18222d', '--color-surface-raised': '#223140', '--color-text': '#e8eef4', '--color-text-muted': '#a9b8c6',
+      '--color-line': '#223140', '--color-control-border': '#5f738a', '--color-hover': 'rgba(255, 255, 255, 0.06)',
+      '--color-progress': '#ff8c00', '--color-focus': '#6ea8ff', '--shadow-3': '0 8px 24px rgba(0, 0, 0, 0.5)',
+    },
+    reduce: { '--dur-hover': '0ms', '--dur-move': '0ms', '--dur-spin': '0ms' },
+  };
+  // tokens:end
+  const vars = (o) => Object.entries(o).map(([k, v]) => `${k}: ${v};`).join(' ');
+
+  // Where the bar is: the owner drags it to the bottom, top, left or right edge of the window (ticket 25). The place is
+  // kept in chrome.storage.local, one place for all sites. At the left and right edges the bar is vertical.
+  const PLACES = ['bottom', 'top', 'left', 'right'];  // a tie between two edges goes to the first of these
+  const PLACE_KEY = 'ra2Place';
+  const VERTICAL_MIN = 440;  // a window lower than this (px) has no room for the vertical bar: it shows at the bottom
+  const DRAG_START = 6;  // px: a smaller move is a click, so a press on a button still presses it
+  function snapPlace(x, y, w, h) {  // the edge of a w × h window that is nearest to the point x, y
+    const d = { bottom: h - y, top: y, left: x, right: w - x };
+    return PLACES.reduce((a, p) => (d[p] < d[a] ? p : a));
+  }
+  function fitPlace(place, w, h) {  // the place where the bar shows in a w × h window: the saved place when it fits
+    if (!PLACES.includes(place)) return 'bottom';
+    return (place === 'left' || place === 'right') && h < VERTICAL_MIN ? 'bottom' : place;
+  }
+  if (globalThis.ra2Test) globalThis.ra2Test.place = { snapPlace, fitPlace };  // only the Node tests set ra2Test
+
   const sh = host.attachShadow({ mode: 'closed' });
   const ICON = {
     play: '<path d="M8 5v14l11-7z" fill="currentColor"/>', pause: '<path d="M7 5h4v14H7zM13 5h4v14h-4z" fill="currentColor"/>',
     back: '<path d="M6 6h2v12H6zM9.5 12 18 18V6z" fill="currentColor"/>', fwd: '<path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z" fill="currentColor"/>',
     find: '<circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="2"/>',
+    set: '<path d="M4 7h10M18 7h2M4 17h2M10 17h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="7" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="8" cy="17" r="2" fill="none" stroke="currentColor" stroke-width="2"/>',
     close: '<path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>',
     ear: '<path d="M4 14v-2a8 8 0 0 1 16 0v2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3" y="13" width="5" height="7" rx="2" fill="currentColor"/><rect x="16" y="13" width="5" height="7" rx="2" fill="currentColor"/>',
   };
-  const svg = (n) => `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">${ICON[n]}</svg>`;
+  const svg = (n) => `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">${ICON[n]}</svg>`;
+  const RATES = [0.8, 1, 1.2, 1.5, 1.75, 2, 2.5, 3, 3.5, 4];
+  const fmtRate = (r) => `${Math.round(r * 100) / 100}×`;
   sh.innerHTML = `<style>
-    :host { all: initial; }
-    * { box-sizing: border-box; font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; }
-    button { all: unset; cursor: pointer; display: grid; place-items: center; border-radius: 999px; color: inherit; }
-    button:focus-visible { outline: 3px solid #6ea8ff; outline-offset: 2px; }
-    .bar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 2147483647; display: flex; align-items: center; gap: 4px;
-           padding: 6px 8px; background: #10233f; color: #fff; border-radius: 999px; box-shadow: 0 8px 30px rgba(0,0,0,.35); font-size: 14px; max-width: calc(100vw - 24px); }
-    .bar[hidden], .launch[hidden], .hover[hidden], .bubble[hidden], .menu[hidden] { display: none; }
-    .bar button { width: 40px; height: 40px; } .bar button:hover { background: rgba(255,255,255,.14); }
-    .bar .pp { width: 48px; height: 48px; background: #FF8C00; color: #111; } .bar .pp:hover { background: #ffa033; }
-    .bar .find.away { color: #FF8C00; box-shadow: inset 0 0 0 2px #FF8C00; }
-    .bar .txt { width: auto; padding: 0 12px; font-weight: 600; white-space: nowrap; max-width: 150px; overflow: hidden; text-overflow: ellipsis; display: block; line-height: 40px; }
-    .msg { position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%); background: #10233f; color: #fff; padding: 6px 12px; border-radius: 8px; white-space: nowrap; font-size: 13px; }
+    :host { all: initial; ${vars(TOKENS.root)} }
+    @media (prefers-color-scheme: dark) { :host { ${vars(TOKENS.dark)} } }
+    @media (prefers-reduced-motion: reduce) { :host { ${vars(TOKENS.reduce)} } }
+    * { box-sizing: border-box; font-family: var(--font-ui); }
+    button { all: unset; cursor: pointer; display: grid; place-items: center; border-radius: var(--radius-round); color: inherit; transition: background-color var(--dur-hover) var(--ease-out); }
+    button:focus-visible, .menu:focus-visible { outline: var(--focus-width) solid var(--color-focus); outline-offset: var(--focus-offset); }
+    .bar { position: fixed; left: 50%; bottom: var(--space-4); transform: translateX(-50%); z-index: 2147483647; display: flex; align-items: center; gap: var(--space-2);
+           padding: var(--space-1) var(--space-2); background: var(--color-surface); color: var(--color-text); border: 1px solid var(--color-line); border-radius: var(--radius-round);
+           box-shadow: var(--shadow-3); font-size: var(--text-14); line-height: var(--leading-14); max-width: calc(100vw - 16px);
+           cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+    .bar[data-place=top] { top: var(--space-4); bottom: auto; }
+    .bar[data-place=left], .bar[data-place=right] { flex-direction: column; top: 50%; bottom: auto; transform: translateY(-50%); padding: var(--space-2) var(--space-1); max-width: none; max-height: calc(100vh - 16px); }
+    .bar[data-place=left] { left: var(--space-4); }
+    .bar[data-place=right] { left: auto; right: var(--space-4); }
+    .bar.dragging { transform: none; right: auto; bottom: auto; cursor: grabbing; }
+    .bar[hidden], .launch[hidden], .hover[hidden], .bubble[hidden], .menu[hidden], .rates[hidden] { display: none; }
+    .bar button { width: var(--control-m); height: var(--control-m); flex: 0 0 auto; position: relative; }
+    .bar button:hover { background: var(--color-hover); }
+    .bar button:active { background: var(--color-surface-raised); }
+    .bar .pp { width: var(--control-l); height: var(--control-l); background: var(--color-play); color: var(--color-on-play); transition: background-color var(--dur-hover) var(--ease-out), transform var(--dur-hover) var(--ease-out); }
+    .bar .pp:hover { background: var(--color-play-hover); }
+    .bar .pp:active { background: var(--color-play); transform: scale(0.96); }
+    @keyframes ra2-spin { to { transform: rotate(360deg); } }
+    .bar .pp::before { content: ""; position: absolute; inset: var(--space-1); border-radius: 50%; border: 3px solid transparent; border-top-color: var(--color-on-play); opacity: 0; pointer-events: none; }
+    .bar .pp.waiting::before { opacity: 1; transition: opacity var(--dur-hover) linear var(--delay-wait); animation: ra2-spin var(--dur-spin) linear infinite; }
+    @media (prefers-reduced-motion: reduce) { .bar .pp.waiting::before { animation: none; } }
+    .bar .find.away { box-shadow: inset 0 0 0 2px var(--color-text); }
+    .bar .speed { width: auto; min-width: 56px; padding: 0 var(--space-2); border: 1px solid var(--color-control-border); border-radius: var(--radius-1); font-size: var(--text-14); font-variant-numeric: tabular-nums; }
+    .bar .speed[aria-expanded=true], .bar .set[aria-expanded=true] { background: var(--color-surface-raised); }
+    .pos { display: flex; flex-direction: column; justify-content: center; gap: var(--space-1); width: 128px; flex: 0 1 auto; min-width: 0; padding: 0 var(--space-1); }
+    .prog { height: 4px; border-radius: var(--radius-round); background: var(--color-line); overflow: hidden; }
+    .prog i { display: block; height: 100%; width: 0; background: var(--color-progress); }
+    .meta { display: flex; gap: var(--space-2); font-size: var(--text-12); line-height: var(--leading-12); color: var(--color-text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; overflow: hidden; }
+    .meta span:empty { display: none; }
+    .bar[data-place=left] .pos, .bar[data-place=right] .pos { width: auto; padding: 0; align-items: center; }
+    .bar[data-place=left] :is(.prog, .left), .bar[data-place=right] :is(.prog, .left) { display: none; }
+    .bar [data-tip]::after { content: attr(data-tip); position: absolute; bottom: calc(100% + var(--space-2)); left: 50%; transform: translateX(-50%); padding: var(--space-1) var(--space-2);
+           border-radius: var(--radius-1); background: var(--color-chrome); color: var(--color-on-chrome); font-size: var(--text-12); line-height: var(--leading-12); font-weight: 500;
+           white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity var(--dur-hover) var(--ease-out); }
+    .bar [data-tip]:hover::after, .bar [data-tip]:focus-visible::after { opacity: 1; transition-delay: var(--delay-tip); }
+    .bar.dragging [data-tip]::after, .bar:has(.menu:not([hidden]), .rates:not([hidden])) [data-tip]::after { display: none; }
+    .bar[data-place=top] [data-tip]::after { bottom: auto; top: calc(100% + var(--space-2)); }
+    .bar[data-place=left] [data-tip]::after { bottom: auto; top: 50%; left: calc(100% + var(--space-2)); transform: translateY(-50%); }
+    .bar[data-place=right] [data-tip]::after { bottom: auto; top: 50%; left: auto; right: calc(100% + var(--space-2)); transform: translateY(-50%); }
+    .msg { position: absolute; bottom: calc(100% + var(--space-2)); left: 50%; transform: translateX(-50%); width: max-content; max-width: min(360px, calc(100vw - 32px));
+           background: var(--color-chrome); color: var(--color-on-chrome); padding: var(--space-2) var(--space-3); border-radius: var(--radius-1); font-size: var(--text-14); line-height: var(--leading-14); }
     .msg:empty { display: none; }
-    .menu { position: absolute; bottom: 58px; right: 0; width: 290px; max-height: 60vh; overflow: auto; background: #fff; color: #0f172a; border-radius: 12px;
-            box-shadow: 0 10px 40px rgba(0,0,0,.3); padding: 12px; font-size: 14px; }
-    .menu h4 { margin: 10px 0 4px; font-size: 12px; color: #475569; text-transform: uppercase; letter-spacing: .04em; }
-    .menu button { display: block; width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px; }
-    .menu button:hover, .menu button.on { background: #fff3e0; } .menu button.on { font-weight: 700; }
-    .menu input { width: 100%; accent-color: #FF8C00; }
-    .menu .rates { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; } .menu .rates button { width: auto; min-height: 32px; padding: 4px 10px; border: 1px solid #e2e8f0; }
-    .launch { position: fixed; right: 14px; top: 50%; z-index: 2147483646; width: 48px; height: 48px; background: #10233f; color: #fff; box-shadow: 0 6px 20px rgba(0,0,0,.3); }
-    .launch:hover { background: #FF8C00; color: #111; }
-    .hover { position: fixed; z-index: 2147483646; width: 32px; height: 32px; background: #FF8C00; color: #111; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+    .menu, .rates { position: absolute; bottom: calc(100% + var(--space-2)); right: 0; background: var(--color-surface); color: var(--color-text); border: 1px solid var(--color-line);
+           border-radius: var(--radius-2); box-shadow: var(--shadow-3); cursor: auto; z-index: 1; }
+    .menu { width: 288px; max-width: calc(100vw - 16px); max-height: 60vh; overflow: auto; padding: var(--space-4); font-size: var(--text-14); line-height: var(--leading-14); }
+    .rates { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-1); padding: var(--space-1); }
+    .bar[data-place=top] :is(.menu, .rates, .msg) { bottom: auto; top: calc(100% + var(--space-2)); }
+    .bar[data-place=left] :is(.menu, .rates, .msg) { bottom: auto; top: 0; right: auto; left: calc(100% + var(--space-2)); transform: none; }
+    .bar[data-place=right] :is(.menu, .rates, .msg) { bottom: auto; top: 0; left: auto; right: calc(100% + var(--space-2)); transform: none; }
+    .menu h3 { margin: 0 0 var(--space-2); font-size: var(--text-16); line-height: var(--leading-16); }
+    .menu h4 { margin: var(--space-3) 0 var(--space-1); font-size: var(--text-12); line-height: var(--leading-12); font-weight: 600; color: var(--color-text-muted); }
+    .menu p { margin: 0; color: var(--color-text-muted); }
+    .menu button { display: block; width: 100%; height: auto; min-height: var(--control-m); padding: 0 var(--space-3); text-align: left; line-height: var(--control-m); border-radius: var(--radius-1); }
+    .menu button.on, .menu button[aria-pressed=true], .rates button[aria-pressed=true] { background: var(--color-surface-raised); font-weight: 700; }
+    .places { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-1); }
+    .places button { text-align: center; }
+    .rates button { min-height: 40px; width: 64px; height: auto; border-radius: var(--radius-1); font-size: var(--text-14); font-variant-numeric: tabular-nums; }
+    .launch { position: fixed; right: var(--space-3); top: 50%; z-index: 2147483646; width: var(--control-l); height: var(--control-l); background: var(--color-chrome); color: var(--color-on-chrome); box-shadow: var(--shadow-3); }
+    .launch:hover { background: var(--color-play); color: var(--color-on-play); }
+    .hover { position: fixed; z-index: 2147483646; width: 32px; height: 32px; background: var(--color-play); color: var(--color-on-play); box-shadow: var(--shadow-3); }
     .hover svg { width: 16px; height: 16px; }
-    .bubble { position: fixed; z-index: 2147483647; display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px 0 10px; background: #10233f; color: #fff; font-size: 14px; font-weight: 600; box-shadow: 0 6px 20px rgba(0,0,0,.3); }
-    .bubble svg { width: 18px; height: 18px; }
+    .bubble { position: fixed; z-index: 2147483647; display: flex; align-items: center; gap: var(--space-2); height: var(--control-m); padding: 0 var(--space-4) 0 var(--space-3);
+              background: var(--color-chrome); color: var(--color-on-chrome); font-size: var(--text-14); font-weight: 600; box-shadow: var(--shadow-3); }
+    .bubble svg { width: 16px; height: 16px; }
+    @media (max-width: 480px) {
+      .bar > button { width: var(--control-s); height: var(--control-s); }
+      .bar > .pp { width: var(--control-m); height: var(--control-m); }
+      .bar { gap: var(--space-1); }
+      .pos { width: 64px; }
+      .meta .left { display: none; }
+    }
     @media print { .bar, .launch, .hover, .bubble { display: none; } }
   </style>
-  <div class="bar" id="bar" role="toolbar" aria-label="Read Aloud 2" hidden>
+  <div class="bar" id="bar" role="toolbar" aria-label="Read Aloud 2 player" data-place="bottom" hidden>
     <span class="msg" id="msg" role="status"></span>
-    <button id="back" title="Previous sentence" aria-label="Previous sentence">${svg('back')}</button>
-    <button class="pp" id="pp" title="Play or pause" aria-label="Pause">${svg('pause')}</button>
-    <button id="fwd" title="Next sentence" aria-label="Next sentence">${svg('fwd')}</button>
-    <button class="txt" id="speed" title="Speed and voice" aria-haspopup="true">1.2×</button>
-    <button class="find" id="find" title="Go to the word being read" aria-label="Go to the word being read">${svg('find')}</button>
-    <button id="close" title="Stop and close" aria-label="Stop and close">${svg('close')}</button>
-    <div class="menu" id="menu" hidden></div>
+    <button id="back" aria-label="Previous sentence" data-tip="Previous sentence">${svg('back')}</button>
+    <button class="pp" id="pp" aria-label="Pause" data-tip="Play or pause">${svg('pause')}</button>
+    <button id="fwd" aria-label="Next sentence" data-tip="Next sentence">${svg('fwd')}</button>
+    <div class="pos" id="pos"><div class="prog" aria-hidden="true"><i id="fill"></i></div><div class="meta"><span id="count"></span><span class="left" id="left"></span></div></div>
+    <button class="speed" id="speed" aria-label="Speed" aria-haspopup="true" aria-expanded="false" aria-controls="rates" data-tip="Speed">1.2×</button>
+    <button class="find" id="find" aria-label="Follow: go to the word being read" data-tip="Follow: go to the word being read">${svg('find')}</button>
+    <button class="set" id="set" aria-label="Voice and settings" aria-haspopup="dialog" aria-expanded="false" aria-controls="menu" data-tip="Voice and settings">${svg('set')}</button>
+    <button id="close" aria-label="Stop and close" data-tip="Stop and close">${svg('close')}</button>
+    <div class="rates" id="rates" role="group" aria-label="Speed" hidden>${RATES.map((r, k) => `<button id="rate-${k}" aria-pressed="false">${fmtRate(r)}</button>`).join('')}</div>
+    <div class="menu" id="menu" role="dialog" aria-labelledby="menuTitle" tabindex="-1" hidden>
+      <h3 id="menuTitle">Settings</h3>
+      <h4>Voice</h4><div id="voices"></div>
+      <h4 id="placeHead">Move player</h4>
+      <div class="places" role="group" aria-labelledby="placeHead">${['left', 'right', 'top', 'bottom'].map((p) => `<button id="place-${p}" aria-pressed="false">${p[0].toUpperCase() + p.slice(1)}</button>`).join('')}</div>
+    </div>
   </div>
   <button class="launch" id="launch" title="Listen to this page (Read Aloud 2)" aria-label="Listen to this page" hidden>${svg('ear')}</button>
   <button class="hover" id="hover" title="Listen from here" aria-label="Listen from here" hidden>${svg('play')}</button>
@@ -433,19 +543,32 @@
     attach();  // a site that rebuilds its page can remove the player
     const active = S.playing || S.paused;
     $('bar').hidden = !active && !note;
+    shown($('bar').hidden ? false : true);
     const reading = S.playing && !S.paused;
     $('pp').innerHTML = svg(reading ? 'pause' : 'play'); $('pp').setAttribute('aria-label', reading ? 'Pause' : 'Play');
-    $('speed').textContent = cfg.rate.toFixed(1) + '×';
+    $('pp').classList.toggle('waiting', !!S.wait && reading);
+    $('speed').textContent = fmtRate(cfg.rate);
+    const n = S.segs.length, at = Math.max(0, S.i);
+    $('count').textContent = n ? `${at + 1} / ${n}` : '';
+    $('fill').style.width = n ? `${(((at + 1) / n) * 100).toFixed(1)}%` : '0%';
+    $('left').textContent = n ? timeLeft(at) : '';
     $('msg').textContent = note;
     $('launch').hidden = active || !cfg.launcher || hiddenHere();
   }
+  function timeLeft(at) {  // about 160 words a minute at speed 1
+    let words = 0; for (let k = at; k < S.segs.length; k++) words += S.segs[k].words.length;
+    const min = words / (160 * cfg.rate);
+    return min < 1 ? '< 1 min left' : `${Math.round(min)} min left`;
+  }
   const hiddenHere = () => cfg.hidden.includes(location.hostname);
   // mouse only: a key press on a focused player button never starts reading (detail is 0 for keys)
-  const click = (id, fn) => $(id).addEventListener('click', (e) => { e.stopPropagation(); if (e.detail) fn(e); });
+  const click = (id, fn) => $(id).addEventListener('click', (e) => { e.stopPropagation(); if (e.detail && !dragged) fn(e); });
+  // a button that opens a list or a panel, or a choice in it: the keyboard can press it too
+  const press = (id, fn) => $(id).addEventListener('click', (e) => { e.stopPropagation(); if (!dragged) fn(e); });
   click('pp', () => (S.playing && !S.paused ? pause() : S.paused ? resume() : readPage()));
   click('back', back);
   click('fwd', () => S.playing && play(S.i + 1));
-  click('close', () => { stop(); $('menu').hidden = true; });
+  click('close', () => { stop(); closePops(); });
   click('launch', readPage);
   // Nothing is prepared before the owner shows that he wants to listen: the pointer on this button is the first sign.
   $('launch').addEventListener('mouseenter', () => warm(null, onScreen, pageSegs(root())));
@@ -454,36 +577,131 @@
     if (x) { const r = rangeOf(seg.b, x.start, x.end).getBoundingClientRect(); if (r.width || r.height) bringIntoView(r, S.box); }
     $('find').classList.remove('away');
   });
-  click('speed', () => { $('menu').hidden = !$('menu').hidden; if (!$('menu').hidden) menu(); });
+
+  // the speed list and the settings panel: one is open at a time; Escape or a press outside closes them
+  function openPop(id, btn, e) {
+    const open = $(id).hidden;
+    closePops();
+    if (!open) return;
+    $(id).hidden = false; $(btn).setAttribute('aria-expanded', 'true');
+    return !e.detail;  // opened with the keyboard: the caller puts the focus in it
+  }
+  function closePops(focusBack) {
+    for (const [id, btn] of [['rates', 'speed'], ['menu', 'set']]) {
+      if (!$(id).hidden && focusBack) $(btn).focus?.();
+      $(id).hidden = true; $(btn).setAttribute('aria-expanded', 'false');
+    }
+  }
+  press('speed', (e) => {
+    const keys = openPop('rates', 'speed', e);
+    RATES.forEach((r, k) => $('rate-' + k).setAttribute('aria-pressed', String(Math.abs(r - cfg.rate) < 0.01)));
+    if (keys) $('rate-' + Math.max(0, RATES.findIndex((r) => Math.abs(r - cfg.rate) < 0.01))).focus?.();
+  });
+  closePops();  // both start closed
+  RATES.forEach((r, k) => press('rate-' + k, () => { setRate(r); closePops(true); }));
+  function setRate(r) {
+    cfg.rate = Math.round(r * 100) / 100; save(); ui();
+    if (S.playing && !S.paused) { if (engine() === 'kokoro') send({ cmd: 'rate', rate: cfg.rate }); else play(S.i, S.w); }
+  }
+  press('set', (e) => {
+    const keys = openPop('menu', 'set', e);
+    if ($('menu').hidden) return;
+    menu();
+    if (keys) $('menu').focus?.();
+  });
+  for (const p of PLACES) press('place-' + p, () => setPlace(p, true));
 
   async function menu() {
-    const m = $('menu');
-    m.innerHTML = `<h4>Speed <b id="rv">${cfg.rate.toFixed(1)}×</b></h4><input id="rate" type="range" min="0.5" max="4" step="0.1" value="${cfg.rate}">
-      <div class="rates">${[0.8, 1, 1.2, 1.5, 2, 2.5, 3].map((r) => `<button data-r="${r}">${r}×</button>`).join('')}</div><h4>Voice</h4><p>Loading voices…</p>`;
-    const setRate = (r) => {
-      cfg.rate = Math.round(r * 10) / 10; save(); m.querySelector('#rv').textContent = cfg.rate.toFixed(1) + '×'; m.querySelector('#rate').value = cfg.rate; ui();
-      if (S.playing && !S.paused) { if (engine() === 'kokoro') send({ cmd: 'rate', rate: cfg.rate }); else play(S.i, S.w); }
-    };
-    m.querySelector('#rate').addEventListener('change', (e) => setRate(Number(e.target.value)));
-    m.querySelector('#rate').addEventListener('input', (e) => { m.querySelector('#rv').textContent = Number(e.target.value).toFixed(1) + '×'; });
-    m.querySelectorAll('[data-r]').forEach((b) => b.addEventListener('click', () => setRate(Number(b.dataset.r))));
+    const box = $('voices');
+    box.textContent = 'Loading voices…';
     const v = await ask({ cmd: 'voices' });
-    m.querySelector('p')?.remove();
+    if (dead) return;
+    box.textContent = '';
     const add = (title, list, prefix) => {
       if (!list.length) return;
-      m.append(Object.assign(document.createElement('h4'), { textContent: title }));
+      if (title) box.append(Object.assign(document.createElement('h4'), { textContent: title }));
       for (const x of list) {
         const b = document.createElement('button'); const id = prefix + x.id;
         b.textContent = x.label; b.className = cfg.voice === id ? 'on' : '';
-        b.addEventListener('click', () => { cfg.voice = id; save(); m.querySelectorAll('button.on').forEach((q) => q.classList.remove('on')); b.classList.add('on'); if (S.playing && !S.paused) play(S.i, S.w); });
-        m.append(b);
+        b.addEventListener('click', (e) => {
+          e.stopPropagation(); cfg.voice = id; save();
+          for (const q of box.childNodes) q.classList?.remove('on');
+          b.classList.add('on'); if (S.playing && !S.paused) play(S.i, S.w);
+        });
+        box.append(b);
       }
     };
-    if (v) {
-      add('Voices', v.natural, 'kokoro:');
-      if (!v.server) m.append(Object.assign(document.createElement('p'), { textContent: 'Natural voices are off: the voice server is not running.' }));
-      add('Russian', v.system, 'system:');
+    if (!v) { box.textContent = 'The voices did not load. Close and open the settings again.'; return; }
+    add('', v.natural, 'kokoro:');
+    if (!v.server) box.append(Object.assign(document.createElement('p'), { textContent: 'Natural voices are off: the voice server is not running.' }));
+    add('Russian', v.system, 'system:');
+  }
+
+  // ---------- moving the player (ticket 25): platform pointer events, no library ----------
+  let place = 'bottom', drag = null, dragged = false, showing = false;
+  const bar = $('bar');
+  function showPlace() {  // the saved place, or the bottom when the window has no room for it
+    bar.dataset.place = fitPlace(place, innerWidth, innerHeight);
+    for (const p of PLACES) $('place-' + p).setAttribute('aria-pressed', String(p === place));
+  }
+  // chrome.storage of an old tab after a reload of the add-on: no runtime id, and each call throws. Nothing reaches the page.
+  const live = () => { try { return !!chrome.runtime?.id; } catch { return false; } };
+  function setPlace(p, keep) {
+    place = PLACES.includes(p) ? p : 'bottom';
+    showPlace();
+    if (keep && live()) try { chrome.storage.local.set({ [PLACE_KEY]: place }).catch(() => {}); } catch { /* the add-on is gone */ }
+  }
+  function readPlace() {
+    if (!live()) return;
+    try { chrome.storage.local.get(PLACE_KEY).then((r) => { if (!drag && showing) setPlace(r && r[PLACE_KEY], false); }, () => {}); } catch { /* the add-on is gone */ }
+  }
+  // The place is read and the window is watched only while the bar shows: a page where nobody listens does neither.
+  const onResize = () => { if (!dead && !drag) showPlace(); };
+  function shown(on) {
+    if (on === showing) return;
+    showing = on;
+    if (on) { showPlace(); readPlace(); addEventListener('resize', onResize, { passive: true }); }
+    else { endDrag(); globalThis.removeEventListener?.('resize', onResize); }
+  }
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  bar.addEventListener('pointerdown', (e) => {
+    dragged = false; drag = null;
+    if (dead || e.button !== 0 || e.isPrimary === false || $('menu').contains(e.target) || $('rates').contains(e.target)
+      || e.target?.closest?.('input,select,textarea')) return;  // a slider or a field keeps its own drag
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY, on: false };
+  });
+  bar.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    if (!(e.buttons & 1)) { endDrag(); return; }  // the button went up outside the bar: this is a hover, not a drag
+    if (!drag.on) {
+      if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < DRAG_START) return;
+      const r = bar.getBoundingClientRect();
+      Object.assign(drag, { on: true, dx: drag.x - r.left, dy: drag.y - r.top, w: r.width, h: r.height });
+      try { bar.setPointerCapture(e.pointerId); } catch { /* the pointer is already up */ }
+      bar.classList.add('dragging'); closePops();
     }
+    bar.style.left = clamp(e.clientX - drag.dx, 0, innerWidth - drag.w) + 'px';
+    bar.style.top = clamp(e.clientY - drag.dy, 0, innerHeight - drag.h) + 'px';
+  });
+  // The end of a press: a drop snaps to an edge and saves the place once; any other end leaves the bar at its old place.
+  function endDrag(e, keep) {
+    if (!drag || (e && e.pointerId !== undefined && e.pointerId !== drag.id)) return;
+    const d = drag; drag = null;
+    if (!d.on) return;
+    dragged = true; later(() => { dragged = false; }, 0);  // the click that follows the pointerup presses nothing
+    const from = bar.getBoundingClientRect();
+    bar.classList.remove('dragging'); bar.style.left = ''; bar.style.top = '';
+    try { if (bar.hasPointerCapture?.(d.id)) bar.releasePointerCapture(d.id); } catch { /* already released */ }
+    if (keep) { setPlace(snapPlace(e.clientX, e.clientY, innerWidth, innerHeight), true); glide(from); } else showPlace();
+  }
+  bar.addEventListener('pointerup', (e) => endDrag(e, true));
+  bar.addEventListener('pointercancel', (e) => endDrag(e, false));
+  bar.addEventListener('lostpointercapture', (e) => endDrag(e, false));  // also when the bar hides during a drag
+  function glide(from) {  // the bar slides from where it was let go to its edge; no motion when the system asks for none
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches || !bar.animate) return;
+    const to = bar.getBoundingClientRect();
+    bar.animate([{ translate: `${from.left - to.left}px ${from.top - to.top}px` }, { translate: '0px 0px' }],
+      { duration: parseInt(TOKENS.root['--dur-move'], 10), easing: TOKENS.root['--ease-out'] });
   }
 
   // play button beside the paragraph under the mouse
@@ -519,6 +737,7 @@
 
   // while reading, a click on a word jumps there (links, buttons and fields keep working as usual)
   on(document, 'click', (e) => {
+    if (e.target !== host) closePops();  // a press outside the player closes its list or panel
     if (!cfg.clickJump || !(S.playing || S.paused) || e.target === host || !e.detail) return;
     if (e.target.closest('a,button,input,select,textarea,label,[role=button],[contenteditable]') || String(getSelection()).trim()) return;
     const hit = locate(e.clientX, e.clientY); if (hit) play(...hit);
@@ -529,7 +748,7 @@
   on(globalThis, 'wheel', leave, { passive: true });
   on(globalThis, 'touchmove', leave, { passive: true });
   const typing = (t) => t && (t.isContentEditable || !!t.closest?.('input,textarea,select'));
-  on(globalThis, 'keydown', (e) => { if (!typing(e.target) && ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) leave(); if (e.key === 'Escape' && !$('menu').hidden) $('menu').hidden = true; });
+  on(globalThis, 'keydown', (e) => { if (!typing(e.target) && ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) leave(); if (e.key === 'Escape') closePops(true); });
   let lastMenu = { x: innerWidth / 2, y: 80 };
   on(document, 'contextmenu', (e) => {
     lastMenu = { x: e.clientX, y: e.clientY };
@@ -542,5 +761,9 @@
   const save = () => { try { chrome.storage.sync.set({ ra2: cfg }).catch(() => {}); } catch { gone(); } };
   const KNOWN = /^kokoro:(af_heart|am_michael|bf_emma|if_sara)$|^system:/;  // a voice removed from the list falls back to Heart
   chrome.storage.sync.get('ra2').then((r) => { cfg = { ...DEFAULTS, ...(r.ra2 || {}) }; if (!KNOWN.test(cfg.voice)) cfg.voice = DEFAULTS.voice; cur = cfg.voice; ui(); }).catch(() => ui());
-  chrome.storage.onChanged.addListener((c) => { if (!dead && c.ra2) { cfg = { ...DEFAULTS, ...c.ra2.newValue }; ui(); } });
+  chrome.storage.onChanged.addListener((c) => {
+    if (dead) return;
+    if (c.ra2) { cfg = { ...DEFAULTS, ...c.ra2.newValue }; ui(); }
+    if (c[PLACE_KEY] && showing && !drag) setPlace(c[PLACE_KEY].newValue, false);  // moved in another tab; a hidden bar reads it at its next show
+  });
 })();
