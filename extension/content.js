@@ -146,7 +146,9 @@
   let natOff = false, natTimer = null;  // the voice server failed: the Mac voice reads until it answers again
   function voiceFor(text) {
     if (/[\u0400-\u04FF]/.test(text || '')) return 'system:Milena';
-    if (natOff && cfg.voice.startsWith('kokoro:')) return 'system:';
+    // English text never goes to the Russian voice (the only Mac voice in the list) or to the
+    // Mac default: both give a Russian accent. Samantha is the Mac's own American voice.
+    if (cfg.voice.startsWith('system:') || (natOff && cfg.voice.startsWith('kokoro:'))) return 'system:Samantha';
     if (PAGE_IT && /^kokoro:(a|b)/.test(cfg.voice)) return 'kokoro:if_sara';
     return cfg.voice;
   }

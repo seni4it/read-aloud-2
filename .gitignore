@@ -3,3 +3,4 @@ __pycache__/
 .test-profile/
 ocr/ocr
 store/*.zip
+.scratch/answers/

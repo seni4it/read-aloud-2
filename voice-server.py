@@ -31,7 +31,7 @@ Desktop reader (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
 
 Version 1 (~/.claude/read-aloud, port 8791) is not touched.
 """
-import collections, functools, hashlib, shlex, itertools, http.server, io, json, mimetypes, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.parse, urllib.request
+import collections, functools, hashlib, html, logging, select, shlex, socket, itertools, http.server, io, json, mimetypes, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.parse, urllib.request
 
 import numpy as np
 import soundfile as sf
@@ -41,6 +41,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL = 'mlx-community/Kokoro-82M-bf16'
 ALLOWED = {f'localhost:{PORT}', f'127.0.0.1:{PORT}', f'[::1]:{PORT}'}
 MAX_CHARS = 1500  # a sentence, or a paragraph from the PDF viewer
+CACHE_BYTES = 96 * 1024 * 1024  # recent sentences kept as WAV; a count alone let long paragraphs fill 1 GB
+logging.getLogger('phonemizer').setLevel(logging.ERROR)  # its word-count warnings, one per sentence, filled the log
 
 # name, accent, language code, label. Kokoro grades: heart and bella are its best English voices.
 VOICES = [  # his choice (13 Oct 2026): a few good ones, not twenty. Russian is the Mac's own voice (Milena), in the add-on.
@@ -55,6 +57,8 @@ _turn = threading.Condition()
 _urgent = [0]  # sentences someone is waiting to hear; read-ahead waits while there are any
 _waiting, _seq, _batch = set(), itertools.count(), [0]
 _cache = collections.OrderedDict()
+_cache_lock = threading.Lock()  # request threads share the cache
+_cache_size = [0]
 _broken = set()  # languages that failed to load (Italian needs espeak-ng)
 
 
@@ -62,6 +66,10 @@ def model():
     global _model
     if _model is None:
         from mlx_audio.tts.utils import load_model
+        import mlx.core as mx
+        # 3 Nov 2026 (owner: "a cheap voice that does not occupy a lot of RAM"): MLX keeps freed GPU buffers in its own
+        # cache, which made this server grow to ~36 GB in a day. Cap that cache at 256 MB; the model is 82M params.
+        mx.set_cache_limit(256 * 1024 * 1024)
         _model = load_model(MODEL)
     return _model
 
@@ -103,16 +111,36 @@ def trim(audio, text, sr=24000):
     return a, cut / sr
 
 
-def speak(text, voice, ahead=False, prio=1, batch=0):
+def cache_get(key):
+    with _cache_lock:
+        got = _cache.get(key)
+        if got:
+            _cache.move_to_end(key)
+        return got
+
+
+def cache_put(key, value):
+    with _cache_lock:
+        old = _cache.pop(key, None)
+        if old:
+            _cache_size[0] -= len(old[0])
+        _cache[key] = value
+        _cache_size[0] += len(value[0])
+        while len(_cache) > 1 and (_cache_size[0] > CACHE_BYTES or len(_cache) > 300):
+            _cache_size[0] -= len(_cache.popitem(last=False)[1][0])
+
+
+def speak(text, voice, ahead=False, prio=1, batch=0, gone=None):
+    """gone: a function that says the listener closed the connection (skipped on); then nothing is made (None)."""
     key = (voice, text)
-    if key in _cache:
-        _cache.move_to_end(key)
-        return _cache[key]
+    got = cache_get(key)
+    if got:
+        return got
     if not ahead:
         with _turn:
             _urgent[0] += 1
     try:
-        return _make(key, text, voice, ahead, prio, batch)
+        return _make(key, text, voice, ahead, prio, batch, gone)
     finally:
         if not ahead:
             with _turn:
@@ -171,22 +199,24 @@ def _take(ahead, prio, batch):
             _turn.notify_all()
 
 
-def _make(key, text, voice, ahead=False, prio=1, batch=0):
+def _make(key, text, voice, ahead=False, prio=1, batch=0, gone=None):
     if not _take(ahead, prio, batch):
         return None
     try:  # stored before the lock opens, so a second ask for the same sentence finds it ready
-        if key in _cache:
-            return _cache[key]
+        got = cache_get(key)
+        if got:
+            return got
+        if gone and gone():  # he skipped on while this sentence waited for the engine: the engine goes to the next one
+            return None
         if os.environ.get('VOICE_LOG'):
             print(time.strftime('%H:%M:%S'), 'ahead' if ahead else 'NOW  ', voice, repr(text[:70]), flush=True)
         audio, tokens = synth(text, voice)
         wav, shift = trim(audio, text)
         buf = io.BytesIO()
         sf.write(buf, wav, 24000, format='WAV', subtype='PCM_16')
-        _cache[key] = (buf.getvalue(), word_starts(text, tokens, shift))
-        while len(_cache) > 300:
-            _cache.popitem(last=False)
-        return _cache[key]
+        got = (buf.getvalue(), word_starts(text, tokens, shift))
+        cache_put(key, got)
+        return got
     finally:
         _gen.release()
         with _turn:
@@ -263,15 +293,17 @@ def lib_add(name, data):
     name = re.sub(r'[\\/:*?"<>|\x00-\x1f]', ' ', os.path.basename(name or 'document.pdf')).strip() or 'document.pdf'
     if not name.lower().endswith('.pdf'):
         name += '.pdf'
+    bid = hashlib.sha1(data).hexdigest()[:12]
     with _lib:
         idx = lib_index()
+        if bid in idx:  # the same PDF again: one book, not a second copy under a new id
+            return bid
         file, n = name, 2
         while os.path.exists(os.path.join(LIB, file)):
             file = f'{name[:-4]} ({n}).pdf'
             n += 1
         with open(os.path.join(LIB, file), 'wb') as f:
             f.write(data)
-        bid = hashlib.sha1(data).hexdigest()[:12]
         idx[bid] = {'name': file[:-4], 'file': file, 'added': time.time(), 'opened': 0}
         lib_save(idx)
     threading.Thread(target=lib_cover, args=(bid,), daemon=True).start()
@@ -352,6 +384,13 @@ def export_book(bid, job):
         st['state'] = 'done'
     except Exception as e:
         st.update(state='error', error=str(e)[:200])
+    finally:
+        for fn in os.listdir(folder):  # a chapter cut off by an error or a cancel leaves no half-made WAV
+            if re.match(r'^\d+\.wav$', fn):
+                try:
+                    os.remove(os.path.join(folder, fn))
+                except OSError:
+                    pass
 
 
 # ---------------------------------------------------------------- YouTube: private videos of the MP3s
@@ -892,7 +931,103 @@ def ocr(picture):
         return subprocess.run([OCR, f.name], check=True, capture_output=True, timeout=120).stdout
 
 
+class Part(io.RawIOBase):
+    """The first `left` bytes of an open file from where it stands (one byte range of a book)."""
+    def __init__(self, f, left):
+        self.f, self.left = f, left
+
+    def read(self, n=-1):
+        if self.left <= 0:
+            return b''
+        data = self.f.read(self.left if n is None or n < 0 else min(n, self.left))
+        self.left -= len(data)
+        return data
+
+    def close(self):
+        self.f.close()
+        super().close()
+
+
+class Server(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+    request_queue_size = 64  # the reader asks for a screen of sentences at once
+
+    def handle_error(self, request, client_address):
+        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError)):
+            return  # the listener skipped on and closed the connection: normal, not worth a traceback in the log
+        super().handle_error(request, client_address)
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
+    def gone(self):
+        """True when the browser closed this request's connection (the sentence was skipped)."""
+        try:
+            if not select.select([self.connection], [], [], 0)[0]:
+                return False
+            return self.connection.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT) == b''
+        except (BlockingIOError, InterruptedError):
+            return False
+        except (OSError, ValueError):
+            return True
+
+    def send_error(self, code, message=None, explain=None):
+        if message:  # a status line is Latin-1 and one line: a book name in Cyrillic made the answer itself fail
+            message = re.sub(r'\s+', ' ', str(message)).encode('ascii', 'replace').decode()[:200]
+        super().send_error(code, message, explain)
+
+    def send_header(self, keyword, value):
+        if keyword.lower() == 'cache-control':
+            self._cc = True
+        super().send_header(keyword, value)
+
+    def send_file(self, path, kind, ranges=False):
+        """A file from disk. The browser keeps it and asks "changed?" each time (ETag), so pdf.js is compiled once,
+        not on every opening of a book. ranges: answer byte ranges, so pdf.js shows page 1 before a big book is all read."""
+        try:
+            f = open(path, 'rb')
+        except OSError:
+            self.send_error(404, 'Not found')
+            return None
+        st = os.fstat(f.fileno())
+        etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
+        if self.headers.get('If-None-Match') == etag:
+            f.close()
+            self.send_response(304)
+            self.send_header('ETag', etag)
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            return None
+        a, b = 0, st.st_size - 1
+        m = re.match(r'^bytes=(\d*)-(\d*)$', self.headers.get('Range') or '') if ranges else None
+        if m and (m.group(1) or m.group(2)):
+            if m.group(1):
+                a = int(m.group(1))
+                b = min(int(m.group(2)), b) if m.group(2) else b
+            else:
+                a = max(0, st.st_size - int(m.group(2)))
+            if a > b:
+                f.close()
+                self.send_response(416)
+                self.send_header('Content-Range', f'bytes */{st.st_size}')
+                self.end_headers()
+                return None
+            self.send_response(206)
+            self.send_header('Content-Range', f'bytes {a}-{b}/{st.st_size}')
+        else:
+            self.send_response(200)
+        self.send_header('Content-Type', kind)
+        self.send_header('Content-Length', str(b - a + 1))
+        self.send_header('ETag', etag)
+        self.send_header('Cache-Control', 'no-cache')
+        if ranges:
+            self.send_header('Accept-Ranges', 'bytes')
+        self.end_headers()
+        if self.command == 'HEAD':
+            f.close()
+            return None
+        f.seek(a)
+        return Part(f, b - a + 1)
+
     def send_head(self):
         if (self.headers.get('Host') or '').lower() not in ALLOWED:
             self.send_error(403, 'Forbidden')
@@ -910,7 +1045,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return None
             try:
                 ahead = q.get('ahead', '0')
-                got = speak(text, voice, ahead=ahead != '0', prio=int(ahead) if ahead.isdigit() else 1, batch=int(q.get('batch', '0') or 0))
+                batch = q.get('batch', '0')
+                got = speak(text, voice, ahead=ahead != '0', prio=int(ahead) if ahead.isdigit() else 1,
+                            batch=int(batch) if batch.isdigit() else 0, gone=self.gone)
                 if got is None:
                     self.send_error(409, 'Skipped: you scrolled on')
                     return None
@@ -949,9 +1086,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 ch = yt_api('GET', 'https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', token=t['access_token'])
                 t['channel'] = (ch.get('items') or [{}])[0].get('snippet', {}).get('title', '')
                 yt_save(YT_TOKEN, t, private=True)
-                page = f'<!doctype html><meta charset="utf-8"><body style="font:20px -apple-system,sans-serif;padding:40px"><h1>YouTube is connected</h1><p>Channel: <b>{t["channel"]}</b>. You can close this tab and go back to Read Aloud.</p>'
+                page = f'<!doctype html><meta charset="utf-8"><body style="font:20px -apple-system,sans-serif;padding:40px"><h1>YouTube is connected</h1><p>Channel: <b>{html.escape(t["channel"])}</b>. You can close this tab and go back to Read Aloud.</p>'
             except Exception as e:
-                page = f'<!doctype html><meta charset="utf-8"><body style="font:20px -apple-system,sans-serif;padding:40px"><h1>Connection failed</h1><p>{str(e)[:300]}</p>'
+                page = f'<!doctype html><meta charset="utf-8"><body style="font:20px -apple-system,sans-serif;padding:40px"><h1>Connection failed</h1><p>{html.escape(str(e)[:300])}</p>'
             return self.reply(page.encode(), 'text/html; charset=utf-8')
         m = re.match(r'^/library/([0-9a-f]{12})/export$', url.path)
         if m:  # progress of the MP3 export
@@ -968,7 +1105,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         m = re.match(r'^/library/([0-9a-f]{12})/notes$', url.path)
         if m:  # the book's highlights (Read Aloud 2 reader)
             path = os.path.join(LIB, '.notes', m.group(1) + '.json')
-            body = open(path, 'rb').read() if os.path.exists(path) else b'[]'
+            try:
+                with open(path, 'rb') as f:
+                    body = f.read()
+            except OSError:
+                body = b'[]'
             return self.reply(body, 'application/json')
         m = re.match(r'^/library/(file|cover)/([0-9a-f]{12})$', url.path)
         if m:
@@ -978,12 +1119,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if not path or not os.path.exists(path):
                 self.send_error(404, 'Not found')
                 return None
-            f = open(path, 'rb')
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/pdf' if m.group(1) == 'file' else 'image/png')
-            self.send_header('Content-Length', str(os.fstat(f.fileno()).st_size))
-            self.end_headers()
-            return f
+            return self.send_file(path, 'application/pdf' if m.group(1) == 'file' else 'image/png', ranges=m.group(1) == 'file')
         if url.path == '/app':
             self.send_response(302)
             self.send_header('Location', '/app/')
@@ -996,12 +1132,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 if not full.startswith(os.path.realpath(base) + os.sep) or not os.path.isfile(full):
                     self.send_error(404, 'Not found')
                     return None
-                f = open(full, 'rb')
-                self.send_response(200)
-                self.send_header('Content-Type', mimetypes.guess_type(full)[0] or 'application/octet-stream')
-                self.send_header('Content-Length', str(os.fstat(f.fileno()).st_size))
-                self.end_headers()
-                return f
+                return self.send_file(full, mimetypes.guess_type(full)[0] or 'application/octet-stream')
         if url.path in ('/', '/index.html'):
             self.path = '/voices.html'
         if not re.match(r'^/[\w.-]+\.(html|js|css)$', self.path.split('?')[0]):  # only the page files, never the folder
@@ -1204,7 +1335,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return io.BytesIO(body)
 
     def end_headers(self):
-        self.send_header('Cache-Control', 'no-store')
+        if not getattr(self, '_cc', False):
+            self.send_header('Cache-Control', 'no-store')
+        self._cc = False
         super().end_headers()
 
     def log_message(self, *args):
@@ -1213,4 +1346,4 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 if __name__ == '__main__':
     threading.Thread(target=warm_up, daemon=True).start()
-    http.server.ThreadingHTTPServer(('127.0.0.1', PORT), functools.partial(Handler, directory=HERE)).serve_forever()
+    Server(('127.0.0.1', PORT), functools.partial(Handler, directory=HERE)).serve_forever()
