@@ -23,3 +23,15 @@ Not known until checked: that `chrome.runtime.getContexts` lists a reader tab wi
 7. Look at a "PDF" cover placeholder in light mode and in dark mode.
 
 Not repaired, for ticket 23: the remove button has no message when the voice server is stopped. The light placeholder has a contrast of 4.05 to 1; the token rule asks for 4.5 to 1.
+
+## Ticket 03: reader transport (real browser necessary)
+
+1. Start a book. Drag the seek bar and let go. The voice goes on from the new place.
+2. While it reads, change the speed, then the voice. Each time it goes on from the present word.
+3. Press Preview, then Play at once. Preview is active again. Do the same with Next.
+4. On the start screen, open a text file with the name ending .pdf. A message shows and the start screen stays. With a book open, the book stays usable and the message stays.
+5. Open a large PDF, then a second PDF at once. Only text of the second PDF shows.
+6. Open a large PDF and do not press Play. Scroll down or seek while it is read in. The page does not jump back.
+7. Stop the voice server while it reads. One message shows, one new try comes after 1 second, then the reading stops with "Press Play to try again".
+
+Not repaired, for ticket 05: after the voice server goes down, the reader does not change to the Mac voice (`ServerEngine.ready` stays true in tts.js).

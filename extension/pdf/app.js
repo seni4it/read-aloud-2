@@ -185,6 +185,7 @@ function speakCurrent() {
     },
     onEnd: () => {
       if (!state.playing) return;
+      state.retried = false;  // this sentence played: a later failure gets its own new try
       if (state.index + 1 >= state.sentences.length) { stop(); return; }
       // Rest before the next block. Without this the whole document runs
       // together as one breathless stream.
@@ -193,13 +194,28 @@ function speakCurrent() {
       state.pauseTimer = setTimeout(() => {
         if (!state.playing) return;
         state.index++;
+        state.retried = false;
         render();
         speakCurrent();
       }, gap);
     },
     onError: err => {
       console.warn('speech error', err);
+      if (!state.playing) return;
+      // Read Aloud 2: one failed sentence does not stop the book. Try it once more after 1 second, then stop and say so.
+      if (!state.retried) {
+        state.retried = true;
+        setStatus('The voice did not answer. Trying again…');
+        clearTimeout(state.pauseTimer);
+        state.pauseTimer = setTimeout(() => {
+          if (!state.playing) return;
+          state.from = state.at;  // go on from the word that was read last
+          speakCurrent();
+        }, 1000);
+        return;
+      }
       stop();
+      setStatus('The voice did not answer. Press Play to try again.');
     }
   });
 
@@ -258,6 +274,8 @@ function play() {
   }
   state.resumeAt = null;
   state.playing = true;
+  state.retried = false;
+  els.previewBtn.disabled = false;  // a preview that was playing is silent now, and its end never comes
   els.playIcon.innerHTML = ICON_PAUSE;  // Read Aloud 2: the same icons as the web player
   els.playBtn.setAttribute('aria-label', 'Pause');
   speakCurrent();
@@ -265,6 +283,7 @@ function play() {
 
 function stop() {
   clearTimeout(state.pauseTimer);
+  els.previewBtn.disabled = false;  // a preview that was playing is silent now, and its end never comes
   if (state.playing && state.at > 0) state.resumeAt = { index: state.index, at: state.at };
   state.playing = false;
   els.playIcon.innerHTML = ICON_PLAY;
@@ -304,6 +323,9 @@ function jumpTo(i, { resume = state.playing } = {}) {
   state.resumeAt = null;  // moving on: the next Play starts at the top of that paragraph
   clearTimeout(state.pauseTimer);
   engine.stop();
+  els.previewBtn.disabled = false;  // a preview that was playing is silent now
+  state.retried = false;            // a new sentence gets its own new try
+  state.jumped = true;              // the end of a read-in keeps this place
   state.index = Math.max(0, Math.min(i, Math.max(0, state.sentences.length - 1)));
   // Read Aloud 2: a jump you ask for (a highlight, Contents, a page in an answer, the keys) always shows that place,
   // also after you scrolled away yourself
@@ -315,6 +337,7 @@ function jumpTo(i, { resume = state.playing } = {}) {
   } else if (!resume) {
     state.playing = false;
     els.playIcon.innerHTML = ICON_PLAY;
+    els.playBtn.setAttribute('aria-label', 'Play');
     saveProgress();
     warmCurrent();
   }
@@ -323,12 +346,7 @@ function jumpTo(i, { resume = state.playing } = {}) {
 /* ------------------------------------------------------------------- render */
 
 function render() {
-  const total = state.sentences.length;
-  els.seek.max = String(Math.max(0, total - 1));
-  els.seek.value = String(state.index);
-  els.pos.textContent = `${total ? state.index + 1 : 0} / ${total}`;
-  els.timeLeft.textContent = timeLeftText();  // Read Aloud 2
-
+  renderCounter();
   const sentence = state.sentences[state.index];
   if (sentence) {
     els.nowReading.innerHTML = '';
@@ -338,6 +356,15 @@ function render() {
     viewer.highlight(sentence.spans, { follow: true });
     markActiveSection(sentence.sectionIndex);
   }
+}
+
+/** The seek bar, the counter and the time left: it does not move the page. */
+function renderCounter() {
+  const total = state.sentences.length;
+  els.seek.max = String(Math.max(0, total - 1));
+  els.seek.value = String(state.index);
+  els.pos.textContent = `${total ? state.index + 1 : 0} / ${total}`;
+  els.timeLeft.textContent = timeLeftText();  // Read Aloud 2
 }
 
 function markActiveSection(idx) {
@@ -498,30 +525,64 @@ async function keyFor(file, buffer) {
 
 /* -------------------------------------------------------------- open + parse */
 
+/** Opens a PDF. Gives true when it opened, false when it could not (a message then shows). */
 async function openFile(file) {
   stop();
-  const buffer = await file.arrayBuffer();
-  state.buffer = buffer;
-  state.fileName = file.name;
-  state.docKey = await keyFor(file, buffer);
-  els.docTitle.textContent = file.name;
-  els.empty.hidden = true;
-  els.player.hidden = false;
-
-  // pdf.js takes ownership of the buffer, so hand it a copy each time.
-  // pdf.js needs these to rasterise Type-1 and CID text. Without them the
-  // render promise never settles — it waits forever on a fetch that can't
-  // happen, and the page stays blank with no error.
-  state.doc = await pdfjsLib.getDocument({
-    data: buffer.slice(0),
-    standardFontDataUrl: new URL('./vendor/standard_fonts/', import.meta.url).href,
-    cMapUrl: new URL('./vendor/cmaps/', import.meta.url).href,
-    cMapPacked: true
-  }).promise;
-  state.doc = await withOcr(state.doc, setStatus);  // Read Aloud 2: scanned pages are read with Vision
-  await viewer.load(state.doc);
+  let doc;
+  try {
+    const buffer = await file.arrayBuffer();
+    // pdf.js takes ownership of the buffer, so hand it a copy each time.
+    // pdf.js needs these to rasterise Type-1 and CID text. Without them the
+    // render promise never settles — it waits forever on a fetch that can't
+    // happen, and the page stays blank with no error.
+    doc = await pdfjsLib.getDocument({
+      data: buffer.slice(0),
+      standardFontDataUrl: new URL('./vendor/standard_fonts/', import.meta.url).href,
+      cMapUrl: new URL('./vendor/cmaps/', import.meta.url).href,
+      cMapPacked: true
+    }).promise;
+    // Read Aloud 2: from here the old document is gone. Its read-in stops, and none of its sentences show.
+    state.parseToken++;
+    const old = state.doc;
+    state.doc = doc;
+    state.sentences = [];
+    state.sections = [];
+    state.itemToSentence.clear();
+    state.index = 0;
+    state.resumeAt = null;  // the place inside a sentence of the old document
+    state.at = 0;
+    state.from = 0;
+    state.openMessage = '';
+    els.nowReading.innerHTML = '';
+    renderToc();
+    renderCounter();
+    state.buffer = buffer;
+    state.fileName = file.name;
+    state.docKey = await keyFor(file, buffer);
+    els.docTitle.textContent = file.name;
+    els.empty.hidden = true;
+    els.player.hidden = false;
+    state.doc = await withOcr(state.doc, setStatus);  // Read Aloud 2: scanned pages are read with Vision
+    await viewer.load(state.doc);
+    old?.destroy();  // the old document leaves the pdf.js worker
+  } catch (err) {
+    console.warn('could not open', file.name, err);
+    if (!doc) {
+      // Read Aloud 2: the message shows on the start screen too (the player bar is hidden there)
+      const message = `Could not open "${file.name}": it is not a PDF, or it is damaged.`;
+      state.openMessage = message;  // the read-in of the open book does not write over it
+      els.parseBar.hidden = false;
+      els.parseText.textContent = message;
+      els.parseFill.style.width = '0%';
+      setStatus(message);
+      return false;
+    }
+    setStatus(`Could not show "${file.name}" (${err.message}).`);
+    return false;
+  }
 
   await parseDocument();
+  return true;
 }
 
 async function parseDocument() {
@@ -540,14 +601,17 @@ async function parseDocument() {
       'Ligature repair OFF — vendor/lexicon.txt is missing. Restart serve.py to fetch it.';
     els.parseFill.style.width = '100%';
   }
+  if (token !== state.parseToken) return;
   state.sentences = [];
   state.sections = [];
   state.itemToSentence.clear();
   state.index = 0;
+  state.jumped = false;
   els.parseBar.hidden = false;
 
   // One pipeline, shared with test/run.html. A suite that reimplements this
   // can pass while the app is broken.
+  // Read Aloud 2: a read-in that a newer document cancelled ends quietly (its document may be released already)
   const builder = await buildDocument(
     state.doc,
     {
@@ -562,7 +626,7 @@ async function parseDocument() {
       if (token !== state.parseToken) return false;   // superseded
 
       els.parseFill.style.width = Math.round((n / total) * 100) + '%';
-      els.parseText.textContent =
+      els.parseText.textContent = state.openMessage ||
         `Reading text — page ${n} of ${total} · ${b.sentences.length} sentences`;
 
       // Publish what we have so playback can start on page one.
@@ -570,12 +634,13 @@ async function parseDocument() {
         state.sentences = b.sentences;
         state.sections = b.sections;
         renderToc();
-        render();
+        // Read Aloud 2: while nothing plays, the read-in does not pull the page back to the first sentence
+        if (state.playing) render(); else renderCounter();
         await new Promise(r => setTimeout(r, 0));   // let the UI breathe
       }
       return true;
     }
-  );
+  ).catch(err => { if (token === state.parseToken) throw err; return null; });
 
   if (!builder) return;   // cancelled by a newer parse
 
@@ -583,8 +648,10 @@ async function parseDocument() {
   // today, and relying on that is how it stops being idempotent tomorrow.
   if (token !== state.parseToken) return;
 
+  const sections = await outlineSections(builder.sentences).catch(() => null);
+  if (token !== state.parseToken) return;  // Read Aloud 2: a newer document came while the contents list was read
   state.sentences = builder.sentences;
-  state.sections = (await outlineSections(builder.sentences)) || builder.sections;
+  state.sections = sections || builder.sections;
   buildClickIndex();
   notesUI.reload();  // Read Aloud 2: this document's highlights
   askUI.reload();
@@ -600,19 +667,22 @@ async function parseDocument() {
   }
 
   const resumeAt = loadProgress();
-  state.index = resumeAt > 0
-    ? Math.min(resumeAt, Math.max(0, state.sentences.length - 1))
-    : startAt;
+  // Read Aloud 2: Play or a jump during the read-in: the place stays where the voice or the owner is
+  if (!state.playing && !state.jumped) {
+    state.index = resumeAt > 0
+      ? Math.min(resumeAt, Math.max(0, state.sentences.length - 1))
+      : startAt;
+  }
   render();
 
   warmCurrent();
   const fixes = repairStats();
-  els.parseText.textContent =
+  els.parseText.textContent = state.openMessage ||
     `${state.sentences.length} sentences · ${state.sections.length} sections` +
     (fixes.repaired ? ` · ${fixes.repaired} ligature words repaired` : '') +
     (resumeAt ? ` · resumed at ${resumeAt + 1}` : '');
   els.parseFill.style.width = '100%';
-  setTimeout(() => { if (token === state.parseToken) els.parseBar.hidden = true; }, 2500);
+  setTimeout(() => { if (token === state.parseToken && !state.openMessage) els.parseBar.hidden = true; }, 2500);
 }
 
 function buildClickIndex() {
@@ -634,26 +704,33 @@ els.fileInput.addEventListener('change', e => {
 });
 
 els.sampleBtn.addEventListener('click', async () => {
-  const res = await fetch('./samples/sample-paper.pdf');
-  const blob = await res.blob();
-  openFile(new File([blob], 'sample-paper.pdf', { type: 'application/pdf' }));
+  try {
+    const res = await fetch('./samples/sample-paper.pdf');
+    if (!res.ok) throw new Error(res.status);
+    const blob = await res.blob();
+    await openFile(new File([blob], 'sample-paper.pdf', { type: 'application/pdf' }));
+  } catch (err) {
+    els.parseBar.hidden = false;
+    els.parseText.textContent = 'Could not open the sample PDF (' + err.message + ').';
+  }
 });
 
 els.playBtn.addEventListener('click', toggle);
 els.prevBtn.addEventListener('click', () => jumpTo(state.index - 1));
 els.nextBtn.addEventListener('click', () => jumpTo(state.index + 1));
-els.seek.addEventListener('input', () => jumpTo(Number(els.seek.value), { resume: false }));
-els.seek.addEventListener('change', () => { if (state.playing) jumpTo(Number(els.seek.value)); });
+// Read Aloud 2: a drag stops the voice; at the end of the drag it goes on from the new place if it was reading
+els.seek.addEventListener('input', () => { state.scrubPlay ||= state.playing; jumpTo(Number(els.seek.value), { resume: false }); });
+els.seek.addEventListener('change', () => { if (state.scrubPlay) { state.scrubPlay = false; play(); } });
 
 els.rateSel.addEventListener('change', () => {
   els.timeLeft.textContent = timeLeftText();  // Read Aloud 2
   localStorage.setItem('pr.rate', els.rateSel.value);
-  if (state.playing) { engine.stop(); speakCurrent(); }
+  if (state.playing) { stop(); play(); }  // Read Aloud 2: go on from the present word, not from the top of the paragraph
 });
 
 els.voiceSel.addEventListener('change', () => {
   localStorage.setItem('pr.voice.' + engine.id, els.voiceSel.value);
-  if (state.playing) { engine.stop(); speakCurrent(); }
+  if (state.playing) { stop(); play(); }  // Read Aloud 2: go on from the present word
 });
 
 els.engineSel.addEventListener('change', () => { localStorage.setItem('pr.engine.chosen', els.engineSel.value); selectEngine(els.engineSel.value); });
@@ -803,6 +880,7 @@ notesUI = setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId: LIB_ID, o
 const voice = {
   say(text, cb) {
     if (state.playing) stop();
+    els.previewBtn.disabled = false;  // a preview that was playing is silent now
     engine.speak({ text, charOwners: [] }, { voiceId: els.voiceSel.value, rate: Number(els.rateSel.value), ...cb });
   },
   hush() { engine.stop(); },
@@ -889,8 +967,7 @@ async function pollExport() {
       const res = await fetch(src, { credentials: 'include' });
       if (!res.ok) throw new Error(res.status);
       const name = new URLSearchParams(location.search).get('name') || decodeURIComponent(new URL(src, location.href).pathname.split('/').pop() || 'document.pdf');
-      await openFile(new File([await res.arrayBuffer()], name, { type: 'application/pdf' }));
-      document.title = name + ' · Read Aloud 2';
+      if (await openFile(new File([await res.arrayBuffer()], name, { type: 'application/pdf' }))) document.title = name + ' · Read Aloud 2';
     } catch (err) {
       setStatus('Could not open this PDF (' + err.message + '). Use "Open PDF" to choose the file.');
     }

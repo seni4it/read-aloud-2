@@ -1,7 +1,7 @@
 # 03. Reader: the reading does not stop or start again by error
 
 GitHub issue: #4
-Status: ready-for-agent
+Status: code done, reviewed, tests pass; real browser checks open (see manual-checks.md)
 Type: AFK
 
 ## Parent
