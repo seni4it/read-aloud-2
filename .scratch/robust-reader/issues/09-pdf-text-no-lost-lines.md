@@ -25,3 +25,8 @@ Evidence: audit/pdf-text.md findings 3, 4, 5, 7, 16, 17. Each audit finding is a
 ## Blocked by
 
 - 02 (test-bench)
+
+## Notes from the test bench (ticket 02)
+
+- `tests/node/lexicon.test.mjs` records the present behaviour: `repairSplit('A', 'er')` returns null, but the comment in `lexicon.js` says that it gives "After". Change that test when the repair works.
+- `tests/pdf-text/extract-text.mjs` passes its own options to the extraction. Confirm that they are the same as the default switches of the reader in `extension/pdf/index.html`, and correct the script if they are not.
