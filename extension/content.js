@@ -84,6 +84,7 @@
       b.parts.push({ node: n, s, e, at: b.text.length });
       b.text += n.data.slice(s, e);
     }
+    vis.clear(); blk.clear();  // they hold an entry for each element of the page: keep no memory after a scan
     return out;
   }
   function afterBreak(n, el) {  // a <br> comes just before this text, inside its block (spaces and comments between do not count)
@@ -92,12 +93,22 @@
     return !!n && n !== el && prev(n).nodeName === 'BR';
   }
 
-  // The whole page's sentences are found once and kept until the page changes, so pressing play does not wait for it.
-  let kept = null;
-  const watch = new MutationObserver((list) => { if (list.some((m) => !host.contains(m.target))) kept = null; });
-  watch.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+  // The page's sentences are found when the owner shows that he wants to listen (the pointer on a listen button, a
+  // right-click, play), and kept until the read area changes, so play does not wait for them. Only the read area is
+  // watched, and only while the sentences are kept: a page where the owner does not listen costs no work.
+  let kept = null, watch = null;
+  function release() {  // drop the kept sentences and stop the watch
+    kept = null; watch?.disconnect?.();  // ?.(): the fake page of web-sentences.test.mjs has no disconnect()
+  }
   function pageSegs(top) {
-    if (!kept || kept.top !== top) kept = { top, segs: segments(collect(top)) };
+    if (!kept || kept.top !== top) {
+      release();
+      kept = { top, segs: segments(collect(top)) };
+      // a change inside the read area, or the removal of the area itself (a site that replaces its article)
+      watch ||= new MutationObserver((list) => { if (!kept || !kept.top.isConnected || list.some((m) => kept.top.contains(m.target))) release(); });
+      watch.observe(top, { childList: true, subtree: true, characterData: true });
+      for (let a = top.parentNode; a; a = a.parentNode) watch.observe(a, { childList: true });  // only its own children: a few calls
+    }
     return kept.segs.slice();
   }
 
@@ -183,7 +194,7 @@
     if (dead) return;
     dead = true; S.playing = S.paused = false; S.id++;
     hlWord && hlWord.clear(); hlSent && hlSent.clear(); host.remove();
-    watch.disconnect(); timers.forEach(clearTimeout); timers.clear();
+    release(); timers.forEach(clearTimeout); timers.clear();
   }
   const send = (m) => { ask(m); };
   // The voice follows the text: Russian (Cyrillic) is read by the Mac's Russian voice, an Italian page by Sara,
@@ -259,12 +270,18 @@
   }
   function stop() {
     S.id++; S.playing = false; S.paused = false; send({ cmd: 'stop' });
-    hlWord && hlWord.clear(); hlSent && hlSent.clear(); ui();
+    idle(); ui();
   }
-  function finish() { S.playing = false; S.paused = false; hlWord && hlWord.clear(); hlSent && hlSent.clear(); ui('Finished.'); }
+  function finish() { S.playing = false; S.paused = false; idle(); ui('Finished.'); }
+  function idle() {  // the reading ended: clear the marks and go back to the cost of a page where nobody listens
+    hlWord && hlWord.clear(); hlSent && hlSent.clear();
+    release(); S.segs = []; S.box = null;
+    cancel(natTimer); natOff = false;  // no voice server retry while nobody listens; the next play tries the natural voice
+    cancel(noteTimer); note = '';
+  }
 
   function onEvent(m) {
-    if (m.evt === 'stopped') { S.id++; if (S.playing) { S.playing = false; S.paused = false; hlWord && hlWord.clear(); hlSent && hlSent.clear(); ui(); } return; }
+    if (m.evt === 'stopped') { S.id++; if (S.playing) { S.playing = false; S.paused = false; idle(); ui(); } return; }
     if (m.id !== S.id) return;
     if (m.evt === 'times') { S.starts = Array.isArray(m.starts) && m.starts.length === S.weights.length ? m.starts : null; return; }
     if (m.evt === 'tick' && S.starts && !S.paused) {  // natural voice with Kokoro's own word times: exact
@@ -307,12 +324,13 @@
     if (first.length === 1 && first[0].words.length < 6 && S.segs[i + 1]) S.segs.splice(i + 1, 1, ...quick(S.segs[i + 1]));  // a short title: keep the next sentence short too
     play(i, 0);
   }
-  // the mouse rests on a paragraph or the listen button: prepare its first sentence, so reading starts at once
+  // the pointer is on a listen button or a selection: prepare the first sentence, so reading starts at once
   function warm(blocks, at, given, prio = 2) {
-    const v = voiceFor(document.body ? document.body.innerText.slice(0, 400) : '');  // never into cur: Pause must keep the voice being read
-    if (!v.startsWith('kokoro:') || S.playing || hiddenHere()) return;
+    if (S.playing || hiddenHere() || !voiceFor('').startsWith('kokoro:')) return;
     const segs = given || segments(blocks); const i = segs.length ? Math.max(0, at(segs)) : -1;
     if (i < 0) return;
+    const v = voiceFor(segs[i].say);  // the voice that play() will choose for this sentence; never into cur: Pause must keep the voice being read
+    if (!v.startsWith('kokoro:')) return;
     const first = quick(segs[i]);
     const next = first.length === 1 && first[0].words.length < 6 && segs[i + 1] ? quick(segs[i + 1]) : [segs[i + 1]];
     send({ cmd: 'warm', voice: v.slice(7), prio, texts: [...first, ...next].filter(Boolean).map((x) => x.say).slice(0, 2) });
@@ -321,7 +339,9 @@
   function readPage() {  // from the first sentence on screen, or the top of the article
     start(null, onScreen, pageSegs(root()));
   }
-  function readBlock(el) { start(null, (segs) => segs.findIndex((s) => el.contains(s.b.parts[0].node)), pageSegs(root().contains(el) ? root() : document.body)); }
+  const inBlock = (el) => (segs) => segs.findIndex((s) => el.contains(s.b.parts[0].node));
+  const segsFor = (el) => { const r = root(); return pageSegs(r.contains(el) ? r : document.body); };
+  function readBlock(el) { start(null, inBlock(el), segsFor(el)); }
   function readSelection() {
     const sel = getSelection(); if (!sel.rangeCount || !String(sel).trim()) return;
     start(collect(sel.getRangeAt(0).commonAncestorContainer.parentElement || document.body, sel.getRangeAt(0)), () => 0);
@@ -345,7 +365,7 @@
   }
   function readAt(x, y) {
     const el = document.elementFromPoint(x, y); if (!el) { readPage(); return; }
-    S.segs = pageSegs(root().contains(el) ? root() : document.body); S.follow = true;
+    S.segs = segsFor(el); S.follow = true;
     const hit = locate(x, y); if (hit) play(...hit); else readBlock(blockOf(el));
   }
   function back() { if (!S.playing) return; play(S.w - S.base > 1 || S.i === 0 ? S.i : S.i - 1); }
@@ -427,27 +447,8 @@
   click('fwd', () => S.playing && play(S.i + 1));
   click('close', () => { stop(); $('menu').hidden = true; });
   click('launch', readPage);
+  // Nothing is prepared before the owner shows that he wants to listen: the pointer on this button is the first sign.
   $('launch').addEventListener('mouseenter', () => warm(null, onScreen, pageSegs(root())));
-  // prepare the first sentence on screen when the page opens and whenever you stop scrolling
-  let scrollTimer = null;
-  // everything on screen, top first: each paragraph's opening is cut short the same way a start would cut it
-  let screenNo = 0;
-  function warmScreen() {
-    const v = voiceFor('');
-    if (document.visibilityState !== 'visible' || !v.startsWith('kokoro:') || S.playing || hiddenHere()) return;
-    const texts = [];
-    for (const s of pageSegs(root())) {
-      const r = rangeOf(s.b, s.start, s.end).getBoundingClientRect();
-      if (r.bottom < 0 || r.height === 0) continue;
-      if (r.top > innerHeight || texts.length >= 30) break;
-      texts.push(...(s.start === firstOf(s.b) || !texts.length ? quick(s) : [s]).map((x) => x.say));
-    }
-    if (texts.length) send({ cmd: 'warm', voice: v.slice(7), prio: 1, batch: Date.now() + ++screenNo, texts });
-  }
-  const firstOf = (b) => { const m = /\S/.exec(b.text); return m ? m.index : 0; };
-  later(() => (window.requestIdleCallback || setTimeout)(() => dead || warmScreen()), 1200);
-  on(globalThis, 'scroll', () => { cancel(scrollTimer); scrollTimer = later(warmScreen, 700); }, { passive: true });
-  on(document, 'visibilitychange', warmScreen);
   click('find', () => {
     S.follow = true; const seg = S.segs[S.i]; const x = seg && seg.words[S.w];
     if (x) { const r = rangeOf(seg.b, x.start, x.end).getBoundingClientRect(); if (r.width || r.height) bringIntoView(r, S.box); }
@@ -486,17 +487,19 @@
   }
 
   // play button beside the paragraph under the mouse
-  let hoverEl = null, warmTimer = null;
+  let hoverEl = null;
   on(document, 'mouseover', (e) => {
     if (!cfg.hoverPlay || hiddenHere() || e.target === host) return;
     const t = e.target.closest && e.target.closest('p,li,h1,h2,h3,h4,h5,h6,blockquote,dd,td,figcaption');
-    if (!t || skipped(t, SKIP) || (t.innerText || '').trim().length < 25) return;
-    if (hoverEl !== t) { cancel(warmTimer); warmTimer = later(() => warm(collect(t), () => 0), 200); }
+    if (!t || (t === hoverEl && !$('hover').hidden)) return;  // a move inside the same paragraph costs nothing
+    if (skipped(t, SKIP) || (t.innerText || '').trim().length < 25) return;
     hoverEl = t; const r = t.getBoundingClientRect();
     Object.assign($('hover').style, { left: Math.max(4, r.left - 38) + 'px', top: Math.max(4, r.top + 2) + 'px' });
     $('hover').hidden = false;
   }, { passive: true });
-  on(globalThis, 'scroll', () => { $('hover').hidden = true; }, { passive: true });
+  // An old tab after a reload of the add-on has no runtime id: the call throws at once and gone() removes the player.
+  on(globalThis, 'scroll', () => { $('hover').hidden = true; if (!chrome.runtime.id) ask({ cmd: 'ping' }); }, { passive: true });
+  $('hover').addEventListener('mouseenter', () => { if (hoverEl) warm(null, inBlock(hoverEl), segsFor(hoverEl)); });
   click('hover', () => { if (hoverEl) readBlock(hoverEl); $('hover').hidden = true; });
 
   // "Listen" bubble for selected text
@@ -532,7 +535,7 @@
     lastMenu = { x: e.clientX, y: e.clientY };
     const sel = getSelection();
     if (String(sel).trim() && sel.rangeCount) warm(collect(sel.getRangeAt(0).commonAncestorContainer.parentElement || document.body, sel.getRangeAt(0)), () => 0);
-    else { const el = document.elementFromPoint(e.clientX, e.clientY); const b = el && blockOf(el); if (b) warm(null, (segs) => segs.findIndex((x) => b.contains(x.b.parts[0].node)), pageSegs(root().contains(b) ? root() : document.body)); }
+    else { const el = document.elementFromPoint(e.clientX, e.clientY); const b = el && blockOf(el); if (b) warm(null, inBlock(b), segsFor(b)); }
   }, true);
 
   // settings, shared with the popup
