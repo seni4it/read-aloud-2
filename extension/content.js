@@ -11,7 +11,14 @@
     // page clutter Speechify also skips: citation numbers, info boxes, edit links, site notices, share and cookie bars
     + 'sup.reference,.mw-editsection,#siteSub,#contentSub,.mw-jump-link,.hatnote,.infobox,.navbox,.sidebar,.toc,#toc,.metadata,.mw-indicators,'
     + '[class*="cookie"],[id*="cookie"],[class*="share"],[class*="breadcrumb"],[class*="advert"],[class*="newsletter"],[class*="related"]';
-  const ABBR = /\b(Dr|Mr|Mrs|Ms|Prof|St|Sr|Jr|vs|etc|e\.g|i\.e|Fig|No|Vol|approx|ca)\.$/i;
+  // Short forms that do not end a sentence. 'et al.', 'ca.' and 'No.' only as written here, so 'AL.', 'CA.' (state codes)
+  // and 'said no.' end a sentence. A month only before a number ('Dec. 5'). An initial only in a name ('J. R. Smith').
+  const ABBR = /\b(Dr|Mr|Mrs|Ms|Prof|St|Sr|Jr|vs|etc|e\.g|i\.e|Fig|Vol|approx|cf|pp?|Eq|Ref|Inc|Ltd)\.$/i;
+  function isAbbr(t, next) {  // t: the sentence so far; next: the piece that follows it
+    if (ABBR.test(t) || /\b(No|al|ca)\.$/.test(t)) return true;
+    if (/\b(Jan|Feb|Aug|Sept?|Oct|Nov|Dec)\.$/.test(t)) return /^\d/.test(next);
+    return /(^|\s)\p{Lu}\.$/u.test(t) && (/^(\p{Lu}\.\s*)+$/u.test(t) || /\p{Lu}\.\s+\p{Lu}\.$/u.test(t) || /^\p{Lu}\.$/u.test(next));
+  }
   const MAX = 280;  // longer sentences are cut at a comma or a space, so the voice starts quickly
 
   let cfg = { ...DEFAULTS };
@@ -45,6 +52,15 @@
   // Blocks of text in reading order: [{ el, parts: [{ node, s, e }], text }]; with a range, only the text inside it.
   const PLAIN = document.contentType === 'text/plain';  // a .txt file: Chrome shows it in <pre>, read it
   const skip = PLAIN ? SKIP.replace('pre,', '') : SKIP;
+  // A skip class on <body> or <html> (for example 'cookie-consent-active') does not leave out the whole page.
+  // A selection that starts or ends in a skipped area (a code block, a side box) reads it there; a skipped area that
+  // the selection only crosses (a nav, a cookie bar) stays out.
+  const HARD = 'script,style,noscript,template,ra2-root';
+  function skipped(el, sel, range) {
+    const c = el.closest(sel);
+    if (!c || c === document.body || c === document.documentElement) return false;
+    return !(range && !c.matches(HARD) && (c.contains(range.startContainer) || c.contains(range.endContainer)));
+  }
   function collect(top, range) {
     vis.clear(); blk.clear();
     const out = [];
@@ -52,7 +68,7 @@
       acceptNode(n) {
         if (!n.data.trim() || (range && !range.intersectsNode(n))) return NodeFilter.FILTER_REJECT;
         const p = n.parentElement;
-        return p && !p.closest(skip) && visible(p) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+        return p && !skipped(p, skip, range) && visible(p) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
       },
     });
     for (let n; (n = walk.nextNode());) {
@@ -63,10 +79,16 @@
       const el = blockOf(n.parentElement);
       let b = out[out.length - 1];
       if (!b || b.el !== el) { b = { el, parts: [], text: '' }; out.push(b); }
+      if (b.text && !/\s$/.test(b.text) && afterBreak(n, el)) b.text += ' ';  // 'end.<br>Next': two words, two sentences
       b.parts.push({ node: n, s, e, at: b.text.length });
       b.text += n.data.slice(s, e);
     }
     return out;
+  }
+  function afterBreak(n, el) {  // a <br> comes just before this text, inside its block (spaces and comments between do not count)
+    const prev = (x) => { let p = x.previousSibling; while (p && (p.nodeType === 8 || (p.nodeType === 3 && !p.data.trim()))) p = p.previousSibling; return p; };
+    while (n && n !== el && !prev(n)) n = n.parentElement;
+    return !!n && n !== el && prev(n).nodeName === 'BR';
   }
 
   // The whole page's sentences are found once and kept until the page changes, so pressing play does not wait for it.
@@ -86,7 +108,7 @@
       let pend = null;
       for (let m; (m = re.exec(b.text)) && m[0];) {
         const piece = { start: m.index, end: m.index + m[0].length };
-        if (pend && ABBR.test(b.text.slice(pend.start, pend.end).trim())) pend.end = piece.end; else { if (pend) cut(b, pend, segs); pend = piece; }
+        if (pend && isAbbr(b.text.slice(pend.start, pend.end).trim(), m[0].trim())) pend.end = piece.end; else { if (pend) cut(b, pend, segs); pend = piece; }
       }
       if (pend) cut(b, pend, segs);
     }
@@ -99,7 +121,8 @@
       if (end - start > MAX) {
         const part = b.text.slice(start, start + MAX);
         const k = Math.max(part.lastIndexOf(', '), part.lastIndexOf('; '), part.lastIndexOf(' — '));
-        end = start + (k > MAX / 3 ? k + 1 : Math.max(part.lastIndexOf(' '), 1));
+        const sp = part.lastIndexOf(' ');  // a long run with no space (a link, a DOI) is cut every MAX characters
+        end = start + (k > MAX / 3 ? k + 1 : sp > 0 ? sp : MAX);
       }
       const words = [];
       const re = /\S+/g; const txt = b.text.slice(start, end);
@@ -424,7 +447,7 @@
   document.addEventListener('mouseover', (e) => {
     if (!cfg.hoverPlay || hiddenHere() || e.target === host) return;
     const t = e.target.closest && e.target.closest('p,li,h1,h2,h3,h4,h5,h6,blockquote,dd,td,figcaption');
-    if (!t || t.closest(SKIP) || (t.innerText || '').trim().length < 25) return;
+    if (!t || skipped(t, SKIP) || (t.innerText || '').trim().length < 25) return;
     if (hoverEl !== t) { clearTimeout(warmTimer); warmTimer = setTimeout(() => warm(collect(t), () => 0), 200); }
     hoverEl = t; const r = t.getBoundingClientRect();
     Object.assign($('hover').style, { left: Math.max(4, r.left - 34) + 'px', top: Math.max(4, r.top + 2) + 'px' });
