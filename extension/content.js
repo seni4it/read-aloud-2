@@ -22,6 +22,7 @@
   const MAX = 280;  // longer sentences are cut at a comma or a space, so the voice starts quickly
 
   let cfg = { ...DEFAULTS };
+  const host = document.createElement('ra2-root');  // the player; made here so that gone() can remove it at any time
   const S = { segs: [], i: -1, w: 0, playing: false, paused: false, id: 0, follow: true, base: 0, words: [], weights: [], total: 0, tab: null };
   const hasHL = typeof Highlight === 'function' && CSS.highlights;
   const hlWord = hasHL ? new Highlight() : null, hlSent = hasHL ? new Highlight() : null;
@@ -93,8 +94,8 @@
 
   // The whole page's sentences are found once and kept until the page changes, so pressing play does not wait for it.
   let kept = null;
-  new MutationObserver((list) => { if (list.some((m) => !host.contains(m.target))) kept = null; })
-    .observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+  const watch = new MutationObserver((list) => { if (list.some((m) => !host.contains(m.target))) kept = null; });
+  watch.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
   function pageSegs(top) {
     if (!kept || kept.top !== top) kept = { top, segs: segments(collect(top)) };
     return kept.segs.slice();
@@ -162,7 +163,29 @@
   }
 
   // ---------- speaking ----------
-  const send = (m) => chrome.runtime.sendMessage({ to: 'bg', ...m }).catch(() => {});
+  // After a reload of the add-on, a tab that was open keeps this old script, and every call to the add-on throws at
+  // once ("Extension context invalidated"). Then the script goes quiet and removes its player: a reload of the tab
+  // gives the new one.
+  let dead = false;
+  function ask(m) {  // a message to the background; resolves to its answer, or to undefined when there is none
+    if (dead) return Promise.resolve();
+    // Only a lost add-on ends the script. 'Receiving end does not exist' and 'message port closed' come when the
+    // background restarts: the add-on is still there, so the reading goes on.
+    const lost = (e) => { if (/context invalidated/i.test(e && e.message)) gone(); };
+    try { return chrome.runtime.sendMessage({ to: 'bg', ...m }).catch(lost); } catch { gone(); return Promise.resolve(); }
+  }
+  const timers = new Set();  // every timer that can still run: gone() clears them
+  const later = (f, ms) => { const t = setTimeout(() => { timers.delete(t); if (!dead) f(); }, ms); timers.add(t); return t; };
+  const cancel = (t) => { clearTimeout(t); timers.delete(t); };
+  // a page or window listener that does nothing after gone()
+  const on = (target, type, f, opts) => target.addEventListener(type, (e) => { if (!dead) f(e); }, opts);
+  function gone() {
+    if (dead) return;
+    dead = true; S.playing = S.paused = false; S.id++;
+    hlWord && hlWord.clear(); hlSent && hlSent.clear(); host.remove();
+    watch.disconnect(); timers.forEach(clearTimeout); timers.clear();
+  }
+  const send = (m) => { ask(m); };
   // The voice follows the text: Russian (Cyrillic) is read by the Mac's Russian voice, an Italian page by Sara,
   // everything else by the voice you chose.
   const PAGE_IT = /^it/i.test(document.documentElement.lang || '');
@@ -176,9 +199,8 @@
     return cfg.voice;
   }
   function retryNatural() {  // ask the server every 5 s; the next sentence after it answers is natural again
-    clearTimeout(natTimer);
-    natTimer = setTimeout(() => chrome.runtime.sendMessage({ to: 'bg', cmd: 'voices' })
-      .then((v) => { if (v && v.server) natOff = false; else retryNatural(); }).catch(retryNatural), 5000);
+    cancel(natTimer);
+    natTimer = later(() => ask({ cmd: 'voices' }).then((v) => { if (v && v.server) natOff = false; else if (!dead) retryNatural(); }), 5000);
   }
   let cur = cfg.voice;  // the voice of the sentence being read (set by play)
   const engine = () => (cur.startsWith('kokoro:') ? 'kokoro' : 'system');
@@ -188,6 +210,7 @@
     const seg = S.segs[i];
     if (!seg) { finish(); return; }
     S.i = i; S.w = w; S.base = w; S.playing = true; S.paused = false; S.id++; cur = voiceFor(seg.say); S.starts = null;
+    S.box = scroller(seg.b.el);  // found once for each sentence: it reads the style of each box around the text
     const words = seg.words.slice(w);
     const text = seg.b.text.slice(words[0].start, seg.end).replace(/\s+/g, ' ').trim();
     // where each word starts in the spoken text, and how long it roughly lasts (for voices without word events)
@@ -206,9 +229,23 @@
     S.w = w;
     if (hlWord) { hlWord.clear(); hlWord.add(rangeOf(seg.b, x.start, x.end)); }
     const r = rangeOf(seg.b, x.start, x.end).getBoundingClientRect();
-    const out = r.top < 40 || r.bottom > innerHeight - 110;
-    if (out && S.follow) scrollTo({ top: scrollY + r.top - innerHeight / 2.5, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    if (!r.width && !r.height) return;  // the site replaced this text: its place is not known, so the page stays still
+    const box = S.box, v = box ? box.getBoundingClientRect() : { top: 0, bottom: innerHeight };
+    const out = r.top < Math.max(40, v.top) || r.bottom > Math.min(innerHeight - 110, v.bottom);
+    if (out && S.follow) bringIntoView(r, box);
     $('find')?.classList.toggle('away', out && !S.follow);
+  }
+  // Follow moves the box that scrolls the text: on most pages the window, on some sites (docs, web mail) a box in the page.
+  function scroller(el) {  // the nearest box around el that scrolls; null when the window scrolls the text
+    for (let x = el; x && x !== document.body && x !== document.documentElement; x = x.parentElement) {
+      if (/auto|scroll|overlay/.test(getComputedStyle(x).overflowY) && x.scrollHeight > x.clientHeight) return x;
+    }
+    return null;
+  }
+  function bringIntoView(r, box) {  // r: the word's place on the screen; it goes to 40% of the height
+    const behavior = matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+    if (box) box.scrollBy({ top: r.top - box.getBoundingClientRect().top - box.clientHeight / 2.5, behavior });
+    else scrollTo({ top: scrollY + r.top - innerHeight / 2.5, behavior });
   }
   function pause() {
     if (!S.playing || S.paused) return;
@@ -227,7 +264,7 @@
   function finish() { S.playing = false; S.paused = false; hlWord && hlWord.clear(); hlSent && hlSent.clear(); ui('Finished.'); }
 
   function onEvent(m) {
-    if (m.evt === 'stopped') { if (S.playing) { S.playing = false; S.paused = false; hlWord && hlWord.clear(); hlSent && hlSent.clear(); ui(); } return; }
+    if (m.evt === 'stopped') { S.id++; if (S.playing) { S.playing = false; S.paused = false; hlWord && hlWord.clear(); hlSent && hlSent.clear(); ui(); } return; }
     if (m.id !== S.id) return;
     if (m.evt === 'times') { S.starts = Array.isArray(m.starts) && m.starts.length === S.weights.length ? m.starts : null; return; }
     if (m.evt === 'tick' && S.starts && !S.paused) {  // natural voice with Kokoro's own word times: exact
@@ -249,7 +286,7 @@
     }
   }
   chrome.runtime.onMessage.addListener((m) => {
-    if (m.to !== 'page' || (m.tab !== undefined && S.tab !== null && m.tab !== S.tab)) return;
+    if (dead || m.to !== 'page' || (m.tab !== undefined && S.tab !== null && m.tab !== S.tab)) return;
     if (m.evt) onEvent(m);
     else if (m.cmd === 'readSelection') readSelection();
     else if (m.cmd === 'readHere') readAt(lastMenu.x, lastMenu.y);
@@ -258,8 +295,8 @@
     else if (m.cmd === 'back') back();
     else if (m.cmd === 'forward') S.playing && play(S.i + 1);
   });
-  document.addEventListener('ra2-read', (e) => readBlock(e.detail));  // the paste page asks to read its text
-  if (location.protocol === 'chrome-extension:') chrome.runtime.sendMessage({ to: 'bg', cmd: 'myTab' }).then((t) => { S.tab = t; }).catch(() => {});
+  on(document, 'ra2-read', (e) => readBlock(e.detail));  // the paste page asks to read its text
+  if (location.protocol === 'chrome-extension:') ask({ cmd: 'myTab' }).then((t) => { S.tab = t; });
 
   // ---------- where to start ----------
   function start(blocks, at, segs) {
@@ -314,7 +351,6 @@
   function back() { if (!S.playing) return; play(S.w - S.base > 1 || S.i === 0 ? S.i : S.i - 1); }
 
   // ---------- the player (inside a shadow root, so page styles never touch it) ----------
-  const host = document.createElement('ra2-root');
   const sh = host.attachShadow({ mode: 'closed' });
   const ICON = {
     play: '<path d="M8 5v14l11-7z" fill="currentColor"/>', pause: '<path d="M7 5h4v14H7zM13 5h4v14h-4z" fill="currentColor"/>',
@@ -344,10 +380,10 @@
     .menu button { display: block; width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px; }
     .menu button:hover, .menu button.on { background: #fff3e0; } .menu button.on { font-weight: 700; }
     .menu input { width: 100%; accent-color: #FF8C00; }
-    .menu .rates { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; } .menu .rates button { width: auto; padding: 4px 10px; border: 1px solid #e2e8f0; }
+    .menu .rates { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; } .menu .rates button { width: auto; min-height: 32px; padding: 4px 10px; border: 1px solid #e2e8f0; }
     .launch { position: fixed; right: 14px; top: 50%; z-index: 2147483646; width: 48px; height: 48px; background: #10233f; color: #fff; box-shadow: 0 6px 20px rgba(0,0,0,.3); }
     .launch:hover { background: #FF8C00; color: #111; }
-    .hover { position: fixed; z-index: 2147483646; width: 28px; height: 28px; background: #FF8C00; color: #111; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+    .hover { position: fixed; z-index: 2147483646; width: 32px; height: 32px; background: #FF8C00; color: #111; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
     .hover svg { width: 16px; height: 16px; }
     .bubble { position: fixed; z-index: 2147483647; display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px 0 10px; background: #10233f; color: #fff; font-size: 14px; font-weight: 600; box-shadow: 0 6px 20px rgba(0,0,0,.3); }
     .bubble svg { width: 18px; height: 18px; }
@@ -367,11 +403,14 @@
   <button class="hover" id="hover" title="Listen from here" aria-label="Listen from here" hidden>${svg('play')}</button>
   <button class="bubble" id="bubble" hidden>${svg('play')}Listen</button>`;
   const $ = (id) => sh.getElementById(id);
-  (document.body || document.documentElement).appendChild(host);
+  // On <html>, not <body>: a transform or filter on <body> would move the fixed player off the window.
+  const attach = () => { if (!dead && !document.documentElement.contains(host)) document.documentElement.appendChild(host); };
+  attach();
 
   let note = '', noteTimer = null;
   function ui(msg) {
-    if (msg !== undefined) { note = msg; clearTimeout(noteTimer); noteTimer = setTimeout(() => { note = ''; $('msg').textContent = ''; }, 4000); }
+    if (msg !== undefined) { note = msg; cancel(noteTimer); noteTimer = later(() => { note = ''; $('msg').textContent = ''; }, 4000); }
+    attach();  // a site that rebuilds its page can remove the player
     const active = S.playing || S.paused;
     $('bar').hidden = !active && !note;
     const reading = S.playing && !S.paused;
@@ -406,10 +445,14 @@
     if (texts.length) send({ cmd: 'warm', voice: v.slice(7), prio: 1, batch: Date.now() + ++screenNo, texts });
   }
   const firstOf = (b) => { const m = /\S/.exec(b.text); return m ? m.index : 0; };
-  setTimeout(() => (window.requestIdleCallback || setTimeout)(warmScreen), 1200);
-  addEventListener('scroll', () => { clearTimeout(scrollTimer); scrollTimer = setTimeout(warmScreen, 700); }, { passive: true });
-  document.addEventListener('visibilitychange', warmScreen);
-  click('find', () => { S.follow = true; const seg = S.segs[S.i]; const x = seg && seg.words[S.w]; if (x) { const r = rangeOf(seg.b, x.start, x.end).getBoundingClientRect(); scrollTo({ top: scrollY + r.top - innerHeight / 2.5, behavior: 'smooth' }); } $('find').classList.remove('away'); });
+  later(() => (window.requestIdleCallback || setTimeout)(() => dead || warmScreen()), 1200);
+  on(globalThis, 'scroll', () => { cancel(scrollTimer); scrollTimer = later(warmScreen, 700); }, { passive: true });
+  on(document, 'visibilitychange', warmScreen);
+  click('find', () => {
+    S.follow = true; const seg = S.segs[S.i]; const x = seg && seg.words[S.w];
+    if (x) { const r = rangeOf(seg.b, x.start, x.end).getBoundingClientRect(); if (r.width || r.height) bringIntoView(r, S.box); }
+    $('find').classList.remove('away');
+  });
   click('speed', () => { $('menu').hidden = !$('menu').hidden; if (!$('menu').hidden) menu(); });
 
   async function menu() {
@@ -423,7 +466,7 @@
     m.querySelector('#rate').addEventListener('change', (e) => setRate(Number(e.target.value)));
     m.querySelector('#rate').addEventListener('input', (e) => { m.querySelector('#rv').textContent = Number(e.target.value).toFixed(1) + '×'; });
     m.querySelectorAll('[data-r]').forEach((b) => b.addEventListener('click', () => setRate(Number(b.dataset.r))));
-    const v = await chrome.runtime.sendMessage({ to: 'bg', cmd: 'voices' }).catch(() => null);
+    const v = await ask({ cmd: 'voices' });
     m.querySelector('p')?.remove();
     const add = (title, list, prefix) => {
       if (!list.length) return;
@@ -444,22 +487,22 @@
 
   // play button beside the paragraph under the mouse
   let hoverEl = null, warmTimer = null;
-  document.addEventListener('mouseover', (e) => {
+  on(document, 'mouseover', (e) => {
     if (!cfg.hoverPlay || hiddenHere() || e.target === host) return;
     const t = e.target.closest && e.target.closest('p,li,h1,h2,h3,h4,h5,h6,blockquote,dd,td,figcaption');
     if (!t || skipped(t, SKIP) || (t.innerText || '').trim().length < 25) return;
-    if (hoverEl !== t) { clearTimeout(warmTimer); warmTimer = setTimeout(() => warm(collect(t), () => 0), 200); }
+    if (hoverEl !== t) { cancel(warmTimer); warmTimer = later(() => warm(collect(t), () => 0), 200); }
     hoverEl = t; const r = t.getBoundingClientRect();
-    Object.assign($('hover').style, { left: Math.max(4, r.left - 34) + 'px', top: Math.max(4, r.top + 2) + 'px' });
+    Object.assign($('hover').style, { left: Math.max(4, r.left - 38) + 'px', top: Math.max(4, r.top + 2) + 'px' });
     $('hover').hidden = false;
   }, { passive: true });
-  addEventListener('scroll', () => { $('hover').hidden = true; }, { passive: true });
+  on(globalThis, 'scroll', () => { $('hover').hidden = true; }, { passive: true });
   click('hover', () => { if (hoverEl) readBlock(hoverEl); $('hover').hidden = true; });
 
   // "Listen" bubble for selected text
-  document.addEventListener('mouseup', (e) => {
+  on(document, 'mouseup', (e) => {
     if (e.target === host) return;
-    setTimeout(() => {
+    later(() => {
       const sel = getSelection(); const txt = String(sel).trim();
       if (!txt || txt.length < 3 || !sel.rangeCount || hiddenHere()) { hideBubble(); return; }
       const r = sel.getRangeAt(0).getBoundingClientRect();
@@ -472,7 +515,7 @@
   click('bubble', readSelection);
 
   // while reading, a click on a word jumps there (links, buttons and fields keep working as usual)
-  document.addEventListener('click', (e) => {
+  on(document, 'click', (e) => {
     if (!cfg.clickJump || !(S.playing || S.paused) || e.target === host || !e.detail) return;
     if (e.target.closest('a,button,input,select,textarea,label,[role=button],[contenteditable]') || String(getSelection()).trim()) return;
     const hit = locate(e.clientX, e.clientY); if (hit) play(...hit);
@@ -480,11 +523,12 @@
 
   // you scroll yourself: the page stops following the voice until you press the target button
   const leave = () => { if (S.playing) S.follow = false; };
-  addEventListener('wheel', leave, { passive: true });
-  addEventListener('touchmove', leave, { passive: true });
-  addEventListener('keydown', (e) => { if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) leave(); if (e.key === 'Escape' && !$('menu').hidden) $('menu').hidden = true; });
+  on(globalThis, 'wheel', leave, { passive: true });
+  on(globalThis, 'touchmove', leave, { passive: true });
+  const typing = (t) => t && (t.isContentEditable || !!t.closest?.('input,textarea,select'));
+  on(globalThis, 'keydown', (e) => { if (!typing(e.target) && ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) leave(); if (e.key === 'Escape' && !$('menu').hidden) $('menu').hidden = true; });
   let lastMenu = { x: innerWidth / 2, y: 80 };
-  document.addEventListener('contextmenu', (e) => {
+  on(document, 'contextmenu', (e) => {
     lastMenu = { x: e.clientX, y: e.clientY };
     const sel = getSelection();
     if (String(sel).trim() && sel.rangeCount) warm(collect(sel.getRangeAt(0).commonAncestorContainer.parentElement || document.body, sel.getRangeAt(0)), () => 0);
@@ -492,8 +536,8 @@
   }, true);
 
   // settings, shared with the popup
-  const save = () => chrome.storage.sync.set({ ra2: cfg }).catch(() => {});
+  const save = () => { try { chrome.storage.sync.set({ ra2: cfg }).catch(() => {}); } catch { gone(); } };
   const KNOWN = /^kokoro:(af_heart|am_michael|bf_emma|if_sara)$|^system:/;  // a voice removed from the list falls back to Heart
   chrome.storage.sync.get('ra2').then((r) => { cfg = { ...DEFAULTS, ...(r.ra2 || {}) }; if (!KNOWN.test(cfg.voice)) cfg.voice = DEFAULTS.voice; cur = cfg.voice; ui(); }).catch(() => ui());
-  chrome.storage.onChanged.addListener((c) => { if (c.ra2) { cfg = { ...DEFAULTS, ...c.ra2.newValue }; ui(); } });
+  chrome.storage.onChanged.addListener((c) => { if (!dead && c.ra2) { cfg = { ...DEFAULTS, ...c.ra2.newValue }; ui(); } });
 })();
