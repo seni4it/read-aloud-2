@@ -1,0 +1,72 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Length 367 >>
+stream
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Sample-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<00> <FF>
+endcodespacerange
+1 beginbfrange
+<20> <7E> <0020>
+endbfrange
+1 beginbfchar
+<80> <E000>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+endstream
+endobj
+2 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding /ToUnicode 1 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Length 663 >>
+stream
+BT /F1 10 Tf 72.0 700.0 Td (A printed book often cuts a long word at the end of a line and puts) Tj ET
+BT /F1 10 Tf 72.0 687.0 Td (a hyphen after the first part. The reader must join the two parts) Tj ET
+BT /F1 10 Tf 72.0 674.0 Td (again, so that the voice says one word. For example, the word rep-) Tj ET
+BT /F1 10 Tf 72.0 661.0 Td (resentation is cut here, and the word endo-) Tj ET
+BT /F1 10 Tf 72.0 648.0 Td (dontic is cut here. A real compound such as well-) Tj ET
+BT /F1 10 Tf 72.0 635.0 Td (known keeps its hyphen in the dictionary, and the reader can keep it.) Tj ET
+BT /F1 10 Tf 72.0 622.0 Td (The last line of this page has no hyphen at its end.) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 7 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 2 0 R /F2 3 0 R /F3 4 0 R >> >> >>
+endobj
+7 0 obj
+<< /Type /Pages /Kids [6 0 R] /Count 1 >>
+endobj
+8 0 obj
+<< /Type /Catalog /Pages 7 0 R >>
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000432 00000 n 
+0000000529 00000 n 
+0000000643 00000 n 
+0000000745 00000 n 
+0000001458 00000 n 
+0000001604 00000 n 
+0000001661 00000 n 
+trailer
+<< /Size 9 /Root 8 0 R >>
+startxref
+1710
+%%EOF

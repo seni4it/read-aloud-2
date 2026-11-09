@@ -1,0 +1,77 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Length 367 >>
+stream
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Sample-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<00> <FF>
+endcodespacerange
+1 beginbfrange
+<20> <7E> <0020>
+endbfrange
+1 beginbfchar
+<80> <E000>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+endstream
+endobj
+2 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding /ToUnicode 1 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Length 1153 >>
+stream
+BT /F1 10 Tf 72.0 700.0 Td (The first trial of the method began in the spring, and it ran from) Tj ET
+BT /F1 10 Tf 72.0 687.0 Td (1996 to 2004 in three clinics. Each clinic measured the same teeth) Tj ET
+BT /F1 10 Tf 72.0 674.0 Td (with a gauge that reads to 0.5 mm, and the mean depth was) Tj ET
+BT /F1 10 Tf 72.0 661.0 Td (2.5 mm at the start of the trial. The team counted) Tj ET
+BT /F1 10 Tf 72.0 648.0 Td (120 patients in the first year and 340 patients in the last year.) Tj ET
+BT /F1 10 Tf 72.0 635.0 Td (Class II cavities were the most common finding, and Class IV) Tj ET
+BT /F1 10 Tf 72.0 622.0 Td (cavities were rare. The report has two short lists of findings.) Tj ET
+BT /F1 10 Tf 72.0 596.0 Td (1. The depth did not change in the first two years.) Tj ET
+BT /F1 10 Tf 72.0 583.0 Td (2. The depth became less after the change of method.) Tj ET
+BT /F1 10 Tf 72.0 557.0 Td (The text after the list goes on as a normal paragraph. It has no) Tj ET
+BT /F1 10 Tf 72.0 544.0 Td (numbers at the start of its lines, so the reader must keep it as) Tj ET
+BT /F1 10 Tf 72.0 531.0 Td (one paragraph and must not cut it into pieces at each line end.) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 7 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 2 0 R /F2 3 0 R /F3 4 0 R >> >> >>
+endobj
+7 0 obj
+<< /Type /Pages /Kids [6 0 R] /Count 1 >>
+endobj
+8 0 obj
+<< /Type /Catalog /Pages 7 0 R >>
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000432 00000 n 
+0000000529 00000 n 
+0000000643 00000 n 
+0000000745 00000 n 
+0000001949 00000 n 
+0000002095 00000 n 
+0000002152 00000 n 
+trailer
+<< /Size 9 /Root 8 0 R >>
+startxref
+2201
+%%EOF

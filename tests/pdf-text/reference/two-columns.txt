@@ -1,0 +1,4 @@
+Two Columns on One Page
+The left column starts the story. A reader who listens to a page wants the voice to finish one column before it starts the next one. When the voice jumps from the left column to the right column on every line, the sentences break into pieces and nobody can follow them.
+This column has enough lines to look like the body of a real page in a journal, so the reader can learn the size of the body type from it. The last sentence of the left column goes on at the top of the right column, and the reader must join the two halves into one sentence without a break. The right column then gives its own ideas. It talks about the gap between the columns, which is wide and empty from the top of the page to the bottom.
+A good reader finds this gap and reads each column from top to bottom. A weak reader reads straight across the page and mixes the two columns. This sample exists so that a change in the column rules shows at once in the comparison check.

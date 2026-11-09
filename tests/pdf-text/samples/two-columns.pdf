@@ -1,0 +1,88 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Length 367 >>
+stream
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Sample-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<00> <FF>
+endcodespacerange
+1 beginbfrange
+<20> <7E> <0020>
+endbfrange
+1 beginbfchar
+<80> <E000>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+endstream
+endobj
+2 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding /ToUnicode 1 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Length 1789 >>
+stream
+BT /F3 16 Tf 72.0 740.0 Td (Two Columns on One Page) Tj ET
+BT /F1 10 Tf 72.0 700.0 Td (The left column starts the story. A reader who) Tj ET
+BT /F1 10 Tf 72.0 687.0 Td (listens to a page wants the voice to finish) Tj ET
+BT /F1 10 Tf 72.0 674.0 Td (one column before it starts the next one. When) Tj ET
+BT /F1 10 Tf 72.0 661.0 Td (the voice jumps from the left column to the) Tj ET
+BT /F1 10 Tf 72.0 648.0 Td (right column on every line, the sentences) Tj ET
+BT /F1 10 Tf 72.0 635.0 Td (break into pieces and nobody can follow them.) Tj ET
+BT /F1 10 Tf 72.0 622.0 Td (This column has enough lines to look like the) Tj ET
+BT /F1 10 Tf 72.0 609.0 Td (body of a real page in a journal, so the) Tj ET
+BT /F1 10 Tf 72.0 596.0 Td (reader can learn the size of the body type) Tj ET
+BT /F1 10 Tf 72.0 583.0 Td (from it. The last sentence of the left column) Tj ET
+BT /F1 10 Tf 72.0 570.0 Td (goes on at the top of the right column, and) Tj ET
+BT /F1 10 Tf 72.0 557.0 Td (the reader must join the two halves into one) Tj ET
+BT /F1 10 Tf 324.0 700.0 Td (sentence without a break. The right column) Tj ET
+BT /F1 10 Tf 324.0 687.0 Td (then gives its own ideas. It talks about the) Tj ET
+BT /F1 10 Tf 324.0 674.0 Td (gap between the columns, which is wide and) Tj ET
+BT /F1 10 Tf 324.0 661.0 Td (empty from the top of the page to the bottom.) Tj ET
+BT /F1 10 Tf 324.0 648.0 Td (A good reader finds this gap and reads each) Tj ET
+BT /F1 10 Tf 324.0 635.0 Td (column from top to bottom. A weak reader reads) Tj ET
+BT /F1 10 Tf 324.0 622.0 Td (straight across the page and mixes the two) Tj ET
+BT /F1 10 Tf 324.0 609.0 Td (columns. This sample exists so that a change) Tj ET
+BT /F1 10 Tf 324.0 596.0 Td (in the column rules shows at once in the) Tj ET
+BT /F1 10 Tf 324.0 583.0 Td (comparison check.) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 7 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 2 0 R /F2 3 0 R /F3 4 0 R >> >> >>
+endobj
+7 0 obj
+<< /Type /Pages /Kids [6 0 R] /Count 1 >>
+endobj
+8 0 obj
+<< /Type /Catalog /Pages 7 0 R >>
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000432 00000 n 
+0000000529 00000 n 
+0000000643 00000 n 
+0000000745 00000 n 
+0000002585 00000 n 
+0000002731 00000 n 
+0000002788 00000 n 
+trailer
+<< /Size 9 /Root 8 0 R >>
+startxref
+2837
+%%EOF
