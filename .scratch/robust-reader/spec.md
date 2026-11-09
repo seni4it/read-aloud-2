@@ -79,6 +79,7 @@ Make the present features correct, lighter and easier to see. Add no new feature
 54. As the owner, I want a book card to show a clean title and how much is left, not a file name.
 55. As the owner, I want the play button to show that the voice is being made, so that a wait of some seconds is not a mystery.
 56. As the owner, I want each icon button to show its name and its key after a short hover.
+57. As a web listener, I want to drag the player to the left, the right, the top or the bottom of the page, so that it is not in the way. The player stays where I put it.
 
 ## Design Direction
 
@@ -103,6 +104,8 @@ The direction:
 6. Each control has the six states of rule 6.4, and each icon button has a tooltip with its key after 500 ms. Hover feedback comes within 100 ms. Motion stops when the system asks for reduced motion. Rules 6.4, 10.1, 10.5.
 7. Each empty state and each wait has its own message and one action. Rules 5.5, 10.5.
 
+Owner's answers of 9 Nov 2026 (answer page round 2): yes to each of the 7 points above, and yes to the sequence "repairs first, then the design". A separate Chrome window with a test profile is approved for tests. A reading view for PDFs comes later, in its own spec. His added request: "see that I can drag the small menu bar on Chrome to the left, right, top and bottom, and I can move it because sometimes it's in the way right now." This is ticket 25.
+
 ## Implementation Decisions
 
 - No new feature. The navy and orange identity stays, but the layout and the styles of all screens are redone to the Design Direction above. No function is removed: a control that leaves a bar moves to a panel or a menu.
@@ -125,7 +128,7 @@ The direction:
 - Server: tests start the server on a free port with a temporary library and no voice model. Prior art: the server test file that this work added.
 - PDF text: a comparison check on sample PDFs. It writes the sentences of each sample before and after a change and shows the difference. Prior art: the commit messages "checked against three books, old and new". A change is accepted when no sample reads worse.
 - Sentence cutting, speech rewrite, ligature repair, word timing schedule: unit tests with Node.
-- Reader transport, drawing, look, web-page player: checked in the test window of the project with the built-in browser, with a written list of steps in the ticket. Screenshots for each design ticket, in light and dark mode, at 1280, 1024 and 400 px. A Node test checks the contrast of each text and background token pair (4.5 to 1 or more) and that no style file outside the token file holds a colour value.
+- Reader transport, drawing, look, web-page player: checked in a separate Chrome window with a test profile (approved by the owner on 9 Nov 2026) or in the built-in browser, with a written list of steps in the ticket. Screenshots for each design ticket, in light and dark mode, at 1280, 1024 and 400 px. A Node test checks the contrast of each text and background token pair (4.5 to 1 or more) and that no style file outside the token file holds a colour value.
 - The model is not loaded in automatic tests. One manual check with the real voice comes after the server restart.
 
 ## Out of Scope
