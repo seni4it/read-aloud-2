@@ -29,3 +29,7 @@ Evidence: audit/reader-ui.md findings 12, 21, 22, 25. Each audit finding is a cl
 ## Note from ticket 04 (9 Nov 2026)
 
 Ticket 04 found a related fault in `notes.js` and `app.js`: an add or a remove of a highlight during the read-in of a new book writes the old book's highlights under the new book's key. The exact change is in the Work report of `04-reader-drawing.md` ("Review round 2", item 5). Repair it in this ticket, with a test.
+
+## Note from ticket 05 (9 Nov 2026)
+
+This ticket is the next owner of `app.js`. Make also the small `app.js` change that ticket 05 describes in its Work report: the status label must show the Mac voice from the first sentence after the voice server falls (app.js calculates the label before `speak`).
