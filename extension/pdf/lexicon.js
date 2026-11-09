@@ -19,7 +19,11 @@ const CANDIDATES = ['ti', 'fi', 'fl', 'ff', 'ft', 'ffi', 'ffl', 'tt', 'ct', 'st'
 
 // A character sitting inside a word that cannot be part of an English word.
 // Private-use codepoints are the usual shape of an unmapped ligature glyph.
+// Read Aloud 2: a letter with an accent ("café", "résumé") is not damage; it is
+// tested by its base letter.
 const ALIEN = /[^A-Za-z'’\-]/;
+const isAlien = ch => ALIEN.test(ch.normalize('NFD')[0]);
+const hasAlien = word => [...word].some(isAlien);
 
 let lexicon = null;
 let loading = null;
@@ -32,13 +36,17 @@ export async function loadLexicon(url) {
   if (lexicon) return lexicon;
   if (loading) return loading;
 
+  // Read Aloud 2: a failed load is tried again on the next call, not kept as a failure.
   loading = (async () => {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('lexicon ' + res.status);
-    const text = await res.text();
-    lexicon = new Set(text.split('\n'));
-    loading = null;
-    return lexicon;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('lexicon ' + res.status);
+      const text = await res.text();
+      lexicon = new Set(text.split('\n'));
+      return lexicon;
+    } finally {
+      loading = null;
+    }
   })();
 
   return loading;
@@ -76,6 +84,16 @@ function vote(candidate) {
 
 function confidence(candidate) {
   return votes.get(candidate) || 0;
+}
+
+/**
+ * Start the ligature repair record of a new document. Read Aloud 2: the votes
+ * and the repaired words of one book must not decide the repairs of the next
+ * book opened in the same page.
+ */
+export function resetRepairs() {
+  votes.clear();
+  cache.clear();
 }
 
 /**
@@ -120,7 +138,7 @@ function solve(lower) {
   // where the damage is, so only the identity has to be guessed.
   const alienAt = [];
   for (let i = 0; i < lower.length; i++) {
-    if (ALIEN.test(lower[i])) alienAt.push(i);
+    if (isAlien(lower[i])) alienAt.push(i);
   }
 
   if (alienAt.length > 0) {
@@ -185,11 +203,16 @@ export function repairWord(word) {
 
   if (cache.has(word)) return cache.get(word);
 
+  // Read Aloud 2: a word with a digit is a code, a name or a measure ("mul3", "v13"), not an English word
+  // that lost a ligature; a strong record of lost "ti" read "mul3" as "multi".
+  if (/\d/.test(word)) { cache.set(word, null); return null; }
+
   const lower = word.toLowerCase();
   const clean = lower.replace(/['’\-]/g, '');
 
-  // Already a real word: nothing to do.
-  if (!ALIEN.test(lower) && (known(lower) || known(clean))) {
+  // Already a real word: nothing to do. A word with accents is looked up without them.
+  const plain = clean.normalize('NFD').replace(/\p{M}/gu, '');
+  if (!hasAlien(lower) && (known(lower) || known(clean) || known(plain))) {
     cache.set(word, null);
     return null;
   }
@@ -215,10 +238,17 @@ export function repairWord(word) {
   return result;
 }
 
-// Everything a Latin-script document legitimately contains. Anything outside
-// this that survived ligature repair is an unmapped glyph — the tofu box you
-// see on the page — and must not reach the speech engine or the UI.
-const KEEPABLE = /[A-Za-z0-9\u00C0-\u024F\u00B5\u03BC\s.,;:!?'"“”‘’()\[\]{}\-–—/&%$#@+=<>*°²³…]/;  // µ kept: µm is read as micrometre
+// An unmapped glyph — the tofu box you see on the page — is a private-use,
+// unassigned or control character, or the replacement character. What survives
+// ligature repair in that shape must not reach the speech engine or the UI.
+// Read Aloud 2: every other character has a meaning and stays — Cyrillic, Hebrew,
+// Greek, £ € ¥. A lone half of a surrogate pair stays too: its other half is the
+// next entry of the same character buffer.
+// An emoji, a skin tone, a flag letter or another pictograph is not said either; the signs that the speech
+// text says (° © ® ™) stay.
+const UNMAPPED = /[\p{Co}\p{Cn}\p{Cc}\uFFFD\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\p{So}]/u;
+const SAID_SIGNS = /[°©®™]/;
+const keepable = ch => !UNMAPPED.test(ch) || /\s/.test(ch) || SAID_SIGNS.test(ch);
 
 /**
  * Replace leftover unmapped glyphs with a space. A space rather than nothing:
@@ -227,7 +257,7 @@ const KEEPABLE = /[A-Za-z0-9\u00C0-\u024F\u00B5\u03BC\s.,;:!?'"“”‘’()\[\
  */
 export function stripUnmapped(text) {
   let out = '';
-  for (const ch of text) out += KEEPABLE.test(ch) ? ch : ' ';
+  for (const ch of text) out += keepable(ch) ? ch : ' ';
   return out.replace(/ {2,}/g, ' ');
 }
 

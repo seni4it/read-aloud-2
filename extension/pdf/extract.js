@@ -1,4 +1,4 @@
-import { repairWord, repairText, stripUnmapped, repairSplit, respaceLine } from './lexicon.js';
+import { repairWord, repairText, stripUnmapped, repairSplit, respaceLine, resetRepairs, isWord } from './lexicon.js';
 import { normalizeForSpeech } from './speech.js';
 
 // Turns a PDF into clean, speakable sentences that remember where they came
@@ -813,7 +813,7 @@ const LIGATURES = {
   'ﬄ': 'ffl', 'ﬅ': 'st', 'ﬆ': 'st',
   'Œ': 'OE', 'œ': 'oe', 'Æ': 'AE', 'æ': 'ae',
   '‘': "'", '’': "'", '“': '"', '”': '"',
-  '–': '-', '—': '-', '−': '-', ' ': ' ',
+  '–': '-', '—': '-', '−': '-', '‐': '-', '‑': '-', ' ': ' ',
   '…': '...', '´': "'", 'ʼ': "'"
 };
 
@@ -840,15 +840,16 @@ const SPACING_ACCENTS = {
 
 const DOTLESS = { 'ı': 'i', 'ȷ': 'j' };
 
-// Symbols a narrator would simply not say.
-const UNSPOKEN = /[•·▪●∗*†‡§¶\u2460-\u2473\u24EA\u2776-\u2793]/;
+// Symbols a narrator would simply not say. Read Aloud 2: also "_" (a "____" fill-in line, a file name in the
+// margin) and "¹" (a footnote mark, or a wrong apostrophe glyph); the old filter of unmapped glyphs took them.
+const UNSPOKEN = /[•·▪●∗*†‡§¶_¹\u2460-\u2473\u24EA\u2776-\u2793]/;
 
 // Spelling these out beats hearing silence in a methods section.
 const GREEK = {
   'α': 'alpha', 'β': 'beta', 'γ': 'gamma', 'δ': 'delta', 'ε': 'epsilon',
   'θ': 'theta', 'λ': 'lambda', 'μ': 'mu', 'π': 'pi', 'ρ': 'rho',
   'σ': 'sigma', 'τ': 'tau', 'φ': 'phi', 'χ': 'chi', 'ψ': 'psi', 'ω': 'omega',
-  'Δ': 'delta', 'Σ': 'sum', 'Ω': 'omega', '°': ' degrees', '±': ' plus or minus ',
+  'Δ': 'delta', 'Σ': 'sum', 'Ω': 'omega', '°': ' degrees ', '±': ' plus or minus ',
   '×': ' by ', '≈': ' approximately ', '≤': ' at most ', '≥': ' at least ',
   '→': ' to ', '™': '', '®': '', '©': '',
   // Read Aloud 2: fractions ("½ mm per second" lost its ½: the unmapped-glyph filter dropped it)
@@ -912,17 +913,35 @@ function recomposeAccents(chars, owners) {
   return { chars: outChars, owners: outOwners };
 }
 
-function speakable(ch) {
+// Read Aloud 2: the start of a unit after a micro prefix ("μm", "μg", "μmol", "μs").
+const MICRO_UNIT = /^(mol|m|g|l|L|s|M|A|V|W|Hz|Pa)(?![A-Za-z])/;
+// Read Aloud 2: a sign a voice cannot say — an emoji, a skin tone, a flag letter, a pictograph. NFKC runs
+// first, so a sign that stands for letters ("㎜" is "mm") is kept as its letters.
+const PICTOGRAPH = /[\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\p{So}]/u;
+
+/**
+ * Read Aloud 2: is this Greek mu the micro sign of a unit ("5 μm", "3μs", "μmol")? Then the speech rewrite
+ * says it as "micro". `before` is the text pushed before it, `after` the text after it. "μOR" and
+ * "the μ value" stay the letter mu.
+ */
+function isMicro(before, after) {
+  return MICRO_UNIT.test(after) && (/\d ?$/.test(before) || /^(m|g|mol|l|L)(?![A-Za-z])/.test(after));
+}
+
+function speakable(ch, micro = false) {
+  if (ch === 'μ' && micro) return 'µ';
   if (UNSPOKEN.test(ch)) return ' ';
   if (GREEK[ch] !== undefined) return GREEK[ch];
   if (INVISIBLE.test(ch)) return '';
   const mapped = LIGATURES[ch];
   if (mapped !== undefined) return mapped;
   // Anything else exotic gets decomposed if that yields plain letters.
-  if (ch.charCodeAt(0) > 0x2000) {
+  // Read Aloud 2: a mathematical letter (𝑥, 𝛼) is one character of two code units; NFKC gives its plain letter.
+  if (ch.codePointAt(0) > 0x2000) {
     const norm = ch.normalize('NFKC');
-    if (norm !== ch) return norm;
+    if (norm !== ch) return GREEK[norm] !== undefined ? GREEK[norm] : norm;
   }
+  if (PICTOGRAPH.test(ch)) return ' ';
   return ch;
 }
 
@@ -966,15 +985,22 @@ class TracedText {
       // Record the offset inside the item too, so a highlight can cover a
       // single word rather than the whole text run.
       const base = token.offsetBase || 0;
-      for (let i = 0; i < token.str.length; i++) {
+      // Read Aloud 2: walk by character, not by code unit, so a character of two code units (𝑥) reaches
+      // speakable() whole. The offset stays in code units, and every entry of `chars` stays one code unit
+      // long, which finish() needs to keep the owners aligned.
+      const s = token.str;
+      for (let i = 0; i < s.length;) {
+        const cp = String.fromCodePoint(s.codePointAt(i));
         const owner = { page: token.page, item: token.item, offset: base + i };
         // One source character can expand to several spoken ones (the "ﬃ" in
         // "association" is a single glyph in the PDF). Every expanded
         // character keeps pointing at the glyph it came from.
-        for (const ch of speakable(token.str[i])) {
+        const micro = cp === 'μ' && isMicro(this.chars.slice(-2).join(''), s.slice(i + cp.length, i + cp.length + 4));
+        for (const ch of speakable(cp, micro).split('')) {
           this.chars.push(ch);
           this.owners.push(owner);
         }
+        i += cp.length;
       }
     }
   }
@@ -987,10 +1013,22 @@ class TracedText {
     this.owners.push({ page: last.page, item: last.item, offset: last.offset + 1 });
   }
 
-  /** Drop the final `n` characters (used to undo a trailing hyphen). */
+  /** Drop the final `n` characters. */
   trimEnd(n) {
     this.chars.length = Math.max(0, this.chars.length - n);
     this.owners.length = this.chars.length;
+  }
+
+  /** Read Aloud 2: drop the spaces at the end of the buffer. */
+  trimSpaces() {
+    while (this.chars.length && /\s/.test(this.chars[this.chars.length - 1])) this.trimEnd(1);
+  }
+
+  /** Read Aloud 2: undo a line-end hyphen — the spaces after it, then the hyphen itself, if there is one (a soft
+   *  hyphen leaves nothing in the buffer). */
+  trimHyphen() {
+    this.trimSpaces();
+    if (this.chars[this.chars.length - 1] === '-') this.trimEnd(1);
   }
 
   isEmpty() {
@@ -1131,7 +1169,13 @@ function traceToSentences(traced, sectionIndex) {
 
     const candidate = text.slice(start, end);
     // Don't break on "et al." or a decimal like "0.5"
-    if (abbrevRe.test(candidate.trim()) || /\d\.$/.test(candidate.trim())) continue;
+    // Read Aloud 2: only a list marker holds the sentence together: "1." at the start of a sentence, or a
+    // number of 1 or 2 digits followed by its item, which starts with a digit or a small letter
+    // ("…length 4. 25/.04 to…"). A number at a sentence end ("…was 120. The next…", "…on p. 12. The
+    // next…") ends it. A decimal ("0.5") has no space after its dot, so it never gets here.
+    const listMarker = /^\d{1,2}\.$/.test(candidate.trim()) ||
+      (/\s\d{1,2}\.$/.test(candidate.trim()) && /^ +[0-9a-z]/.test(text.slice(end, end + 4)));
+    if (abbrevRe.test(candidate.trim()) || listMarker) continue;
 
     bounds.push([start, end]);
     start = end;
@@ -1163,7 +1207,7 @@ function traceToSentences(traced, sectionIndex) {
       if (b - from > MAX_BLOCK * 1.6) {
         const limit = from + MAX_BLOCK;
         let cut = -1;
-        for (const mark of ['; ', ' — ', ', ']) {
+        for (const mark of ['; ', ' - ', ', ']) {  // the dash is already '-' (LIGATURES)
           const found = text.lastIndexOf(mark, limit);
           if (found > from + 120) { cut = found + mark.length; break; }
         }
@@ -1207,6 +1251,30 @@ function traceToSentences(traced, sectionIndex) {
  * Streamed document builder. Feed it pages as they're read; it appends
  * sentences and sections so playback can start before parsing finishes.
  */
+// Read Aloud 2: left parts that English joins to a whole word with a hyphen ("well-known", "self-esteem"),
+// where the word list also has the closed form.
+const HYPHEN_PREFIXES = new Set(['self', 'well']);
+// Read Aloud 2: a prefix keeps its hyphen before a word that starts with the prefix's own last vowel
+// ("re-entry", "co-operation", "pre-existing", "anti-inflammatory"). Before another letter it is a cut word
+// ("re-" + "search" is "research", "re-" + "port" is "report"), so it is joined.
+const VOWEL_PREFIXES = new Set(['re', 'pre', 'de', 'co', 'anti', 'semi', 'multi']);
+
+/**
+ * Is the hyphen at the end of `text` part of a real compound ("evidence-" + "based"), not a word cut at the
+ * line end ("exam-" + "ination")? A soft hyphen is always a cut. A compound has a word on each side, and
+ * its closed form is not a word — or its left part is one that English joins with a hyphen.
+ */
+function keepsHyphen(text, next) {
+  const m = /([A-Za-z]+)[-\u2010\u2011]$/.exec(text);
+  const right = /^[a-z]+/.exec(next);
+  if (!m || !right) return false;
+  const left = m[1], r = right[0];
+  const prefix = left.toLowerCase();
+  if (VOWEL_PREFIXES.has(prefix) && r[0] === prefix[prefix.length - 1] && r.length >= 3 && isWord(r)) return true;
+  if (left.length < 2 || r.length < 3 || !isWord(left) || !isWord(r)) return false;
+  return !isWord(left + r) || (HYPHEN_PREFIXES.has(left.toLowerCase()) && r.length >= 5);
+}
+
 export class DocumentBuilder {
   constructor(options = {}) {
     this.options = {
@@ -1480,7 +1548,8 @@ export class DocumentBuilder {
       // Only when the next line really is the continuation: a lowercase start,
       // and not a line we are about to skip. Otherwise "den-" fuses with
       // whatever survives the skip and you get "den- sues in the".
-      if (/[a-z]-$/.test(text) && i + 1 < lines.length) {
+      // Read Aloud 2: also a soft hyphen or the hyphen sign U+2010 / U+2011.
+      if (/[a-z][-\u00AD\u2010\u2011]$/.test(text) && i + 1 < lines.length) {
         const next = lines[i + 1].text;
         const nextKey = next.replace(/\d+/g, '#').toLowerCase().trim();
         const nextSkipped = this.repeated.has(nextKey) || isPageNumber(next) ||
@@ -1489,7 +1558,8 @@ export class DocumentBuilder {
 
         if (/^[a-z]/.test(next) && !nextSkipped) {
           this.buffer.push(line.tokens);
-          this.buffer.trimEnd(1);
+          if (keepsHyphen(text, next)) this.buffer.trimSpaces();
+          else this.buffer.trimHyphen();
           continue;
         }
         // Not a real continuation: keep the hyphen and treat it as a line end.
@@ -1574,6 +1644,7 @@ function repairSplitWords(chars, owners) {
  * can publish partial results; the tests pass nothing.
  */
 export async function buildDocument(doc, options = {}, onPage = null) {
+  resetRepairs();  // Read Aloud 2: the ligature record of the last document does not decide this one
   const builder = new DocumentBuilder(options);
   const total = doc.numPages;
   builder.setTotalPages(total);
