@@ -189,6 +189,8 @@ function nextTick(handle, fn) {
 }
 
 function cancelTick(handle) {
+  clearTimeout(handle.tail);
+  handle.tail = null;
   if (handle.raf == null) return;
   if (handle.tickIsTimer) clearTimeout(handle.raf);
   else cancelAnimationFrame(handle.raf);
@@ -221,10 +223,12 @@ function playBuffer(ctx, buffer, sentence, rate, handle, { onWord, onEnd }) {
     schedule = schedule.map((w, i) => (starts[i] === null ? null : { ...w, at: starts[i] / rate })).filter(Boolean);
   }
   const startedAt = ctx.currentTime;
+  // The ear hears the sound this much later than the clock says (Bluetooth headphones: about 0.2 s).
+  const delay = ctx.outputLatency || ctx.baseLatency || 0;
   let cursor = 0;
 
   const tick = () => {
-    const elapsed = ctx.currentTime - startedAt;
+    const elapsed = ctx.currentTime - startedAt - delay;
     while (cursor < schedule.length && schedule[cursor].at <= elapsed) {
       const s = schedule[cursor++];
       onWord?.(s.start, s.end - s.start);
@@ -233,9 +237,18 @@ function playBuffer(ctx, buffer, sentence, rate, handle, { onWord, onEnd }) {
   };
   nextTick(handle, tick);
 
+  // The clip ends; the ear hears its end `delay` later. The words go on until then, and then the sentence ends.
   source.onended = () => {
-    cancelTick(handle);
-    if (handle.source === source) { handle.source = null; onEnd?.(); }
+    if (handle.source !== source) return;
+    handle.tail = setTimeout(() => {
+      handle.tail = null;
+      if (handle.source !== source) return;
+      tick();
+      cancelTick(handle);
+      while (cursor < schedule.length) { const s = schedule[cursor++]; onWord?.(s.start, s.end - s.start); }
+      handle.source = null;
+      onEnd?.();
+    }, delay * 1000);
   };
 
   handle.source = source;
@@ -405,24 +418,51 @@ export class KokoroEngine {
 
 /* ------------------------------------------- Read Aloud 2: voices from this Mac */
 
+/** An error that means: the voice server does not answer (connection refused, or no answer in the time limit). */
+function notAnswering(message) {
+  const err = new Error('the voice server does not answer: ' + message);
+  err.down = true;
+  return err;
+}
+
 /**
  * Kokoro running natively on this Mac (voice-server.py, port 8793) instead of in the browser:
  * no 312 MB download, and several times faster. Same playback and word timing as KokoroEngine.
+ * When the server stops answering in the middle of a book, the Mac voice reads on; the natural voice comes back
+ * at the start of a sentence when the server answers again.
  */
 export class ServerEngine extends KokoroEngine {
   static SERVER = 'http://127.0.0.1:8793';
+  static WAIT_MS = 30000;    // time limit for a sentence someone waits to hear
+  static AHEAD_MS = 120000;  // time limit for read-ahead (the server makes it only when nobody waits)
+  static INIT_MS = 3000;     // time limit for the voice list
+  static RETRY_MS = 5000;    // while the server is down, ask it again at most this often, at a sentence start
+  static MAC_LABEL = 'Mac voice (the natural voice does not answer)';
 
   constructor() {
     super();
     this.label = 'Natural voice (on your Mac)';
     this.voices = KokoroEngine.VOICES;
+    this.requests = new Map();  // key -> { job, ac, ahead }: the voice requests that are open now
+    this.down = false;          // true: the server did not answer, the Mac voice reads
+    this.mac = null;
+    this.wake = null;           // ends the wait of speak() for the sound that plays now
+    this.asking = false;        // a question "are you back?" to the server is open or was asked a moment ago
   }
 
   get available() { return true; }
 
+  /** fetch() that ac cancels; a refused connection is "does not answer". With ms: its own time limit. */
+  static #ask(url, ac, ms = 0) {
+    const timer = ms && setTimeout(() => ac.abort(notAnswering(`no answer in ${ms / 1000} s`)), ms);
+    return fetch(url, { signal: ac.signal })
+      .catch(err => { throw ac.signal.aborted ? ac.signal.reason : notAnswering(err.message); })
+      .finally(() => clearTimeout(timer));
+  }
+
   init() {
     if (this.ready) return Promise.resolve(true);
-    return fetch(ServerEngine.SERVER + '/voices').then(r => r.json()).then(({ voices }) => {
+    return ServerEngine.#ask(ServerEngine.SERVER + '/voices', new AbortController(), ServerEngine.INIT_MS).then(r => r.json()).then(({ voices }) => {
       this.voices = voices.map(v => ({ id: v.id, label: `${v.label} · ${v.accent}` }));
       this.ready = true;
       return true;
@@ -431,24 +471,91 @@ export class ServerEngine extends KokoroEngine {
 
   listVoices() { return this.voices; }
 
-  async render(sentence, voiceId, ahead = false) {
+  render(sentence, voiceId, ahead = false) {
     const key = voiceId + '\u0000' + sentence.text;
-    if (this.cache.has(key)) return this.cache.get(key);
-    if (this.inflight.has(key)) return this.inflight.get(key);
-    const url = `${ServerEngine.SERVER}/speak?voice=${encodeURIComponent(voiceId)}&text=${encodeURIComponent(sentence.text)}${ahead ? '&ahead=3' : ''}`;
-    const job = fetch(url).then(r => { if (!r.ok) throw new Error('voice server: ' + r.status); return r.arrayBuffer(); })
+    if (this.cache.has(key)) return Promise.resolve(this.cache.get(key));
+    const open = this.requests.get(key);
+    if (open) {
+      if (!ahead && open.ahead) this.#want(open);
+      return open.job;
+    }
+    const ac = new AbortController();
+    const entry = { ac, ahead, voiceId, text: sentence.text, timer: null, tries: 0 };
+    entry.job = new Promise((resolve, reject) => {
+      Object.assign(entry, { resolve, reject });
+      ac.signal.addEventListener('abort', () => reject(ac.signal.reason));
+    }).then(data => {
+      this.cache.set(key, data);
+      if (this.cache.size > 60) this.cache.delete(this.cache.keys().next().value);
+      return data;
+    }).catch(err => {
+      if (err?.down) this.#fall();
+      throw err;
+    }).finally(() => {
+      clearTimeout(entry.timer);
+      if (this.requests.get(key) === entry) this.requests.delete(key);
+    });
+    this.requests.set(key, entry);
+    this.#limit(entry);
+    this.#try(entry, ahead);
+    return entry.job;
+  }
+
+  /**
+   * A sentence asked as read-ahead is wanted now. Its request stays open: the server may be making it already, and
+   * a started sentence is never stopped. A second request without the read-ahead mark goes before newer read-ahead
+   * on the server. The first answer counts; the server makes the sentence only once (it keeps what it made).
+   * From now on the time limit of a wanted sentence counts.
+   */
+  #want(entry) {
+    entry.ahead = false;
+    this.#limit(entry);
+    this.#try(entry, false);
+  }
+
+  /** A wanted sentence with no answer in time means the server is down; a late read-ahead only waited its turn. */
+  #limit(entry) {
+    clearTimeout(entry.timer);
+    const ms = entry.ahead ? ServerEngine.AHEAD_MS : ServerEngine.WAIT_MS;
+    const ahead = entry.ahead;
+    entry.timer = setTimeout(() => entry.ac.abort(ahead ? new Error('read-ahead took too long')
+      : notAnswering(`no answer in ${ms / 1000} s`)), ms);
+  }
+
+  /** One request for the sound and the word timing of entry; entry ends with the first answer, or the last failure. */
+  #try(entry, ahead) {
+    const { ac } = entry;
+    const query = `voice=${encodeURIComponent(entry.voiceId)}&text=${encodeURIComponent(entry.text)}${ahead ? '&ahead=3' : ''}`;
+    const get = path => ServerEngine.#ask(`${ServerEngine.SERVER}/${path}?${query}`, ac);
+    entry.tries++;
+    get('speak').then(r => { if (!r.ok) throw new Error('voice server: ' + r.status); return r.arrayBuffer(); })
       .then(buf => Promise.all([new OfflineAudioContext(1, 1, 24000).decodeAudioData(buf),
-        fetch(url.replace('/speak?', '/times?')).then(r => r.json()).catch(() => ({}))]))
-      .then(([b, t]) => {
-        const data = { audio: b.getChannelData(0), sampleRate: b.sampleRate, starts: t.starts || null };
-        this.cache.set(key, data);
-        if (this.cache.size > 60) this.cache.delete(this.cache.keys().next().value);
-        this.inflight.delete(key);
-        return data;
-      })
-      .catch(err => { this.inflight.delete(key); throw err; });
-    this.inflight.set(key, job);
-    return job;
+        // No word timing from the server: the timing is estimated. A cancel is not "no word timing".
+        get('times').then(r => r.json()).catch(err => { if (ac.signal.aborted) throw ac.signal.reason; return {}; })]))
+      .then(([b, t]) => entry.resolve({ audio: b.getChannelData(0), sampleRate: b.sampleRate, starts: t.starts || null }),
+        err => { if (--entry.tries === 0) entry.reject(ac.signal.aborted ? ac.signal.reason : err); });
+  }
+
+  /** The server did not answer: the Mac voice reads, and the status says so. */
+  #fall() {
+    if (this.down) return;
+    this.down = true;
+    this.device = ServerEngine.MAC_LABEL;
+    this.#wait();
+  }
+
+  #wait() {
+    this.asking = true;
+    setTimeout(() => { this.asking = false; }, ServerEngine.RETRY_MS);
+  }
+
+  /** At a sentence start while the server is down: ask it (at most every RETRY_MS) if it answers again. */
+  #askBack() {
+    if (this.asking) return;
+    this.asking = true;
+    ServerEngine.#ask(ServerEngine.SERVER + '/voices', new AbortController(), ServerEngine.INIT_MS)
+      .then(r => { if (!r.ok) throw new Error('voice server: ' + r.status); this.down = false; this.device = null; this.asking = false; })
+      .catch(() => this.#wait());
   }
 
   // A paragraph is spoken as its first five words, then the rest: the voice starts after the short piece
@@ -461,30 +568,69 @@ export class ServerEngine extends KokoroEngine {
   }
 
   prefetch(sentence, voiceId) {
-    if (sentence) for (const p of ServerEngine.parts(sentence.text)) this.render(p, voiceId, true).catch(() => {});
+    if (!sentence || this.down) return;
+    for (const p of ServerEngine.parts(sentence.text)) this.render(p, voiceId, true).catch(() => {});
   }
 
-  async speak(sentence, { voiceId, rate, onWord, onEnd, onError }) {
-    this.stop();
+  /** Read text with the Mac voice; `at` is where the text starts in the whole sentence (for the word highlight). */
+  #macSpeak(text, at, { rate, onWord, onEnd, onError }) {
+    if (!this.mac) this.mac = new SystemEngine();
+    if (!this.mac.available) { onError?.('no voice answers'); return; }
+    if (!this.mac.voices.length) this.mac.voices = this.mac.synth.getVoices();
+    this.mac.speak({ text }, {
+      voiceId: this.mac.listVoices()[0]?.id, rate,
+      onWord: (start, len) => onWord?.(start + at, len), onEnd, onError
+    });
+  }
+
+  async speak(sentence, opts) {
+    const { voiceId, rate, onWord, onEnd, onError } = opts;
+    this.#halt(false);
     const token = this.token;
+    if (this.down) {
+      this.#askBack();  // the answer counts from the next sentence: a sentence is never cut in two voices
+      this.#macSpeak(sentence.text, 0, opts);
+      return;
+    }
     const parts = ServerEngine.parts(sentence.text);
     const jobs = parts.map((p) => this.render(p, voiceId));  // the first is asked for first
+    for (const j of jobs) j.catch(() => {});  // a failed second piece is handled below, not left unhandled
     if (!this.ctx) this.ctx = new AudioContext();
     if (this.ctx.state === 'suspended') this.ctx.resume();
+    let k = 0;
     try {
-      for (let k = 0; k < parts.length; k++) {
+      for (; k < parts.length; k++) {
         const { audio, sampleRate, starts } = await jobs[k];
         if (token !== this.token) return;
         const buffer = this.ctx.createBuffer(1, audio.length, sampleRate);
         buffer.copyToChannel(audio, 0);
         const at = parts[k].at;
-        await new Promise((done) => playBuffer(this.ctx, buffer, { ...parts[k], starts }, rate, this.handle,
-          { onWord: (start, len) => onWord?.(start + at, len), onEnd: done }));
+        await new Promise((done) => {
+          this.wake = done;  // stop() ends this wait: the sound's own end never comes then
+          playBuffer(this.ctx, buffer, { ...parts[k], starts }, rate, this.handle,
+            { onWord: (start, len) => onWord?.(start + at, len), onEnd: done });
+        });
         if (token !== this.token) return;
       }
       onEnd?.();
     } catch (err) {
-      if (token === this.token) onError?.(err.message || String(err));
+      if (token !== this.token) return;
+      if (err?.down) this.#macSpeak(sentence.text.slice(parts[k].at), parts[k].at, opts);
+      else onError?.(err.message || String(err));
     }
   }
+
+  /** Silence; cancel the requests nobody wants now. all=false (a new sentence starts): keep the read-ahead. */
+  #halt(all) {
+    super.stop();
+    this.mac?.stop();
+    const wake = this.wake;
+    this.wake = null;
+    wake?.();
+    for (const [key, r] of this.requests) {
+      if (all || !r.ahead) { this.requests.delete(key); r.ac.abort(new Error('stopped')); }
+    }
+  }
+
+  stop() { this.#halt(true); }
 }
