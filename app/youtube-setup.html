@@ -8,15 +8,14 @@
 <link rel="icon" href="icon.png">
 <link rel="stylesheet" href="library.css">
 <style>
-  main { max-width: 760px; margin: 0 auto; font-size: 19px; line-height: 1.6; }
+  main { max-width: 760px; margin: 0 auto; font-size: var(--text-20); line-height: var(--leading-read); }
   ol.steps { padding-left: 0; list-style: none; counter-reset: s; }
-  ol.steps > li { counter-increment: s; position: relative; padding: 14px 16px 14px 70px; margin: 0 0 14px; background: var(--card); border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-  ol.steps > li::before { content: counter(s); position: absolute; left: 16px; top: 14px; width: 40px; height: 40px; border-radius: 50%; background: #e11d48; color: #fff; font-weight: 800; font-size: 22px; display: grid; place-items: center; }
-  ol.steps b { color: var(--fg); }
-  .path { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--line); font-size: 17px; }
-  .note { padding: 12px 16px; border-radius: 10px; background: #fef3c7; color: #78350f; font-size: 17px; }
-  @media (prefers-color-scheme: dark) { .note { background: #3b2f0b; color: #fde68a; } }
-  a.btn { display: inline-block; text-decoration: none; line-height: 40px; }
+  ol.steps > li { counter-increment: s; position: relative; padding: var(--space-4) var(--space-4) var(--space-4) 72px; margin: 0 0 var(--space-4); background: var(--color-surface); border-radius: var(--radius-2); box-shadow: var(--shadow-1); }
+  ol.steps > li::before { content: counter(s); position: absolute; left: var(--space-4); top: var(--space-4); width: var(--control-m); height: var(--control-m); border-radius: 50%; background: var(--color-action); color: var(--color-on-action); font-weight: 800; font-size: var(--text-20); display: grid; place-items: center; }
+  ol.steps b { color: var(--color-text); }
+  .path { display: inline-block; padding: 2px var(--space-2); border-radius: var(--radius-1); background: var(--color-surface-raised); font-size: var(--text-16); }
+  .note { padding: var(--space-3) var(--space-4); border-radius: var(--radius-1); background: var(--color-notice-bg); color: var(--color-notice-text); font-size: var(--text-16); }
+  a.btn { display: inline-block; text-decoration: none; line-height: var(--control-m); }
 </style>
 </head>
 <body>

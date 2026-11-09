@@ -189,14 +189,20 @@ const lum = (hex) => {
 };
 const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
 
+// Since ticket 20 the colours of library.css are tokens: read their values in extension/pdf/tokens.css.
+const TOKENS = readFileSync(fileURLToPath(new URL('../../extension/pdf/tokens.css', import.meta.url)), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+const tokenMode = (block) => Object.fromEntries([...block.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+const LIGHT = tokenMode(/^:root\s*\{([\s\S]*?)\n\}/m.exec(TOKENS)[1]);
+const DARK = { ...LIGHT, ...tokenMode(/prefers-color-scheme: dark\)\s*\{\s*:root\s*\{([^}]*)\}/.exec(TOKENS)[1]) };
+const hexOf = (mode, v) => (v.startsWith('var(') ? hexOf(mode, mode[/var\((--[\w-]+)\)/.exec(v)[1]]) : v);
+
 test('the cover placeholder has a contrast of 4 to 1 or more, light and dark', () => {
   const css = readFileSync(APP + 'library.css', 'utf8');
-  const light = css.match(/^\.cover \{[^}]*\}/m)[0];
-  const fg = light.match(/[^-]color: (#[0-9a-f]{6})/i)[1];
-  const bg = light.match(/background: (#[0-9a-f]{6})/i)[1];
-  assert.ok(ratio(fg, bg) >= 4, `light: ${fg} on ${bg} = ${ratio(fg, bg).toFixed(2)}`);
-  const dark = css.match(/prefers-color-scheme: dark\) \{ \.cover \{([^}]*)\}/)[1];
-  const dbg = dark.match(/background-color: (#[0-9a-f]{6})/i)[1];
-  const dfg = (dark.match(/[^-]color: (#[0-9a-f]{6})/i) || [, fg])[1];
-  assert.ok(ratio(dfg, dbg) >= 4, `dark: ${dfg} on ${dbg} = ${ratio(dfg, dbg).toFixed(2)}`);
+  const cover = css.match(/^\.cover \{[^}]*\}/m)[0];
+  const fgVar = cover.match(/[^-]color: (var\(--[\w-]+\))/)[1];
+  const bgVar = cover.match(/background: (var\(--[\w-]+\))/)[1];
+  for (const [name, mode] of [['light', LIGHT], ['dark', DARK]]) {
+    const fg = hexOf(mode, fgVar), bg = hexOf(mode, bgVar);
+    assert.ok(ratio(fg, bg) >= 4, `${name}: ${fg} on ${bg} = ${ratio(fg, bg).toFixed(2)}`);
+  }
 });

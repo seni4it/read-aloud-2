@@ -1,0 +1,186 @@
+/* Read Aloud 2 design tokens: the one place for colours, type sizes, spacing, corner radii, shadows, motion times
+   and the focus ring of every screen (ticket 20).
+   - The reader loads it from styles.css (`@import url("tokens.css")`): the add-on serves it at pdf/tokens.css and
+     the voice server serves the same file at /reader/tokens.css.
+   - The popup and the paste page import "pdf/tokens.css"; the library pages import "/reader/tokens.css".
+     So one file serves all screens, and no copy exists. tests/node/design-tokens.test.mjs checks it.
+   - No other style file or <style> block holds a colour value: it uses the semantic tokens below.
+   Three layers: primitive values (--navy-900), then semantic tokens (--color-text) with a light and a dark mode. */
+
+:root {
+  /* ---------- primitives: colour ---------- */
+  --navy-950: #0f172a;
+  --navy-900: #10233f;
+  --navy-400: #42679b;
+  --orange-500: #ff8c00;
+  --orange-400: #ffa033;
+  --orange-700: #c25e00;
+  --neutral-0: #ffffff;
+  --neutral-50: #f4f5f7;
+  --neutral-100: #e8eef4;
+  --neutral-200: #e2e8f0;
+  --neutral-300: #a9b8c6;
+  --neutral-400: #94a3b8;
+  --neutral-450: #7b8aa0;
+  --neutral-500: #64748b;
+  --neutral-550: #5f738a;
+  --neutral-600: #475569;
+  --neutral-800: #223140;
+  --neutral-850: #18222d;
+  --neutral-950: #0e141b;
+  --blue-600: #2563eb;
+  --blue-500: #3b82f6;
+  --blue-300: #6ea8ff;
+  --red-700: #b91c1c;
+  --red-400: #f87171;
+  --amber-100: #fef3c7;
+  --amber-900: #78350f;
+  --amber-200: #fde68a;
+  --amber-950: #3b2f0b;
+  --yellow-500: #eab308;
+  --green-600: #16a34a;
+  --pink-600: #db2777;
+
+  /* ---------- semantic colours: light mode ---------- */
+  --color-bg: var(--neutral-50);            /* page background */
+  --color-surface: var(--neutral-0);        /* cards, bars, panels */
+  --color-surface-raised: var(--neutral-100); /* selected row, sunken field, cover placeholder */
+  --color-text: var(--navy-950);
+  --color-text-muted: var(--neutral-600);
+  --color-text-faint: var(--neutral-500);   /* large placeholder text only (28 px cover letters, page labels) */
+  --color-line: var(--neutral-200);         /* dividers: decoration, not a control edge */
+  --color-control-border: var(--neutral-450); /* the edge of an input, a select, a quiet button: 3 to 1 or more */
+  --color-hover: rgba(15, 23, 42, 0.06);
+  --color-action: var(--navy-900);          /* the filled main button that is not play */
+  --color-on-action: var(--neutral-0);
+  --color-chrome: var(--navy-900);          /* the navy player bar, the selection bar */
+  --color-on-chrome: var(--neutral-0);
+  --color-on-chrome-muted: rgba(255, 255, 255, 0.75);
+  --color-chrome-hover: rgba(255, 255, 255, 0.14);
+  --color-chrome-field: rgba(255, 255, 255, 0.1);
+  --color-chrome-line: rgba(255, 255, 255, 0.2);
+  --color-menu-text: var(--navy-950);       /* the open list of a select on the navy bar: the system draws it light */
+  --color-play: var(--orange-500);          /* orange: the play button only */
+  --color-play-hover: var(--orange-400);
+  --color-on-play: var(--navy-950);
+  --color-progress: var(--orange-700);      /* orange: progress marks only (darker in light mode for 3 to 1) */
+  --color-word: var(--orange-500);          /* orange: the word highlight */
+  --color-on-word: var(--navy-950);
+  --color-sentence: rgba(255, 140, 0, 0.18);
+  --word-opacity: 0.75;
+  --word-blend: multiply;
+  --mark-blend: multiply;
+  --color-focus: var(--blue-500);
+  --color-selection: rgba(37, 99, 235, 0.2);
+  --color-danger: var(--red-700);
+  --color-danger-soft: rgba(185, 28, 28, 0.06);
+  --color-notice-bg: var(--amber-100);
+  --color-notice-text: var(--amber-900);
+  --color-page: var(--neutral-0);           /* the paper of a PDF page: white in both modes (it is content) */
+  --color-on-page: var(--neutral-500);
+  --color-scrim: rgba(16, 35, 63, 0.6);
+  --color-scrim-strong: rgba(16, 35, 63, 0.85);
+  --color-icon: var(--navy-900);            /* the brand mark */
+  /* the four highlight groups: the line colour, and its fill under the text */
+  --hl-yellow: var(--yellow-500);
+  --hl-green: var(--green-600);
+  --hl-blue: var(--blue-600);
+  --hl-pink: var(--pink-600);
+  --hl-yellow-fill: rgba(250, 204, 21, 0.32);
+  --hl-green-fill: rgba(34, 197, 94, 0.22);
+  --hl-blue-fill: rgba(59, 130, 246, 0.2);
+  --hl-pink-fill: rgba(236, 72, 153, 0.2);
+
+  /* ---------- type: 12, 14, 16, 20, 28 px; line heights in steps of 4 px ---------- */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --text-12: 12px;  --leading-12: 16px;
+  --text-14: 14px;  --leading-14: 20px;
+  --text-16: 16px;  --leading-16: 24px;
+  --text-20: 20px;  --leading-20: 28px;
+  --text-28: 28px;  --leading-28: 32px;
+  --leading-read: 32px;                     /* 20 px reading text on the paste page */
+
+  /* ---------- spacing: steps of 4 and 8 px ---------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ---------- control heights ---------- */
+  --control-s: 32px;
+  --control-m: 40px;
+  --control-l: 48px;
+
+  /* ---------- corner radii: two sizes, plus round and the small mark on text ---------- */
+  --radius-1: 8px;                          /* controls, fields, notes */
+  --radius-2: 12px;                         /* cards, panels; = radius-1 + 4 px inner gap */
+  --radius-round: 999px;                    /* pills and round buttons */
+  --radius-mark: 2px;                       /* marks on the page text and the page itself */
+
+  /* ---------- shadows: black, only the alpha changes ---------- */
+  --shadow-1: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.08), 0 8px 24px rgba(0, 0, 0, 0.06);
+  --shadow-3: 0 8px 24px rgba(0, 0, 0, 0.3);
+  --shadow-bar: 0 -6px 24px rgba(0, 0, 0, 0.18);
+
+  /* ---------- motion ---------- */
+  --dur-hover: 100ms;                       /* hover and press feedback */
+  --dur-move: 200ms;                        /* a bar or a panel that changes size */
+  --dur-word: 90ms;                         /* the word box that moves with the voice */
+  --dur-flash: 1200ms;                      /* a highlight that is found in the list flashes on the page */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+
+  /* ---------- focus ring ---------- */
+  --focus-width: 3px;
+  --focus-offset: 2px;
+  --focus-ring: var(--focus-width) solid var(--color-focus);
+}
+
+/* ---------- semantic colours: dark mode (the background is darkest, cards lighter, no light surface) ---------- */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: var(--neutral-950);
+    --color-surface: var(--neutral-850);
+    --color-surface-raised: var(--neutral-800);
+    --color-text: var(--neutral-100);
+    --color-text-muted: var(--neutral-300);
+    --color-text-faint: var(--neutral-400);
+    --color-line: var(--neutral-800);
+    --color-control-border: var(--neutral-550);
+    --color-hover: rgba(255, 255, 255, 0.06);
+    --color-action: var(--navy-400);
+    --color-progress: var(--orange-500);
+    --color-sentence: rgba(255, 140, 0, 0.18);
+    --word-opacity: 0.6;
+    --word-blend: screen;
+    --mark-blend: screen;
+    --color-focus: var(--blue-300);
+    --color-selection: rgba(110, 168, 255, 0.3);
+    --color-danger: var(--red-400);
+    --color-danger-soft: rgba(248, 113, 113, 0.1);
+    --color-notice-bg: var(--amber-950);
+    --color-notice-text: var(--amber-200);
+    --color-icon: var(--neutral-100);
+    --shadow-1: 0 1px 3px rgba(0, 0, 0, 0.5);
+    --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.5), 0 10px 30px rgba(0, 0, 0, 0.4);
+    --shadow-3: 0 8px 24px rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* ---------- the one base rule: a visible focus ring on every control of every screen ---------- */
+:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-offset); }
+
+/* ---------- reduced motion: every motion time becomes 0 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-hover: 0ms;
+    --dur-move: 0ms;
+    --dur-word: 0ms;
+    --dur-flash: 0ms;
+  }
+}

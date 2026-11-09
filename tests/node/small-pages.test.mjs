@@ -52,9 +52,13 @@ function fontSize(decls) {
   let size = null;
   for (const d of decls.filter(valid)) {
     if (d.prop === 'font-size') size = d.value;
-    if (d.prop === 'font') size = /(\d+(?:\.\d+)?px)/.exec(d.value)?.[1] ?? null;
+    if (d.prop === 'font') size = /(\d+(?:\.\d+)?px|var\(--text-\d+\))/.exec(d.value)?.[1] ?? null;
   }
-  return size;
+  // Since ticket 20 a size is a token of extension/pdf/tokens.css: var(--text-16) is 16px.
+  return size && size.replace(/^var\(--text-(\d+)\)$/, (_, n) => {
+    const tokens = readFileSync(fileURLToPath(new URL('../../extension/pdf/tokens.css', import.meta.url)), 'utf8');
+    return new RegExp(`--text-${n}:\\s*([^;]+);`).exec(tokens)[1].trim();
+  });
 }
 
 test('popup: each of the 6 switches is inside a label, so a click on its words changes it', () => {

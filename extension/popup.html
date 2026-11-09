@@ -3,21 +3,20 @@
 <head>
 <meta charset="utf-8">
 <style>
-  :root { --bg:#fff; --fg:#0f172a; --muted:#475569; --line:#e2e8f0; --acc:#FF8C00; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#0e141b; --fg:#e8eef4; --muted:#a9b8c6; --line:#223140; } }
-  body { margin: 0; width: 320px; background: var(--bg); color: var(--fg); font: 15px/1.5 -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; }
-  main { padding: 14px; display: grid; gap: 12px; }
-  h1 { font-size: 17px; margin: 0; }
-  .big { height: 48px; border: 0; border-radius: 999px; background: var(--acc); color: #111; font: inherit; font-weight: 700; font-size: 16px; cursor: pointer; }
-  .big:hover { filter: brightness(1.08); }
-  label.f { display: grid; gap: 4px; color: var(--muted); font-size: 13px; }
-  select, input[type=range] { width: 100%; font: inherit; accent-color: var(--acc); }
-  select { padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
-  .sw { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-  .sw input { width: 20px; height: 20px; accent-color: var(--acc); }
+  @import url("pdf/tokens.css");
+  body { margin: 0; width: 320px; background: var(--color-surface); color: var(--color-text); font: var(--text-16)/var(--leading-16) var(--font-ui); }
+  main { padding: var(--space-4); display: grid; gap: var(--space-3); }
+  h1 { font-size: var(--text-20); line-height: var(--leading-20); margin: 0; }
+  .big { height: var(--control-l); border: 0; border-radius: var(--radius-round); background: var(--color-play); color: var(--color-on-play); font: inherit; font-weight: 700; font-size: var(--text-16); cursor: pointer; transition: background-color var(--dur-hover) var(--ease-out); }
+  .big:hover { background: var(--color-play-hover); }
+  label.f { display: grid; gap: var(--space-1); color: var(--color-text-muted); font-size: var(--text-14); }
+  select, input[type=range] { width: 100%; font: inherit; accent-color: var(--color-action); }
+  select { padding: var(--space-2); border: 1px solid var(--color-control-border); border-radius: var(--radius-1); background: var(--color-surface); color: var(--color-text); }
+  .sw { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
+  .sw input { width: 20px; height: 20px; accent-color: var(--color-action); }
   .sw[hidden] { display: none; }
-  .links { display: flex; gap: 12px; flex-wrap: wrap; font-size: 14px; } a { color: var(--fg); }
-  #server { font-size: 13px; color: var(--muted); } #server b { color: var(--fg); }
+  .links { display: flex; gap: var(--space-3); flex-wrap: wrap; font-size: var(--text-14); } a { color: var(--color-text); }
+  #server { font-size: var(--text-14); color: var(--color-text-muted); } #server b { color: var(--color-text); }
 </style>
 </head>
 <body>
