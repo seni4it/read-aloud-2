@@ -49,8 +49,11 @@ body {
 .doc-title {
   flex: 1 1 auto;
   min-width: 0;
-  color: var(--color-text-muted);
-  font-size: var(--text-14);
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--text-16);
+  line-height: var(--leading-16);
+  font-weight: 650;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -68,6 +71,12 @@ body {
   font: inherit;
   font-size: var(--text-14);
   font-weight: 550;
+  line-height: var(--leading-14);
+  min-height: var(--control-s);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
   cursor: pointer;
   transition: filter var(--dur-hover) var(--ease-out), background-color var(--dur-hover) var(--ease-out);
 }
@@ -81,8 +90,6 @@ body {
 }
 
 .btn.ghost:hover { filter: none; background: var(--color-hover); }
-
-.btn.small { padding: var(--space-1) var(--space-3); font-size: var(--text-12); width: 100%; }
 
 .icon-btn {
   appearance: none;
@@ -101,14 +108,13 @@ body {
 
 .icon-btn:hover { background: var(--color-hover); }
 
-/* ---------- parsing progress ---------- */
+/* ---------- read-in progress: a thin line under the top bar (ticket 22); its words are in the settings panel ---------- */
 
 .parse-bar {
   position: relative;
-  height: 24px;
+  height: var(--space-1);
   flex: 0 0 auto;
-  background: var(--color-surface);
-  border-bottom: 1px solid var(--color-line);
+  background: var(--color-line);
   overflow: hidden;
 }
 
@@ -116,17 +122,8 @@ body {
   position: absolute;
   inset: 0 auto 0 0;
   width: 0;
-  background: color-mix(in srgb, var(--color-progress) 16%, transparent);
+  background: var(--color-progress);
   transition: width var(--dur-move) var(--ease-out);
-}
-
-.parse-text {
-  position: relative;
-  display: block;
-  line-height: var(--leading-12);
-  padding: var(--space-1) var(--space-4);
-  font-size: var(--text-12);
-  color: var(--color-text-muted);
 }
 
 /* ---------- layout ---------- */
@@ -138,7 +135,8 @@ body {
 }
 
 .sidebar {
-  width: 264px;
+  width: 320px;
+  max-width: 100vw;
   flex: 0 0 auto;
   background: var(--color-surface);
   border-right: 1px solid var(--color-line);
@@ -153,13 +151,12 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
-  font-size: var(--text-12);
-  font-weight: 650;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--color-text-muted);
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-2) var(--space-2) var(--space-3);
 }
+
+/* the close button of the side bar: its label opens below it, at its right edge */
+.sidebar-head [data-tip]::after { bottom: auto; top: calc(100% + var(--space-2)); left: auto; right: 0; transform: none; }
 
 .toc {
   flex: 1 1 auto;
@@ -179,38 +176,38 @@ body {
   font: inherit;
   font-size: var(--text-14);
   padding: var(--space-2) var(--space-3);
+  min-height: var(--control-m);
   cursor: pointer;
   line-height: var(--leading-14);
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .toc button:hover { background: var(--color-hover); }
 /* the part that is read now: a raised row with the orange progress mark on its left edge */
-.toc button.active { background: var(--color-surface-raised); color: var(--color-text); font-weight: 600; box-shadow: inset 3px 0 0 var(--color-progress); }
+.toc button.active { background: var(--color-surface-raised); color: var(--color-text); font-weight: 650; box-shadow: inset 4px 0 0 var(--color-progress); }
 
-.opts {
-  border-top: 1px solid var(--color-line);
-  padding: var(--space-3) var(--space-4) var(--space-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
+/* a skip setting in the settings panel: one row of 40 px, the box and its words */
 .opt {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-12);
-  color: var(--color-text-muted);
+  align-self: stretch;
+  min-height: var(--control-m);
+  gap: var(--space-3);
+  font-size: var(--text-14);
+  line-height: var(--leading-14);
+  color: var(--color-text);
   cursor: pointer;
 }
 
-.opt input { accent-color: var(--color-action); }
+.opt input { width: var(--space-5); height: var(--space-5); margin: 0; flex: 0 0 auto; accent-color: var(--color-action); }
+
+/* the skip settings sit as one list: no gap between their 40 px rows */
+.settings-group .opt + .opt { margin-top: calc(-1 * var(--space-3)); }
+.settings-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+.settings .status { margin: 0; font-size: var(--text-14); line-height: var(--leading-14); color: var(--color-text-muted); }
+.settings .status:empty { display: none; }
+.settings-foot { margin: 0; padding-top: var(--space-3); border-top: 1px solid var(--color-line); font-size: var(--text-12); line-height: var(--leading-12); color: var(--color-text-muted); }
+.settings-foot:empty { display: none; }
 
 /* ---------- viewer ---------- */
 
@@ -282,7 +279,8 @@ body {
   pointer-events: none;
   background: var(--color-word);
   opacity: var(--word-opacity);
-  mix-blend-mode: var(--word-blend);
+  /* the PDF paper is white in both modes: multiply keeps the orange box visible in dark mode too (screen made it white) */
+  mix-blend-mode: multiply;
   border-radius: 4px;
   margin: -1px -2px;
   padding: 1px 2px;
@@ -305,7 +303,7 @@ body {
 
 .empty[hidden] { display: none; }
 
-.empty h1 {
+.empty h2 {
   margin: 0 0 var(--space-3);
   font-size: var(--text-28);
   line-height: var(--leading-28);
@@ -320,84 +318,309 @@ body {
 
 .empty .hint { font-size: var(--text-14); }
 
-/* ---------- player ---------- */
+/* a file that could not open: the message shows on the start screen */
+.empty .empty-msg { margin-top: var(--space-4); color: var(--color-text); font-weight: 600; }
+.empty .empty-msg:empty { display: none; }
+
+/* ---------- player bar (ticket 21) ----------
+   One row: contents, previous, play, next, position, speed, highlight, follow, settings. It follows the light or
+   dark mode, like the top bar. Play is the one filled orange control; all other controls are neutral. */
 
 .player {
+  position: relative;
   flex: 0 0 auto;
-  padding: var(--space-3) var(--space-4) calc(var(--space-3) + env(safe-area-inset-bottom));
+  padding: var(--space-2) var(--space-4) calc(var(--space-2) + env(safe-area-inset-bottom));
+  padding-left: var(--space-4);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-top: 1px solid var(--color-line);
 }
 
 .player[hidden] { display: none; }
 
-.now-reading {
-  font-size: var(--text-14);
-  line-height: var(--leading-14);
-  min-height: 20px;
+/* text for a screen reader only: it is not on the screen */
+.visually-hidden, .now-reading {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  line-clamp: 2;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
-
-.now-reading b { font-weight: 500; }
 
 .controls {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
+.player .icon-btn {
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-round);
+  width: var(--control-m);
+  height: var(--control-m);
+  color: var(--color-text);
+}
+
+.player .icon-btn:hover { background: var(--color-hover); }
+.player .icon-btn:active { background: var(--color-surface-raised); }
+
 .play-btn {
+  position: relative;
   appearance: none;
   border: 0;
   border-radius: 50%;
+  width: var(--control-l);
+  height: var(--control-l);
+  background: var(--color-play);
+  color: var(--color-on-play);
   font-size: var(--text-16);
   cursor: pointer;
   display: grid;
   place-items: center;
   flex: 0 0 auto;
+  transition: background-color var(--dur-hover) var(--ease-out), transform var(--dur-hover) var(--ease-out);
 }
 
+.play-btn:hover { background: var(--color-play-hover); }
+.play-btn:active { transform: scale(0.96); }
+.play-icon { display: grid; place-items: center; }
+
+/* the voice server makes the sentence: a ring turns on the play button (after a short wait, so a fast start shows none) */
+@keyframes ra2-spin { to { transform: rotate(360deg); } }
+.play-btn::before {
+  content: "";
+  position: absolute;
+  inset: var(--space-1);
+  border-radius: 50%;
+  border: 3px solid transparent;
+  border-top-color: var(--color-on-play);
+  opacity: 0;
+  pointer-events: none;
+}
+.play-btn.waiting::before {
+  opacity: 1;
+  transition: opacity var(--dur-hover) linear var(--delay-wait);
+  animation: ra2-spin var(--dur-spin) linear infinite;
+}
+
+.play-btn:disabled, .icon-btn:disabled, select:disabled {
+  opacity: 0.45;
+  cursor: progress;
+}
+
+/* position: the slider, and under it the sentence count, the time left and the voice status */
 .scrub {
-  flex: 1 1 220px;
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 160px;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .scrub input[type=range] {
-  flex: 1 1 auto;
+  width: 100%;
+  height: var(--space-5);
+  margin: 0;
   accent-color: var(--color-progress);
   min-width: 0;
 }
 
-.pos {
+.scrub-meta {
+  display: flex;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow: hidden;
   font-size: var(--text-12);
-  font-variant-numeric: tabular-nums;
+  line-height: var(--leading-12);
+  color: var(--color-text-muted);
   white-space: nowrap;
 }
 
-.select-wrap {
+.pos { font-variant-numeric: tabular-nums; }
+
+.engine-status {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* speed */
+.speed { display: flex; flex: 0 0 auto; }
+
+.speed select, .field select {
+  appearance: auto;
+  font: inherit;
+  font-size: var(--text-14);
+  min-height: var(--control-m);
+  padding: 0 var(--space-2);
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-1);
+  cursor: pointer;
+}
+
+.speed select { max-width: 80px; }
+
+.speed select:hover, .field select:hover { background: var(--color-hover); }
+
+/* the highlight icon: its line has the colour of the first group */
+.hl-line { color: var(--hl-yellow); }
+
+/* settings: an icon and the name of the voice */
+.player .settings-btn {
+  width: auto;
+  min-width: var(--control-m);
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: var(--text-12);
-}
-
-.select-wrap select {
+  padding: 0 var(--space-3);
   font: inherit;
-  font-size: var(--text-12);
-  padding: var(--space-1) var(--space-3);
-  max-width: 192px;
+  font-size: var(--text-14);
 }
 
-.select-wrap.narrow select { max-width: 88px; }
+.settings-voice {
+  max-width: 128px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-voice:empty { display: none; }
+
+.player .settings-btn[aria-expanded="true"] { background: var(--color-surface-raised); }
+
+/* ---------- tooltips: the name and the key of an icon button, after 500 ms ---------- */
+
+[data-tip] { position: relative; }
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + var(--space-2));
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-1);
+  background: var(--color-chrome);
+  color: var(--color-on-chrome);
+  font: 500 var(--text-12)/var(--leading-12) var(--font-ui);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 40;
+  transition: opacity var(--dur-hover) var(--ease-out);
+}
+
+[data-tip]:hover::after, [data-tip]:focus-visible::after {
+  opacity: 1;
+  transition: opacity var(--dur-hover) var(--ease-out) var(--delay-tip);
+  transition-delay: var(--delay-tip);
+}
+
+/* the first control: the tooltip starts at its left edge; the last: it ends at its right edge (never off the window) */
+.controls > [data-tip]:first-child::after { left: 0; transform: none; }
+.controls > [data-tip]:last-child::after, .settings-head [data-tip]::after { left: auto; right: 0; transform: none; }
+/* a top bar button with its words in sight needs no label; below 600 px (icon only) it gets one */
+.topbar .btn[data-tip]::after { display: none; }
+.topbar .btn { white-space: nowrap; flex: none; }
+/* tooltips of the top bar open below it */
+.topbar [data-tip]::after { bottom: auto; top: calc(100% + var(--space-2)); }
+
+/* ---------- the settings panel (ticket 21): voice; what to read (ticket 22) ---------- */
+
+.settings {
+  position: absolute;
+  right: var(--space-4);
+  bottom: calc(100% + var(--space-2));
+  z-index: 25;
+  width: min(360px, calc(100vw - 32px));
+  max-height: calc(100vh - 128px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-6);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-3);
+}
+
+.settings[hidden] { display: none; }
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: calc(-1 * var(--space-2)) calc(-1 * var(--space-2)) 0 0;
+}
+
+.settings h2 {
+  margin: 0;
+  font-size: var(--text-16);
+  line-height: var(--leading-16);
+  font-weight: 650;
+}
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.settings h3 {
+  margin: 0;
+  font-size: var(--text-14);
+  line-height: var(--leading-14);
+  font-weight: 650;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
+  font-size: var(--text-14);
+  line-height: var(--leading-14);
+  color: var(--color-text-muted);
+}
+
+.field select { width: 100%; padding: 0 var(--space-3); font-size: var(--text-16); }
+
+/* ---------- player bar on narrow windows ---------- */
+
+@media (max-width: 800px) {
+  .settings-voice { display: none; }
+  .player .settings-btn { padding: 0; width: var(--control-m); justify-content: center; }
+  .time-left { display: none; }
+  .player { padding-left: var(--space-2); padding-right: var(--space-2); }
+  .controls { gap: var(--space-1); }
+}
+
+@media (max-width: 480px) {
+  .player .icon-btn, .player .settings-btn { width: var(--control-s); height: var(--control-s); min-width: var(--control-s); }
+  .play-btn { width: var(--control-m); height: var(--control-m); }
+  .controls { gap: 0; }
+  .speed select { max-width: 56px; padding: 0 var(--space-1); font-size: var(--text-12); min-height: var(--control-s); }
+  /* a normal voice status leaves the room to the slider; a fault takes the place of the count */
+  .engine-status:not(.fault) { display: none; }
+  .scrub-meta:has(.engine-status.fault:not(:empty)) .pos { display: none; }
+  .settings { right: var(--space-2); width: calc(100vw - 16px); padding: var(--space-4); }
+}
 
 /* ---------- drop veil ---------- */
 
@@ -425,34 +648,31 @@ body {
 
 /* ---------- small screens ---------- */
 
-@media (max-width: 820px) {
+/* up to 900 px the side bar (320 px) and a readable page (480 px or more) do not both fit: the side bar lies over
+   the page, starts closed (app.js), and closes with ×, Escape or a press outside it. The title and zoom stay. */
+@media (max-width: 900px) {
   .sidebar {
     position: absolute;
     z-index: 8;
     top: 0;
     bottom: 0;
     left: 0;
-    box-shadow: var(--shadow-2);
+    box-shadow: var(--shadow-3);
   }
-  .doc-title { display: none; }
-  .select-wrap span { display: none; }
   .layout { position: relative; }
 }
 
-.engine-status {
-  font-size: var(--text-12);
-  white-space: nowrap;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 224px;
+/* below 600 px the top bar buttons show their icon only; the words stay for a screen reader and in the label */
+@media (max-width: 600px) {
+  .topbar { gap: var(--space-2); padding: 0 var(--space-2); }
+  .topbar .btn-text { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .topbar .btn { width: var(--control-s); height: var(--control-s); padding: 0; border-radius: var(--radius-1); }
+  .topbar .btn[data-tip]::after { display: block; }
+  /* No room for a text button in a narrow top bar. */
+  .topbar #sampleBtn { display: none; }
+  .zoom-level { min-width: 48px; }
 }
 
-
-.play-btn:disabled, .icon-btn:disabled, select:disabled {
-  opacity: 0.45;
-  cursor: progress;
-}
 
 /* ---------- zoom ---------- */
 
@@ -481,9 +701,6 @@ body {
 
 .zoom-level:hover { background: var(--color-hover); }
 
-@media (max-width: 820px) {
-  .zoom-controls { display: none; }
-}
 
 /* Contents list: chapters read off the book's own running heads, with the
    headings found inside them indented underneath. */
@@ -495,8 +712,7 @@ body {
 
 .toc button.chapter:first-child { margin-top: 0; }
 
+/* a nested entry: the same left edge as the text of its chapter, set apart by weight and colour */
 .toc button.subsection {
-  padding-left: var(--space-5);
-  font-size: var(--text-12);
   color: var(--color-text-muted);
 }

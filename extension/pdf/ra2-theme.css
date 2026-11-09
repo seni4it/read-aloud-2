@@ -1,23 +1,13 @@
-/* Read Aloud 2 look for the PDF reader: the same navy player, orange play button and orange word highlight as
-   the player on web pages (content.js). Loaded after styles.css. Every value comes from tokens.css (ticket 20). */
+/* Read Aloud 2 look for the PDF reader: the highlight styles, the selection bar, the Highlights list and Ask Claude.
+   Loaded after styles.css. Every value comes from tokens.css (ticket 20). */
 
 /* top bar */
 .brand svg { color: var(--color-icon); fill: none; stroke: none; }
 
-/* player: the navy bar of the web player */
-.player { background: var(--color-chrome); border-top: 0; color: var(--color-on-chrome); box-shadow: var(--shadow-bar); }
-.now-reading, .now-reading b { color: var(--color-on-chrome-muted); }
-.player .icon-btn { border: 0; color: var(--color-on-chrome); border-radius: var(--radius-round); width: var(--control-m); height: var(--control-m); }
-.player .icon-btn:hover { background: var(--color-chrome-hover); }
-.play-btn { background: var(--color-play); color: var(--color-on-play); width: var(--control-l); height: var(--control-l); transition: background-color var(--dur-hover) var(--ease-out); }
-.play-btn:hover { background: var(--color-play-hover); }
-.pos, .select-wrap, .engine-status { color: var(--color-on-chrome-muted); }
-.select-wrap select { background: var(--color-chrome-field); color: var(--color-on-chrome); border: 1px solid var(--color-chrome-line); border-radius: var(--radius-round); }
-.select-wrap select option { color: var(--color-menu-text); }
-.play-icon { display: grid; place-items: center; }
+/* the player bar and the settings panel are in styles.css (ticket 21): they follow the light or dark mode */
 
 /* Read Aloud 2: highlights (saved underlines), the selection bar and the Highlights list */
-.mark-box { position: absolute; pointer-events: none; z-index: 1; border-radius: var(--radius-mark); mix-blend-mode: var(--mark-blend); }
+.mark-box { position: absolute; pointer-events: none; z-index: 1; border-radius: var(--radius-mark); mix-blend-mode: multiply; }  /* white PDF paper in both modes */
 .mark-box[data-color="yellow"] { background: var(--hl-yellow-fill); box-shadow: inset 0 -3px 0 var(--hl-yellow); }
 .mark-box[data-color="green"] { background: var(--hl-green-fill); box-shadow: inset 0 -3px 0 var(--hl-green); }
 .mark-box[data-color="blue"] { background: var(--hl-blue-fill); box-shadow: inset 0 -3px 0 var(--hl-blue); }
@@ -26,42 +16,42 @@
 .dot.yellow { background: var(--hl-yellow); } .dot.green { background: var(--hl-green); } .dot.blue { background: var(--hl-blue); } .dot.pink { background: var(--hl-pink); }
 .selbar { position: fixed; z-index: 30; display: flex; gap: var(--space-1); padding: var(--space-1); background: var(--color-chrome); border-radius: var(--radius-round); box-shadow: var(--shadow-3); }
 .selbar[hidden] { display: none; }
-.selbar button { all: unset; cursor: pointer; display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-round); color: var(--color-on-chrome); font: 600 var(--text-14)/1 var(--font-ui); }
+.selbar button { all: unset; cursor: pointer; display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-s); box-sizing: border-box; padding: var(--space-1) var(--space-3); border-radius: var(--radius-round); color: var(--color-on-chrome); font: 600 var(--text-14)/1 var(--font-ui); }
 .selbar button:hover { background: var(--color-chrome-hover); }
-.side-tabs { display: flex; gap: var(--space-1); }
-.side-tabs button { all: unset; cursor: pointer; padding: var(--space-1) var(--space-3); border-radius: var(--radius-round); font-size: var(--text-12); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--color-text-muted); }
+/* the three tabs of the side bar: sentence case, 14 px (ticket 22) */
+.side-tabs { display: flex; gap: var(--space-1); min-width: 0; }
+.side-tabs button { all: unset; cursor: pointer; display: inline-flex; align-items: center; min-height: var(--control-s); box-sizing: border-box; padding: 0 var(--space-2); border-radius: var(--radius-1); font-size: var(--text-14); line-height: var(--leading-14); font-weight: 600; white-space: nowrap; color: var(--color-text-muted); }
+.side-tabs button:hover { background: var(--color-hover); }
 .side-tabs button.on { background: var(--color-surface-raised); color: var(--color-text); }
 .notes { flex: 1 1 auto; overflow: auto; padding: var(--space-1) var(--space-3) var(--space-3); }
 .notes[hidden] { display: none; }
 .note-filter { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-1) 0 var(--space-3); }
-.note-filter button { all: unset; cursor: pointer; display: flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2); border: 1px solid var(--color-control-border); border-radius: var(--radius-round); font-size: var(--text-12); }
+.note-filter button { all: unset; cursor: pointer; display: flex; align-items: center; gap: var(--space-1); min-height: var(--control-s); box-sizing: border-box; padding: 0 var(--space-3); border: 1px solid var(--color-control-border); border-radius: var(--radius-round); font-size: var(--text-12); }
 .note-filter button.on { border-color: var(--color-text); font-weight: 700; }
-.note { position: relative; display: block; width: 100%; text-align: left; padding: var(--space-2) var(--space-8) var(--space-2) var(--space-3); margin: 0 0 var(--space-2); border: 1px solid var(--color-line); border-left: 4px solid; border-radius: var(--radius-1); background: var(--color-surface); color: var(--color-text); font: inherit; font-size: var(--text-14); line-height: var(--leading-14); cursor: pointer; }
+.note { position: relative; display: block; width: 100%; text-align: left; min-height: var(--control-m); padding: var(--space-2) var(--space-10) var(--space-2) var(--space-3); margin: 0 0 var(--space-2); border: 1px solid var(--color-line); border-left: 4px solid; border-radius: var(--radius-1); background: var(--color-surface); color: var(--color-text); font: inherit; font-size: var(--text-14); line-height: var(--leading-14); cursor: pointer; }
 .note:hover { border-color: var(--color-control-border); }
 .note[data-color="yellow"] { border-left-color: var(--hl-yellow); } .note[data-color="green"] { border-left-color: var(--hl-green); }
 .note[data-color="blue"] { border-left-color: var(--hl-blue); } .note[data-color="pink"] { border-left-color: var(--hl-pink); }
 .note small { display: block; color: var(--color-text-muted); font-size: var(--text-12); margin-top: var(--space-1); }
-.note .del { position: absolute; top: var(--space-1); right: var(--space-1); width: 24px; height: 24px; border: 0; border-radius: 50%; background: transparent; color: var(--color-text-muted); cursor: pointer; font-size: var(--text-16); }
+.note .del { position: absolute; top: var(--space-1); right: var(--space-1); width: var(--control-s); height: var(--control-s); border: 0; border-radius: 50%; background: transparent; color: var(--color-text-muted); cursor: pointer; font-size: var(--text-16); }
 .note .del:hover { background: var(--color-surface-raised); color: var(--color-text); }
 .notes-empty { color: var(--color-text-muted); font-size: var(--text-14); line-height: var(--leading-14); }
-.rename { all: unset; cursor: pointer; font-size: var(--text-12); color: var(--color-text-muted); text-decoration: underline; }
-#markBtn.flash { color: var(--hl-yellow); background: var(--color-chrome-hover); }
-.show-marks { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-2) 0 var(--space-3); font-size: var(--text-14); cursor: pointer; }
+.rename { all: unset; cursor: pointer; display: inline-flex; align-items: center; min-height: var(--control-s); font-size: var(--text-12); color: var(--color-text-muted); text-decoration: underline; }
+#markBtn.flash { background: var(--hl-yellow-fill); }
+.show-marks { display: flex; align-items: center; min-height: var(--control-s); gap: var(--space-2); margin: var(--space-2) 0 var(--space-3); font-size: var(--text-14); cursor: pointer; }
 .show-marks input { width: 16px; height: 16px; accent-color: var(--color-action); }
-/* the page is away from the word being read: a white ring on the follow button */
-#findBtn.away { color: var(--color-on-chrome); box-shadow: inset 0 0 0 2px var(--color-on-chrome); }
+/* the page is away from the word being read: a ring on the follow button */
+#findBtn.away { color: var(--color-text); box-shadow: inset 0 0 0 2px var(--color-text); }
 .note-tools { margin-top: var(--space-3); font-size: var(--text-12); color: var(--color-text-muted); }
 
 /* Key points to Claude (Highlights tab) */
 .keypts { margin-top: var(--space-4); padding: var(--space-2) var(--space-3); border: 1px solid var(--color-line); border-radius: var(--radius-1); font-size: var(--text-12); color: var(--color-text-muted); }
 .keypts summary { cursor: pointer; font-weight: 600; color: var(--color-text); }
 .keypts label { display: block; margin: var(--space-2) 0; }
-.keypts select { max-width: 100%; font: inherit; }
+.keypts select { max-width: 100%; min-height: var(--control-s); font: inherit; }
 .keypts .kp-note { margin: var(--space-2) 0 0; word-break: break-word; }
 
 /* Ask Claude (ask.js): the side bar gets wider while the Ask tab is open */
-.sidebar.asking { width: min(440px, 92vw); }
-.sidebar.asking .opts { display: none; }
 .ask { display: flex; flex-direction: column; gap: var(--space-2); }
 .ask[hidden] { display: none; }
 .ask .turns { flex: 1 1 auto; overflow: auto; min-height: 120px; }
@@ -74,7 +64,7 @@
 .ask .a a.pg { color: inherit; text-decoration: underline; text-decoration-color: var(--color-control-border); text-underline-offset: 2px; }
 .ask textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: var(--text-16); padding: var(--space-2) var(--space-3); border: 1px solid var(--color-control-border); border-radius: var(--radius-1); background: var(--color-surface); color: var(--color-text); resize: vertical; }
 .ask .ask-row { display: flex; gap: var(--space-2); align-items: center; }
-.ask .ask-row select { font: inherit; font-size: var(--text-14); padding: var(--space-1) var(--space-2); border-radius: var(--radius-1); border: 1px solid var(--color-control-border); background: var(--color-surface); color: var(--color-text); }
+.ask .ask-row select { min-height: var(--control-s); font: inherit; font-size: var(--text-14); padding: var(--space-1) var(--space-2); border-radius: var(--radius-1); border: 1px solid var(--color-control-border); background: var(--color-surface); color: var(--color-text); }
 .ask .ask-busy, .ask .ask-sel { margin: 0; font-size: var(--text-14); color: var(--color-text-muted); }
 .ask .ask-row .btn { width: auto; flex: 1 1 auto; }
 .ask .readable { cursor: text; }
@@ -82,14 +72,14 @@
 .ask .check { margin: var(--space-2) 0 0; padding: var(--space-2) var(--space-3); border-left: 4px solid var(--color-danger); border-radius: var(--radius-1); background: var(--color-danger-soft); font-size: var(--text-14); line-height: var(--leading-14); }
 .ask .check-h { margin: 0 0 var(--space-1); font-weight: 700; font-size: var(--text-12); text-transform: uppercase; letter-spacing: .04em; color: var(--color-danger); }
 .ask .check p { margin: 0 0 var(--space-2); }
-.ask .ask-opt { display: flex; gap: var(--space-2); align-items: center; font-size: var(--text-12); color: var(--color-text-muted); }
-.ask .ask-opt select { flex: 1 1 auto; font: inherit; font-size: var(--text-12); padding: var(--space-1); border-radius: var(--radius-1); border: 1px solid var(--color-control-border); background: var(--color-surface); color: var(--color-text); }
-.ask .ask-player { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-2); border-radius: var(--radius-round); background: var(--color-chrome); color: var(--color-on-chrome); }
+.ask .ask-opt { min-height: var(--control-s); display: flex; gap: var(--space-2); align-items: center; font-size: var(--text-12); color: var(--color-text-muted); }
+.ask .ask-opt select { min-height: var(--control-s); flex: 1 1 auto; font: inherit; font-size: var(--text-12); padding: var(--space-1); border-radius: var(--radius-1); border: 1px solid var(--color-control-border); background: var(--color-surface); color: var(--color-text); }
+.ask .ask-player { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-2); border-radius: var(--radius-round); background: var(--color-surface-raised); color: var(--color-text); }
 .ask .ask-player[hidden] { display: none; }
 .ask .ask-player .ap-what { flex: 1 1 auto; font-size: var(--text-14); font-weight: 600; padding-left: var(--space-2); }
 .ask .ask-player button { all: unset; cursor: pointer; width: var(--control-s); height: var(--control-s); display: grid; place-items: center; border-radius: var(--radius-round); font-size: var(--text-16); }
-.ask .ask-player button:hover { background: var(--color-chrome-hover); }
-.ask .ask-player .ap-pp { background: var(--color-play); color: var(--color-on-play); }
+.ask .ask-player button:hover { background: var(--color-hover); }
+.ask .ask-player .ap-pp { box-shadow: inset 0 0 0 2px var(--color-control-border); }
 .ask textarea { min-height: 88px; max-height: 50vh; resize: vertical; line-height: var(--leading-16); }
 .ask > :not(.turns) { flex: 0 0 auto; }
 
@@ -101,28 +91,29 @@
 .askpane-head { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4); font-size: var(--text-12); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--color-text-muted); }
 .ask { flex: 1 1 auto; min-height: 0; padding: 0 var(--space-3) var(--space-3); overflow: hidden; }
 .ask .ask-top { display: flex; flex-direction: column; gap: var(--space-2); padding-bottom: var(--space-2); border-bottom: 1px solid var(--color-line); }
-.ask .ask-top select { flex: 1 1 0; min-width: 0; font: inherit; font-size: var(--text-12); padding: var(--space-1) var(--space-2); border-radius: var(--radius-1); border: 1px solid var(--color-control-border); background: var(--color-surface); color: var(--color-text); }
+.ask .ask-top select { min-height: var(--control-s); flex: 1 1 0; min-width: 0; font: inherit; font-size: var(--text-12); padding: var(--space-1) var(--space-2); border-radius: var(--radius-1); border: 1px solid var(--color-control-border); background: var(--color-surface); color: var(--color-text); }
 .ask .turns { padding-top: var(--space-2); }
 .ask textarea { font-size: var(--text-16); min-height: 128px; }
 .ask .ask-go { width: 100%; padding: var(--space-3); font-size: var(--text-16); }
+/* 821 to 1100 px: the open Ask pane takes the place of the side bar and at most 40 % of the window, so the page stays readable */
+@media (max-width: 1100px) { .layout:has(> .askpane:not([hidden])) > .sidebar { display: none; } .askpane { max-width: 40vw; } }
 @media (max-width: 820px) { .askpane { position: absolute; right: 0; top: 0; bottom: 0; z-index: 9; box-shadow: var(--shadow-2); max-width: 100vw; } }
 
 /* the Ask Claude bar across the bottom of the page, above the player (v2.9.5) */
-.askbar { display: flex; align-items: flex-end; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-chrome-line); }
+.askbar { display: flex; align-items: flex-end; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-line); }
 .askbar[hidden] { display: none; }
-.askbar textarea { flex: 1 1 auto; min-width: 200px; min-height: 56px; max-height: 40vh; resize: vertical; font: inherit; font-size: var(--text-16); line-height: var(--leading-16); padding: var(--space-2) var(--space-3); border-radius: var(--radius-1); border: 2px solid transparent; background: var(--color-surface); color: var(--color-text); box-sizing: border-box; }
+.askbar textarea { flex: 1 1 auto; min-width: 200px; min-height: 56px; max-height: 40vh; resize: vertical; font: inherit; font-size: var(--text-16); line-height: var(--leading-16); padding: var(--space-2) var(--space-3); border-radius: var(--radius-1); border: 1px solid var(--color-control-border); background: var(--color-bg); color: var(--color-text); box-sizing: border-box; }
 .askbar textarea:focus { outline: none; border-color: var(--color-focus); }
-/* "Ask" on the navy bar: a white button with navy text (orange is only for play) */
-.askbar .ask-go { flex: 0 0 auto; width: auto; padding: var(--space-3) var(--space-5); font-size: var(--text-16); background: var(--color-on-chrome); color: var(--color-chrome); }
+/* "Ask Claude": the navy main button of the Ask bar (orange is only for play) */
+.askbar .ask-go { flex: 0 0 auto; width: auto; padding: var(--space-3) var(--space-5); font-size: var(--text-16); }
 .askbar .ask-set { display: flex; flex-direction: column; gap: var(--space-1); flex: 0 0 auto; max-width: 260px; }
-.askbar .ask-set select { font: inherit; font-size: var(--text-12); padding: var(--space-1) var(--space-2); border-radius: var(--radius-1); border: 0; background: var(--color-chrome-field); color: var(--color-on-chrome); }
-.askbar .ask-set option { color: var(--color-menu-text); }
-.askbar .ask-opt { color: var(--color-on-chrome-muted); font-size: var(--text-12); display: flex; gap: var(--space-2); align-items: center; }
-.askbar .ask-player { display: flex; align-items: center; gap: var(--space-1); flex: 0 0 auto; padding: var(--space-1) var(--space-2); border-radius: var(--radius-round); background: var(--color-chrome-field); color: var(--color-on-chrome); }
+.askbar .ask-set select { min-height: var(--control-s); font: inherit; font-size: var(--text-12); padding: var(--space-1) var(--space-2); border-radius: var(--radius-1); border: 1px solid var(--color-control-border); background: var(--color-surface); color: var(--color-text); }
+.askbar .ask-opt { min-height: var(--control-s); color: var(--color-text-muted); font-size: var(--text-12); display: flex; gap: var(--space-2); align-items: center; }
+.askbar .ask-player { display: flex; align-items: center; gap: var(--space-1); flex: 0 0 auto; padding: var(--space-1) var(--space-2); border-radius: var(--radius-round); background: var(--color-surface-raised); color: var(--color-text); }
 .askbar .ask-player .ap-what { font-size: var(--text-12); font-weight: 600; padding: 0 var(--space-2); min-width: 64px; }
 .askbar .ask-player button { all: unset; cursor: pointer; width: var(--control-s); height: var(--control-s); display: grid; place-items: center; border-radius: var(--radius-round); font-size: var(--text-16); }
-.askbar .ask-player button:hover { background: var(--color-chrome-hover); }
-.askbar .ask-player .ap-pp { background: var(--color-play); color: var(--color-on-play); }
+.askbar .ask-player button:hover { background: var(--color-hover); }
+.askbar .ask-player .ap-pp { box-shadow: inset 0 0 0 2px var(--color-control-border); }
 .askbar .ask-player.idle { opacity: .55; }
 .ask .ask-links { padding-bottom: var(--space-2); border-bottom: 1px solid var(--color-line); }
 @media (max-width: 900px) { .askbar { flex-wrap: wrap; } .askbar textarea { flex-basis: 100%; order: -1; } }
@@ -131,3 +122,7 @@
 @keyframes ra2-flash { 0%, 100% { box-shadow: none; } 30%, 70% { box-shadow: 0 0 0 4px var(--color-focus); } }
 .mark-box.flash { animation: ra2-flash var(--dur-flash) ease-in-out 2; }
 .askpane-tools { display: flex; align-items: center; gap: var(--space-2); text-transform: none; letter-spacing: 0; font-weight: 500; }
+
+/* Ticket 08: a focus ring on every control. Many rules above use `all: unset`, which also removes the ring of the
+   token file; this rule is more specific than each of them (tests/node/reader-look.test.mjs checks it). */
+html body :is(button, a[href], select, input, textarea, summary, [tabindex]):focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-offset); }

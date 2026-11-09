@@ -13,108 +13,87 @@
 <header class="topbar">
   <div class="brand">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3" y="13" width="5" height="7" rx="2" fill="currentColor"/><rect x="16" y="13" width="5" height="7" rx="2" fill="currentColor"/></svg>
-    <span>Read Aloud 2</span>
+    <span class="visually-hidden">Read Aloud 2</span>
   </div>
 
-  <div class="doc-title" id="docTitle">No document open</div>
+  <!-- the book title is the heading of the page -->
+  <h1 class="doc-title" id="docTitle">No book open</h1>
 
   <div class="zoom-controls">
-    <button class="icon-btn" id="zoomOut" title="Zoom out" aria-label="Zoom out">−</button>
-    <button class="zoom-level" id="zoomLevel" title="Reset zoom to fit width">100%</button>
-    <button class="icon-btn" id="zoomIn" title="Zoom in" aria-label="Zoom in">+</button>
+    <button type="button" class="icon-btn" id="zoomOut" aria-label="Zoom out" aria-keyshortcuts="Meta+-" data-tip="Zoom out (⌘ −)">−</button>
+    <button type="button" class="zoom-level" id="zoomLevel" aria-label="Zoom: fit the width" aria-keyshortcuts="Meta+0" data-tip="Fit the width (⌘ 0)">100%</button>
+    <button type="button" class="icon-btn" id="zoomIn" aria-label="Zoom in" aria-keyshortcuts="Meta+=" data-tip="Zoom in (⌘ +)">+</button>
   </div>
 
+  <!-- quiet buttons: the main action of the reader is Play, in the player bar -->
   <div class="topbar-actions">
-    <button class="btn ghost" id="libraryBtn" hidden>← Library</button>
-    <button class="btn" id="openBtn">Open PDF</button>
-    <button class="btn ghost" id="sampleBtn" hidden>Try sample</button>
+    <button type="button" class="btn ghost" id="libraryBtn" data-tip="Library" hidden><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="btn-text">Library</span></button>
+    <button type="button" class="btn ghost" id="openBtn" data-tip="Open PDF"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg><span class="btn-text">Open PDF</span></button>
+    <button type="button" class="btn ghost" id="sampleBtn" hidden>Try sample</button>
     <input type="file" id="fileInput" accept="application/pdf" hidden>
   </div>
 </header>
 
+<!-- the read-in of the text: a thin progress line; its words are at the foot of the settings panel -->
 <div class="parse-bar" id="parseBar" hidden>
   <div class="parse-fill" id="parseFill"></div>
-  <span class="parse-text" id="parseText"></span>
 </div>
 
 <main class="layout">
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-head">
       <div class="side-tabs"><button type="button" id="contentsTab" class="on">Contents</button><button type="button" id="notesTab">Highlights (0)</button><button type="button" id="askTab">Ask</button></div>
-      <button class="icon-btn" id="closeSidebar" title="Hide contents" aria-label="Hide contents">×</button>
+      <button type="button" class="icon-btn" id="closeSidebar" aria-label="Hide contents" data-tip="Hide contents">×</button>
     </div>
-    <nav class="toc" id="toc"></nav>
+    <nav class="toc" id="toc" aria-label="Contents"></nav>
     <div class="notes" id="notes" hidden></div>
-    <div class="opts">
-      <label class="opt"><input type="checkbox" id="optCitations" checked><span>Skip citations</span></label>
-      <label class="opt"><input type="checkbox" id="optCaptions" checked><span>Skip figure captions</span></label>
-      <label class="opt"><input type="checkbox" id="optRefs" checked><span>Stop at references</span></label>
-      <label class="opt"><input type="checkbox" id="optFrontMatter" checked><span>Start at abstract</span></label>
-      <label class="opt"><input type="checkbox" id="optInsets"><span>Skip boxed quotes</span></label>
-      <label class="opt"><input type="checkbox" id="optTables" checked><span>Skip tables</span></label>
-      <label class="opt"><input type="checkbox" id="optParens"><span>Skip text in parentheses</span></label>
-      <button class="btn ghost small" id="reparseBtn">Re-read document</button>
-      <button class="btn ghost small" id="exportBtn" hidden>Export audio (MP3)</button>
-      <p class="status" id="exportStatus"></p>
-
-    </div>
   </aside>
 
   <section class="viewer-wrap" id="scroller">
     <div class="pages" id="pages"></div>
 
     <div class="empty" id="empty">
-      <h1>Listen to your papers</h1>
+      <h2>Listen to your papers</h2>
       <p>Drop a PDF anywhere on this window, or open one. The sentence being read is underlined on the page and the view follows along.</p>
       <p class="hint">Everything runs on your Mac. Nothing is uploaded.</p>
+      <p class="empty-msg" id="emptyMsg" role="status"></p>
     </div>
   </section>
 
   <aside class="askpane" id="askPane" hidden aria-label="Ask Claude">
     <div class="askpane-grip" id="askGrip" title="Drag to make the panel wider or narrower"></div>
-    <div class="askpane-head"><span>Ask Claude</span><span class="askpane-tools"><button type="button" class="rename" id="askRestart" title="Restart the voice server: the Claude helper and the natural voices">↻ Restart helper</button><button class="icon-btn" id="askClose" title="Close" aria-label="Close Ask Claude">×</button></span></div>
+    <div class="askpane-head"><span>Ask Claude</span><span class="askpane-tools"><button type="button" class="rename" id="askRestart" title="Restart the voice server: Ask Claude and the natural voice">↻ Restart voice server</button><button class="icon-btn" id="askClose" title="Close" aria-label="Close Ask Claude">×</button></span></div>
     <div class="ask" id="ask"></div>
   </aside>
 </main>
 
 <footer class="player" id="player" hidden>
   <div class="askbar" id="askBar" hidden aria-label="Ask Claude"></div>
+  <!-- the sentence that is read now: for a screen reader; on the page it has the sentence shade -->
   <div class="now-reading" id="nowReading"></div>
+  <!-- a screen reader hears a change of the voice state here (app.js setStatus), not each sentence -->
+  <span class="visually-hidden" id="voiceAnnounce" role="status"></span>
 
-  <div class="controls">
-    <button class="icon-btn" id="tocBtn" title="Contents" aria-label="Contents">☰</button>
-    <button class="icon-btn" id="prevBtn" title="Previous sentence" aria-label="Previous sentence"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6 6h2v12H6zM9.5 12 18 18V6z" fill="currentColor"/></svg></button>
-    <button class="play-btn" id="playBtn" aria-label="Play">
-      <span class="play-icon" id="playIcon"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg></span>
+  <!-- the player bar: one row. Play is the one filled orange control. -->
+  <div class="controls" id="playerControls" role="toolbar" aria-label="Player bar">
+    <button type="button" class="icon-btn" id="tocBtn" aria-label="Contents" aria-controls="sidebar" data-tip="Contents"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+    <button type="button" class="icon-btn" id="prevBtn" aria-label="Previous sentence" aria-keyshortcuts="ArrowLeft" data-tip="Previous sentence (←)"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M6 6h2v12H6zM9.5 12 18 18V6z" fill="currentColor"/></svg></button>
+    <button type="button" class="play-btn" id="playBtn" aria-label="Play" aria-keyshortcuts="Space" aria-busy="false" data-tip="Play or pause (Space)">
+      <span class="play-icon" id="playIcon"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg></span>
     </button>
-    <button class="icon-btn" id="nextBtn" title="Next sentence" aria-label="Next sentence"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z" fill="currentColor"/></svg></button>
-    <button class="icon-btn" id="markBtn" title="Highlight the sentence being read" aria-label="Highlight the sentence being read"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M15.5 3.5l5 5L10 19H5v-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M3 22h18" stroke="#eab308" stroke-width="3" stroke-linecap="round"/></svg></button>
-    <button class="icon-btn" id="findBtn" title="Go to the word being read" aria-label="Go to the word being read"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="2"/></svg></button>
+    <button type="button" class="icon-btn" id="nextBtn" aria-label="Next sentence" aria-keyshortcuts="ArrowRight" data-tip="Next sentence (→)"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z" fill="currentColor"/></svg></button>
 
     <div class="scrub">
-      <input type="range" id="seek" min="0" max="0" value="0" step="1" aria-label="Position in document">
-      <div class="pos" id="pos">0 / 0</div>
-      <div class="pos" id="timeLeft" title="Time left at this speed"></div>
+      <input type="range" id="seek" min="0" max="0" value="0" step="1" aria-label="Position in the book">
+      <div class="scrub-meta">
+        <span class="pos" id="pos">0 / 0</span>
+        <span class="pos time-left" id="timeLeft"></span>
+        <span class="engine-status" id="engineStatus"></span>
+      </div>
     </div>
 
-    <label class="select-wrap">
-      <span>Engine</span>
-      <select id="engineSel" aria-label="Speech engine">
-        <option value="system">Mac voices</option>
-        <option value="kokoro">Natural voices</option>
-      </select>
-    </label>
-
-    <label class="select-wrap">
-      <span>Voice</span>
-      <select id="voiceSel" aria-label="Voice"></select>
-    </label>
-
-    <button class="icon-btn" id="previewBtn" title="Preview this voice" aria-label="Preview this voice">♪</button>
-    <span class="engine-status" id="engineStatus"></span>
-
-    <label class="select-wrap narrow">
-      <span>Speed</span>
+    <label class="speed select-wrap">
+      <span class="visually-hidden">Speed</span>
       <select id="rateSel" aria-label="Speed">
         <option value="0.75">0.75×</option>
         <option value="1">1×</option>
@@ -127,6 +106,46 @@
         <option value="3">3×</option>
       </select>
     </label>
+
+    <button type="button" class="icon-btn" id="markBtn" aria-label="Highlight the sentence being read" data-tip="Highlight the sentence being read"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M15.5 3.5l5 5L10 19H5v-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path class="hl-line" d="M3 22h18" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg></button>
+    <button type="button" class="icon-btn" id="findBtn" aria-label="Follow: go to the word being read" data-tip="Follow: go to the word being read"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="2"/></svg></button>
+    <button type="button" class="icon-btn settings-btn" id="settingsBtn" aria-label="Voice and settings" aria-haspopup="dialog" aria-expanded="false" aria-controls="settingsPanel" data-tip="Voice and settings"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="7" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="8" cy="17" r="2" fill="none" stroke="currentColor" stroke-width="2"/></svg><span class="settings-voice" id="settingsVoice"></span></button>
+  </div>
+
+  <!-- the settings panel: it opens from the settings button, Escape or × closes it -->
+  <div class="settings" id="settingsPanel" role="dialog" aria-labelledby="settingsTitle" hidden>
+    <div class="settings-head">
+      <h2 id="settingsTitle">Settings</h2>
+      <button type="button" class="icon-btn" id="settingsClose" aria-label="Close settings" data-tip="Close (Esc)">×</button>
+    </div>
+    <section class="settings-group" aria-labelledby="voiceHead">
+      <h3 id="voiceHead">Voice</h3>
+      <label class="field"><span>Voice type</span>
+        <select id="engineSel">
+          <option value="system">Mac voice</option>
+          <option value="kokoro">Natural voice</option>
+        </select>
+      </label>
+      <label class="field"><span>Voice</span><select id="voiceSel"></select></label>
+      <button type="button" class="btn ghost" id="previewBtn"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M9 18V5l11-2v13" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="6" cy="18" r="3" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="17" cy="16" r="3" fill="none" stroke="currentColor" stroke-width="2"/></svg>Hear this voice</button>
+    </section>
+    <section class="settings-group" id="readGroup" aria-labelledby="readHead">
+      <h3 id="readHead">What to read</h3>
+      <label class="opt"><input type="checkbox" id="optCitations" checked><span>Skip citations</span></label>
+      <label class="opt"><input type="checkbox" id="optCaptions" checked><span>Skip figure captions</span></label>
+      <label class="opt"><input type="checkbox" id="optRefs" checked><span>Stop at references</span></label>
+      <label class="opt"><input type="checkbox" id="optFrontMatter" checked><span>Start at abstract</span></label>
+      <label class="opt"><input type="checkbox" id="optInsets"><span>Skip boxed quotes</span></label>
+      <label class="opt"><input type="checkbox" id="optTables" checked><span>Skip tables</span></label>
+      <label class="opt"><input type="checkbox" id="optParens"><span>Skip text in parentheses</span></label>
+      <div class="settings-actions">
+        <button type="button" class="btn ghost" id="reparseBtn">Re-read book</button>
+        <button type="button" class="btn ghost" id="exportBtn" hidden>Export audio (MP3)</button>
+      </div>
+      <p class="status" id="exportStatus"></p>
+    </section>
+    <!-- the read-in summary: sentences, sections, repaired words -->
+    <p class="settings-foot" id="parseText"></p>
   </div>
 </footer>
 

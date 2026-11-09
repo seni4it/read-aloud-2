@@ -19,12 +19,13 @@ try {
 }
 
 const $ = id => document.getElementById(id);
+const NARROW = 900;  // px: up to this width the side bar and the page do not both fit (styles.css: max-width 900px)
 // Read Aloud 2: tell the add-on this page is open, so it does not reload itself under the page (that cuts the
 // page off: no underlines, no copy, no voice until the page is reloaded).
 try { if (globalThis.chrome?.runtime?.id) chrome.runtime.connect({ name: 'reader' }); } catch { /* not in the add-on */ }
 const LIB_ID = (new URLSearchParams(location.search).get('lib') || '').replace(/[^0-9a-f]/g, '');  // opened from the desktop library
-const ICON_PLAY = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>';
-const ICON_PAUSE = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z" fill="currentColor"/></svg>';
+const ICON_PLAY = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>';
+const ICON_PAUSE = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z" fill="currentColor"/></svg>';
 
 const els = {
   openBtn: $('openBtn'), sampleBtn: $('sampleBtn'), fileInput: $('fileInput'),
@@ -69,8 +70,31 @@ const engines = {
 
 let engine = engines.system;
 
+let announced = '';
 function setStatus(text) {
-  els.engineStatus.textContent = text || '';
+  text = text || '';
+  els.engineStatus.textContent = text;
+  // Ticket 21 review: a fault stays in sight also on a small window (styles.css hides a normal status below 480 px)
+  els.engineStatus.classList.toggle('fault', /not answer|did not|could not|cannot|not available|^Mac voice|slow here/i.test(text));
+  // A screen reader hears a real change of state only: not "Making the voice…" and "ready" again for each sentence.
+  if (text && text !== 'Making the voice…' && !/\d%$/.test(text) && text !== announced) {
+    announced = text;
+    const say = $('voiceAnnounce');
+    if (say) say.textContent = text;
+  }
+}
+
+// Ticket 21: the play button shows a spinner while the voice server makes the sentence, until its first word sounds.
+function setWaiting(on) {
+  els.playBtn.classList.toggle('waiting', on);
+  els.playBtn.setAttribute('aria-busy', on ? 'true' : 'false');
+}
+
+// Ticket 21: the settings button names the voice that reads ("Heart" of "Heart — US female (A) · American").
+function showVoiceName() {
+  const opt = els.voiceSel.selectedOptions && els.voiceSel.selectedOptions[0];
+  const name = $('settingsVoice');
+  if (name) name.textContent = opt ? opt.textContent.split(/ — | \(| · /)[0].trim() : '';
 }
 
 function fillVoiceSelect() {
@@ -85,6 +109,7 @@ function fillVoiceSelect() {
   }
   if (saved && list.some(v => v.id === saved)) els.voiceSel.value = saved;
   els.voiceSel.disabled = !list.length;
+  showVoiceName();
 }
 
 async function selectEngine(id) {
@@ -103,7 +128,7 @@ async function selectEngine(id) {
   fillVoiceSelect();
 
   if (id === 'kokoro' && !next.ready) {
-    setBusy(true, 'loading voice model…');
+    setBusy(true, 'Starting the natural voice…');
     try {
       await next.init(info => {
         setStatus(info.pct != null ? `${info.stage} ${info.pct}%` : info.stage + '…');
@@ -112,7 +137,7 @@ async function selectEngine(id) {
     } catch (err) {
       // Read Aloud 2: the voice server is down for a moment. Use the Mac voices meanwhile, but do not remember
       // that as your choice, and switch back by itself when the natural voices answer again.
-      setStatus('Natural voices are not answering — using Mac voices for now');
+      setStatus('The natural voice does not answer. The Mac voice reads for now.');
       engine = engines.system;
       els.engineSel.value = 'system';
       fillVoiceSelect();
@@ -152,13 +177,13 @@ function setBusy(busy, message) {
  */
 function engineLabel(eng) {
   if (!eng || eng.id === 'system') return '';
-  if (eng.id !== 'kokoro') return 'ready · ' + (eng.device || eng.id);
+  // Ticket 21: the words of the glossary, not model names
+  if (eng.id !== 'kokoro') return 'Voice ready';
   if (String(eng.device).startsWith('Mac voice')) return eng.device;  // the voice server fell: tts.js reads with the Mac voice
-  if (eng.device === 'webgpu') return 'ready · GPU';
   if (eng.device === 'wasm') {
-    return 'Kokoro is on the CPU here (~1 min/paragraph) — pick System voices to read now';
+    return 'The natural voice is slow here (about 1 minute for each paragraph). Choose the Mac voice to read now.';
   }
-  return 'ready · ' + (eng.device || eng.id);
+  return 'Natural voice ready';
 }
 
 function speakCurrent() {
@@ -169,7 +194,7 @@ function speakCurrent() {
   state.from = 0;
   const sentence = from ? { ...full, text: full.text.slice(from) } : full;
 
-  if (engine.id !== 'system') setStatus('generating…');
+  if (engine.id !== 'system') { setStatus('Making the voice…'); setWaiting(true); }
   let spoke = false;
 
   state.at = from;
@@ -178,7 +203,7 @@ function speakCurrent() {
     rate: Number(els.rateSel.value),
     onWord: (charIndex, charLength) => {
       if (!state.playing) return;
-      if (!spoke) { spoke = true; setStatus(engineLabel(engine)); }  // now: the voice server may have fallen in this sentence
+      if (!spoke) { spoke = true; setWaiting(false); setStatus(engineLabel(engine)); }  // now: the voice server may have fallen in this sentence
       state.at = charIndex + from;  // Read Aloud 2: the word being read, so Pause then Play goes on from here
       const parts = wordPartsAt(full, charIndex + from, charLength);
       if (parts.length) viewer.highlightWord(parts);
@@ -286,6 +311,7 @@ function stop() {
   els.previewBtn.disabled = false;  // a preview that was playing is silent now, and its end never comes
   if (state.playing && state.at > 0) state.resumeAt = { index: state.index, at: state.at };
   state.playing = false;
+  setWaiting(false);
   els.playIcon.innerHTML = ICON_PLAY;
   els.playBtn.setAttribute('aria-label', 'Play');
   engine.stop();
@@ -336,6 +362,7 @@ function jumpTo(i, { resume = state.playing } = {}) {
     speakCurrent();
   } else if (!resume) {
     state.playing = false;
+    setWaiting(false);
     els.playIcon.innerHTML = ICON_PLAY;
     els.playBtn.setAttribute('aria-label', 'Play');
     saveProgress();
@@ -734,6 +761,7 @@ els.rateSel.addEventListener('change', () => {
 
 els.voiceSel.addEventListener('change', () => {
   localStorage.setItem('pr.voice.' + engine.id, els.voiceSel.value);
+  showVoiceName();
   if (state.playing) { stop(); play(); }  // Read Aloud 2: go on from the present word
 });
 
@@ -757,7 +785,10 @@ els.previewBtn.addEventListener('click', async () => {
   });
 });
 
-for (const [el, key, dflt] of [[els.optInsets, 'ra2.skipInsets', '0'], [els.optTables, 'ra2.skipTables', '1'], [els.optParens, 'ra2.skipParens', '0']]) {
+// Each skip setting is kept (ticket 22: the four first ones are kept too now, with their old defaults: on)
+for (const [el, key, dflt] of [[els.optCitations, 'ra2.skipCitations', '1'], [els.optCaptions, 'ra2.skipCaptions', '1'],
+  [els.optRefs, 'ra2.stopAtRefs', '1'], [els.optFrontMatter, 'ra2.startAtAbstract', '1'],
+  [els.optInsets, 'ra2.skipInsets', '0'], [els.optTables, 'ra2.skipTables', '1'], [els.optParens, 'ra2.skipParens', '0']]) {
   try { el.checked = (localStorage.getItem(key) ?? dflt) === '1'; } catch { /* storage blocked */ }
   el.addEventListener('change', () => { try { localStorage.setItem(key, el.checked ? '1' : '0'); } catch {} });
 }
@@ -781,8 +812,54 @@ document.addEventListener('keydown', e => {
   if (e.key === '0') { e.preventDefault(); viewer.setZoom(1); showZoom(); }
 });
 
+// Ticket 22: the words of the read-in are at the foot of the settings panel. While no book is open (the panel is
+// not there), a message such as "Could not open …" shows on the start screen too.
+if (typeof MutationObserver === 'function') {
+  const emptyMsg = $('emptyMsg');
+  new MutationObserver(() => { emptyMsg.textContent = els.parseText.textContent; })
+    .observe(els.parseText, { childList: true, characterData: true, subtree: true });
+}
+
+// Ticket 21: the settings panel. The settings button opens and closes it; Escape, × or a press outside closes it.
+// The focus goes into the panel when it opens and back to the settings button when it closes.
+const settingsBtn = $('settingsBtn'), settingsPanel = $('settingsPanel');
+function openSettings() {
+  settingsPanel.hidden = false;
+  settingsBtn.setAttribute('aria-expanded', 'true');
+  els.engineSel.focus?.();
+}
+function closeSettings({ focusBack = true } = {}) {
+  if (settingsPanel.hidden) return false;
+  settingsPanel.hidden = true;
+  settingsBtn.setAttribute('aria-expanded', 'false');
+  if (focusBack) settingsBtn.focus?.();
+  return true;
+}
+settingsBtn.addEventListener('click', () => { if (!closeSettings()) openSettings(); });
+$('settingsClose').addEventListener('click', () => closeSettings());
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && closeSettings()) e.preventDefault(); });
+document.addEventListener('pointerdown', (e) => {
+  if (!settingsPanel.hidden && !settingsPanel.contains(e.target) && !settingsBtn.contains(e.target)) closeSettings({ focusBack: false });
+});
+// Ticket 21 review: Tab out of the open panel closes it (like a press outside). A focus that goes nowhere (a press on
+// the panel itself, the window in the background) keeps it open.
+settingsPanel.addEventListener('focusout', (e) => {
+  const to = e.relatedTarget;
+  if (to && !settingsPanel.contains(to) && to !== settingsBtn) closeSettings({ focusBack: false });
+});
+
 els.tocBtn.addEventListener('click', () => { els.sidebar.hidden = !els.sidebar.hidden; });
 els.closeSidebar.addEventListener('click', () => { els.sidebar.hidden = true; });
+// Ticket 22 review: up to NARROW px the side bar lies over the page (styles.css). There it closes with Escape or a
+// press outside it, so it never stays over the text.
+const isNarrow = () => window.innerWidth <= NARROW;
+document.addEventListener('keydown', (e) => {
+  // an Escape that closed the settings panel does not close the side bar too
+  if (e.key === 'Escape' && !e.defaultPrevented && isNarrow() && !els.sidebar.hidden) { els.sidebar.hidden = true; e.preventDefault(); }
+});
+document.addEventListener('pointerdown', (e) => {
+  if (isNarrow() && !els.sidebar.hidden && !els.sidebar.contains?.(e.target) && !els.tocBtn.contains?.(e.target)) els.sidebar.hidden = true;
+});
 
 // Click any word on the page to start reading from there.
 els.pages.addEventListener('click', e => {
@@ -819,6 +896,10 @@ els.pages.addEventListener('click', e => {
 
 document.addEventListener('keydown', e => {
   if (e.target.matches('input, select, textarea')) return;
+  // Ticket 21 review: a focused button or link keeps its own Space and arrows (Space must not click it AND play), and
+  // so does each control of the settings panel. In the player bar Space stays Play or Pause (the mark button too).
+  const t = e.target;
+  if (t.closest?.('#settingsPanel') || (t.closest?.('button, a[href], summary') && !t.closest?.('#playerControls'))) return;
   if (e.code === 'Space') { e.preventDefault(); toggle(); }
   if (e.code === 'ArrowRight') { e.preventDefault(); jumpTo(state.index + 1); }
   if (e.code === 'ArrowLeft') { e.preventDefault(); jumpTo(state.index - 1); }
@@ -839,25 +920,48 @@ window.addEventListener('drop', e => {
   if (file) openFile(file);
 });
 
-let resizeTimer = null;
-let wasNarrow = window.innerWidth < 820;
-window.addEventListener('resize', () => {
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => {
-    // On a narrow window the sidebar is an overlay. Hiding it only at load
-    // meant rotating a phone left it covering the page you're reading.
-    const narrow = window.innerWidth < 820;
-    if (narrow && !wasNarrow) els.sidebar.hidden = true;
-    wasNarrow = narrow;
-    viewer.relayout();
+// One redraw path for every width change of the page column (ticket 08, review): a window resize, the Ask pane, the
+// side bar. It waits 250 ms after the last change, redraws only when the column width really changed, and keeps the
+// place in the book. rescale() of the viewer stretches the picture on screen by the right ratio until the new
+// render is ready, so all pages end at one scale (relayout() measured the new scale first and stretched by 1).
+let redrawTimer = null, drawnWidth = null;
+function scheduleRedraw() {
+  clearTimeout(redrawTimer);
+  redrawTimer = setTimeout(() => {
+    const w = els.scroller.clientWidth;
+    if (w === drawnWidth) return;
+    drawnWidth = w;
+    const sc = els.scroller;
+    const anchor = sc.scrollHeight ? sc.scrollTop / sc.scrollHeight : 0;
+    viewer.rescale();
+    // the word highlight and the sentence mark come back on the new pages (the viewer keeps them); the place stays
+    requestAnimationFrame(() => { if (sc.scrollHeight) sc.scrollTop = Math.round(anchor * sc.scrollHeight); });
   }, 250);
+}
+
+let wasNarrow = isNarrow();
+window.addEventListener('resize', () => {
+  // On a narrow window the sidebar is an overlay. Hiding it only at load
+  // meant rotating a phone left it covering the page you're reading.
+  const narrow = isNarrow();
+  if (narrow && !wasNarrow) els.sidebar.hidden = true;
+  wasNarrow = narrow;
+  scheduleRedraw();
 });
+
+if (typeof ResizeObserver === 'function') {
+  let firstSize = true;
+  new ResizeObserver(() => {
+    if (firstSize) { firstSize = false; drawnWidth = els.scroller.clientWidth; return; }  // the first size: drawn at load
+    scheduleRedraw();
+  }).observe(els.scroller);
+}
 
 window.addEventListener('beforeunload', saveProgress);
 
 const savedRate = localStorage.getItem('pr.rate');
 if (savedRate) els.rateSel.value = savedRate;
-if (window.innerWidth < 820) els.sidebar.hidden = true;
+if (isNarrow()) els.sidebar.hidden = true;  // ticket 22 review: a narrow window starts with the side bar closed
 
 /* --------------------------------------------------------------------- boot */
 
@@ -971,7 +1075,7 @@ async function pollExport() {
     try {
       const res = await fetch(src, { credentials: 'include' });
       if (!res.ok) throw new Error(res.status);
-      const name = new URLSearchParams(location.search).get('name') || decodeURIComponent(new URL(src, location.href).pathname.split('/').pop() || 'document.pdf');
+      const name = new URLSearchParams(location.search).get('name') || decodeURIComponent(new URL(src, location.href).pathname.split('/').pop() || 'book.pdf');
       if (await openFile(new File([await res.arrayBuffer()], name, { type: 'application/pdf' }), { library: true })) document.title = name + ' · Read Aloud 2';
     } catch (err) {
       setStatus('Could not open this PDF (' + err.message + '). Use "Open PDF" to choose the file.');

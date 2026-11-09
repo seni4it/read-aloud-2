@@ -133,6 +133,9 @@
   --dur-move: 200ms;                        /* a bar or a panel that changes size */
   --dur-word: 90ms;                         /* the word box that moves with the voice */
   --dur-flash: 1200ms;                      /* a highlight that is found in the list flashes on the page */
+  --dur-spin: 800ms;                        /* one turn of the spinner on the play button (ticket 21) */
+  --delay-tip: 500ms;                       /* a tooltip comes after a hover or focus of this time (ticket 21) */
+  --delay-wait: 300ms;                      /* the spinner shows only for a wait longer than this (ticket 21) */
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
 
   /* ---------- focus ring ---------- */
@@ -182,5 +185,6 @@
     --dur-move: 0ms;
     --dur-word: 0ms;
     --dur-flash: 0ms;
+    --dur-spin: 0ms;
   }
 }

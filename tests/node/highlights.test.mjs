@@ -640,7 +640,7 @@ test('the status shows the Mac voice from the first word after the voice server 
   r.made.kokoro.device = null;
   r.byId('nextBtn').fire('click');
   r.made.kokoro.current.onWord(0, 5);
-  assert.equal(r.els.engineStatus.textContent, 'ready · kokoro');
+  assert.equal(r.els.engineStatus.textContent, 'Natural voice ready');
 });
 
 test('the library Book of the page gets its library id; a PDF opened after it gets none', async () => {
