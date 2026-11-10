@@ -368,9 +368,9 @@ const soundKey = (voiceId, text, plan) => voiceId + '\u0000' + text + (plan && p
 export const SPEED_METHODS = [
   { id: 'A', label: 'Voice speaks faster' },
   { id: 'C', label: 'Stretch, same pitch' },
-  { id: 'B', label: 'Simple, pitch goes up' }
+  { id: 'B', label: 'Simple, as before' }
 ];
-export const SPEED_METHOD_DEFAULT = 'A';
+export const SPEED_METHOD_DEFAULT = 'B';
 const SPEED_MIN = 0.5, SPEED_MAX = 4;  // the range that voice-server.py takes (SPEED_MIN, SPEED_MAX)
 
 /**

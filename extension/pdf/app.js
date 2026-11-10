@@ -1152,6 +1152,10 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 
 const savedRate = localStorage.getItem('pr.rate');
 if (savedRate) els.rateSel.value = savedRate;
+if (els.rateSel.selectedIndex < 0) {  // a saved speed that is no longer a choice (1.25, 2.5): the nearest choice
+  const want = Number(savedRate) || 1.1;
+  els.rateSel.value = [...els.rateSel.options].map((o) => o.value).reduce((a, b) => (Math.abs(b - want) < Math.abs(a - want) ? b : a));
+}
 
 /* Ticket 06: the speed method (A "Voice speaks faster", the default; C "Stretch, same pitch"; B "Simple, pitch goes
  * up"). One stored setting with the web-page player: chrome.storage.sync 'ra2'.method when the reader is a page of the
@@ -1159,7 +1163,7 @@ if (savedRate) els.rateSel.value = savedRate;
  * A change while reading says the present Sentence again from the present word at the new speed, as a speed change does. */
 const METHOD_KEY = 'ra2.speedMethod';
 const SYNC = globalThis.chrome?.storage?.sync;
-const knownMethod = (m) => (['A', 'B', 'C'].includes(m) ? m : 'A');
+const knownMethod = (m) => (['A', 'B', 'C'].includes(m) ? m : 'B');
 let wantedMethod = knownMethod(localStorage.getItem(METHOD_KEY));  // the stored choice; what is shown can differ (C without ffmpeg)
 function setSpeed() { engines.kokoro.setSpeed?.(wantedMethod, Number(els.rateSel.value || 1)); }
 // C needs ffmpeg on the voice server. Without it the reader plays A: the select shows A, C is disabled, the hint says

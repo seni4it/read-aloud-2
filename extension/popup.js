@@ -15,7 +15,7 @@ const save = () => chrome.storage.sync.set({ ra2: cfg });
   $('rate').oninput = () => { $('rv').textContent = Number($('rate').value).toFixed(1) + '×'; };
   $('rate').onchange = () => { cfg.rate = Number($('rate').value); save(); };
   // ticket 06: the speed method, one setting for the web-page player and the reader (ra2.method; A when not set)
-  $('method').value = ['A', 'B', 'C'].includes(cfg.method) ? cfg.method : 'A';
+  $('method').value = ['A', 'B', 'C'].includes(cfg.method) ? cfg.method : 'B';
   $('method').onchange = async () => {  // only the method key, read fresh: a speed or voice that another tab saved is kept
     cfg.method = $('method').value;
     const now = (await chrome.storage.sync.get('ra2')).ra2 || {};

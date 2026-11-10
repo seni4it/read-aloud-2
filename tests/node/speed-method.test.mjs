@@ -1,6 +1,6 @@
 // Tests for ticket 06, the speed method (owner's decision of 10 Nov 2026): A "Voice speaks faster" (the voice model
 // makes the sound at the asked speed, played at rate 1; the default), C "Stretch, same pitch" (the speed-1 sound
-// stretched by the voice server with ffmpeg), B "Simple, pitch goes up" (the speed-1 sound played faster; the method
+// stretched by the voice server with ffmpeg), B "Simple, as before" (the speed-1 sound played faster; the method
 // of before). And part 1: the reader served by the voice server asks its own origin (localhost or 127.0.0.1).
 // tts.js, background.js and offscreen.js run as they are in node:vm contexts with fakes. No voice server is asked.
 // Run: node --test --test-timeout=120000 tests/node/speed-method.test.mjs
@@ -127,12 +127,12 @@ test('part 1: opened from http://localhost:8793 the engine asks localhost for th
 
 // ---------------------------------------------------------------- the setting
 
-test('the setting has three choices with plain labels, and A is the default', () => {
+test('the setting has three choices with plain labels, and B (as before) is the default', () => {
   const t = loadTts();
   assert.deepEqual(JSON.parse(JSON.stringify(t.SPEED_METHODS.map((m) => [m.id, m.label]))),
-    [['A', 'Voice speaks faster'], ['C', 'Stretch, same pitch'], ['B', 'Simple, pitch goes up']]);
-  assert.equal(t.SPEED_METHOD_DEFAULT, 'A');
-  assert.equal(new t.ServerEngine().method, 'A');
+    [['A', 'Voice speaks faster'], ['C', 'Stretch, same pitch'], ['B', 'Simple, as before']]);
+  assert.equal(t.SPEED_METHOD_DEFAULT, 'B');
+  assert.equal(new t.ServerEngine().method, 'B');
 });
 
 test('the reader settings panel and the add-on popup show the same three choices, A first and chosen', () => {
@@ -159,7 +159,7 @@ test('the speed plan of each method: what the server makes, and the playback rat
   for (const m of ['A', 'B', 'C']) assert.deepEqual(plan(m, 1), { speed: 1, method: '', rate: 1 }, `speed 1 is one sound (${m})`);
   assert.deepEqual(plan('C', 2, ['A', 'B']), { speed: 2, method: 'A', rate: 1 }, 'no ffmpeg on the server: C is not offered, A plays');
   assert.deepEqual(plan('A', 2, ['B']), { speed: 1, method: '', rate: 2 }, 'an old voice server without speed: B, so the speed still changes');
-  assert.deepEqual(plan('X', 2), plan('A', 2), 'an unknown stored value is the default');
+  assert.deepEqual(plan('X', 2), plan('B', 2), 'an unknown stored value is the default');
   assert.deepEqual(plan('A', 1.25), { speed: 1.25, method: 'A', rate: 1 });
 });
 
@@ -312,12 +312,12 @@ function loadBackground({ ra2 = {}, methods = ['A', 'B', 'C'], voicesFail = fals
 
 test('web player: the background reads the one shared setting (chrome.storage.sync ra2.method) and tells the sound page the plan', async () => {
   for (const [ra2, methods, want] of [
-    [{}, undefined, { speed: 2, method: 'A', rate: 1, keepPitch: true }],                 // default A
+    [{}, undefined, { speed: 1, method: '', rate: 2, keepPitch: true }],                  // default B, as before ticket 06
     [{ method: 'A' }, undefined, { speed: 2, method: 'A', rate: 1, keepPitch: true }],
     [{ method: 'C' }, undefined, { speed: 2, method: 'C', rate: 1, keepPitch: true }],
-    [{ method: 'B' }, undefined, { speed: 1, method: '', rate: 2, keepPitch: false }],     // the pitch goes up, as its name says
+    [{ method: 'B' }, undefined, { speed: 1, method: '', rate: 2, keepPitch: true }],      // the browser keeps the pitch, as before
     [{ method: 'C' }, ['A', 'B'], { speed: 2, method: 'A', rate: 1, keepPitch: true }],    // no ffmpeg: A, as in the reader (review 3)
-    [{ method: 'A' }, null, { speed: 1, method: '', rate: 2, keepPitch: false }],          // an old voice server: B, as in the reader
+    [{ method: 'A' }, null, { speed: 1, method: '', rate: 2, keepPitch: true }],          // an old voice server: B, as in the reader
   ]) {
     const b = loadBackground({ ra2, methods });
     b.send({ cmd: 'speak', engine: 'kokoro', id: 1, text: 'A.', voice: 'af', rate: 2, next: ['B.'] });
@@ -334,7 +334,7 @@ test('web player: a speed change while reading. B changes the rate of the sound;
   await settle();
   b.send({ cmd: 'rate', rate: 2 });
   await settle();
-  assert.deepEqual(b.toOffscreen.filter((m) => m.cmd === 'rate').map((m) => [m.rate, m.keepPitch]), [[2, false]]);
+  assert.deepEqual(b.toOffscreen.filter((m) => m.cmd === 'rate').map((m) => [m.rate, m.keepPitch]), [[2, true]]);
   assert.deepEqual(b.toTabs.filter(([, m]) => m.evt === 'lost'), []);
 
   b = loadBackground({ ra2: { method: 'A' } });
@@ -446,7 +446,7 @@ test('the speed plan of the add-on background gives the same sound as the reader
       const m = b.toOffscreen.find((x) => x.cmd === 'speak');
       const p = t.speedPlan(method, rate, methods);
       assert.deepEqual([m.speed, m.method, m.rate], [p.speed, p.method, p.rate], `${method} ${rate} ${methods}`);
-      assert.equal(m.keepPitch, !(p.speed === 1 && p.rate !== 1), 'the pitch goes up only when the plain sound plays faster');
+      assert.equal(m.keepPitch, true, 'the web player keeps the pitch at each speed, as before ticket 06');
     }
   }
 });
@@ -496,7 +496,7 @@ test('review 13: content.js has the same heard-speed curve as the reader and use
   for (const m of ['A', 'B', 'C']) for (const r of [0.8, 1, 1.2, 1.5, 2, 2.5, 3, 3.5, 4]) {
     assert.ok(Math.abs(heard(m, r) - t.heardSpeed(m, r)) < 1e-9, `${m} ${r}`);
   }
-  assert.match(src, /function timeLeft\(at\)[\s\S]{0,300}heardSpeed\(cfg\.method \|\| 'A', cfg\.rate\)/);
+  assert.match(src, /function timeLeft\(at\)[\s\S]{0,300}heardSpeed\(cfg\.method \|\| 'B', cfg\.rate\)/);
 });
 
 // ---- review 8: the popup writes only the method: a newer rate or voice of another tab is not written over

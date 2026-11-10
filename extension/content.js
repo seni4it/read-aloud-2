@@ -528,7 +528,7 @@
     ear: '<path d="M4 14v-2a8 8 0 0 1 16 0v2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3" y="13" width="5" height="7" rx="2" fill="currentColor"/><rect x="16" y="13" width="5" height="7" rx="2" fill="currentColor"/>',
   };
   const svg = (n) => `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">${ICON[n]}</svg>`;
-  const RATES = [0.8, 1, 1.2, 1.5, 1.75, 2, 2.5, 3, 3.5, 4];
+  const RATES = [0.8, 1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 2];  // the owner: steps of 0.1; above 2 he cannot follow the voice
   const fmtRate = (r) => `${Math.round(r * 100) / 100}×`;
   sh.innerHTML = `<style>
     :host { all: initial; ${vars(TOKENS.root)} }
@@ -668,7 +668,7 @@
   }
   function timeLeft(at) {  // about 160 words a minute at speed 1
     let words = 0; for (let k = at; k < S.segs.length; k++) words += S.segs[k].words.length;
-    const min = words / (160 * heardSpeed(cfg.method || 'A', cfg.rate));
+    const min = words / (160 * heardSpeed(cfg.method || 'B', cfg.rate));
     return min < 1 ? '< 1 min left' : `${Math.round(min)} min left`;
   }
   const hiddenHere = () => cfg.hidden.includes(location.hostname);

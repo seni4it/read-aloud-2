@@ -6,9 +6,9 @@ const SERVER = 'http://127.0.0.1:8793';
 let owner = null;  // { tab, id, engine, ext, plan }: who is speaking now; ext = an add-on page (the paste page)
 
 // Ticket 06, the speed method. One stored setting for the web-page player, the paste page and the reader of the
-// add-on: chrome.storage.sync 'ra2'.method ('A' when not set; the popup and the reader write it). The same rule as
+// add-on: chrome.storage.sync 'ra2'.method ('B' when not set; the popup and the reader write it). The same rule as
 // speedPlan() in pdf/tts.js (a test keeps them equal): A asks the voice model for the speed and plays at rate 1;
-// C asks the voice server to stretch (ffmpeg); B plays the speed-1 sound faster, the pitch goes up. The voice server's
+// C asks the voice server to stretch (ffmpeg); B plays the speed-1 sound faster (the method before ticket 06, and the default). The voice server's
 // /voices answer says the methods it offers. One rule with the reader (review of ticket 06): C without ffmpeg plays A;
 // an old voice server (no "speed" in /voices) or no answer plays B.
 const METHODS = ['A', 'B', 'C'];
@@ -24,17 +24,17 @@ async function serverMethods() {
   return offered;
 }
 const setting = () => chrome.storage.sync.get('ra2').then((r) => (r && r.ra2) || {}, () => ({}));
-// The same rule as speedPlan() in pdf/tts.js, plus keepPitch: the pitch goes up only when the plain sound plays faster.
+// The same rule as speedPlan() in pdf/tts.js, plus keepPitch: the web player keeps the pitch at each speed, as before ticket 06.
 function soundPlan(method, rate, methods) {
   rate = Number(rate) || 1;
-  let m = METHODS.includes(method) ? method : 'A';
+  let m = METHODS.includes(method) ? method : 'B';
   if (!methods.includes(m)) m = methods.includes('A') ? 'A' : 'B';
-  if (rate === 1 || m === 'B') return { speed: 1, method: '', rate, keepPitch: rate === 1 };
+  if (rate === 1 || m === 'B') return { speed: 1, method: '', rate, keepPitch: true };  // as before ticket 06: the browser keeps the pitch
   const speed = Math.min(4, Math.max(0.5, Math.round(rate * 100) / 100));
   return { speed, method: m, rate: rate / speed, keepPitch: true };
 }
 async function planFor(rate) {
-  const method = (await setting()).method || 'A';
+  const method = (await setting()).method || 'B';
   return soundPlan(method, rate, rate === 1 || method === 'B' ? METHODS : await serverMethods());
 }
 // An add-on page has no content script: it hears events only by a runtime broadcast. A web tab hears them
