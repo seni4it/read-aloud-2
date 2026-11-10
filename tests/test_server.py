@@ -64,6 +64,15 @@ class Pure(unittest.TestCase):
             vs._cache.clear(); vs._cache_size[0] = 0
 
 
+class ContentLength(unittest.TestCase):
+    def test_only_ascii_digits_are_a_length(self):
+        # str.isdigit() takes Unicode digits, and int() then fails on some ('\u00b2') or reads others ('\u0661\u0662' = 12)
+        self.assertEqual(vs.content_length('12'), 12)
+        self.assertEqual(vs.content_length(None), 0)
+        for bad in ('-1', 'abc', '1e3', '+5', '\u00b2', '\u0661\u0662'):
+            self.assertIsNone(vs.content_length(bad), repr(bad))
+
+
 class Http(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -268,10 +277,10 @@ class Http(unittest.TestCase):
 
     def test_position_bad_content_length_is_a_400(self):
         bid = self.add('PosLen.pdf', PDF + b'poslen')
-        for length in ('-1', 'abc', '1e3', ''):
+        for length in ('-1', 'abc', '1e3', '', '\u0661\u0662', '\u00b2'):  # also Unicode digits: Arabic-Indic one two, superscript two
             with socket.create_connection(('127.0.0.1', PORT), timeout=5) as s:
                 s.sendall((f'POST /library/{bid}/position HTTP/1.1\r\nHost: 127.0.0.1:{PORT}\r\nOrigin: {BASE}\r\n'
-                           f'Content-Length: {length}\r\nConnection: close\r\n\r\n{{"i": 1}}').encode())
+                           f'Content-Length: {length}\r\nConnection: close\r\n\r\n{{"i": 1}}').encode('utf-8'))
                 head = s.recv(200).decode('latin-1')
             self.assertTrue(head.startswith('HTTP/1.0 400') or head.startswith('HTTP/1.1 400'), (length, head[:40]))
         self.assertIsNone(json.loads(get(f'/library/{bid}/position')[2]))
@@ -308,6 +317,26 @@ class Http(unittest.TestCase):
         self.assertLessEqual(kept['ct'], vs.time.time() * 1000, 'a reader time in the future is kept as the voice server time')
         code, kept = self.pos(bid, {'i': 5, 't': int(vs.time.time() * 1000) + 1})
         self.assertEqual(kept['i'], 5, 'the next true save is written')
+
+    def test_position_minutes_left_null_or_missing_is_taken(self):
+        # JSON.stringify writes NaN and Infinity as null; the reader also leaves a bad minLeft out
+        bid = self.add('PosNull.pdf', PDF + b'posnull')
+        code, kept = self.pos(bid, b'{"i": 3, "minLeft": null, "t": 5}')
+        self.assertEqual(code, 200)
+        self.assertNotIn('minLeft', kept)
+        self.assertEqual(self.pos(bid, b'{"i": 4, "t": 6}')[0], 200)
+        self.assertEqual(self.pos(bid, b'{"i": 4, "total": null}')[0], 400, 'only minLeft may be null')
+
+    def test_position_same_place_keeps_its_time(self):
+        # t is the time the place changed: a second save of the same place (another tab) does not move "last read"
+        bid = self.add('PosSame.pdf', PDF + b'possame')
+        _, first = self.pos(bid, {'i': 8, 'at': 'eight', 't': 100})
+        vs.time.sleep(0.01)
+        _, again = self.pos(bid, {'i': 8, 'at': 'eight', 't': 200})
+        self.assertEqual(again['t'], first['t'])
+        vs.time.sleep(0.01)
+        _, moved = self.pos(bid, {'i': 9, 'at': 'nine', 't': 300})
+        self.assertGreater(moved['t'], first['t'])
 
     def test_library_list_gives_the_position(self):
         a = self.add('ListPosA.pdf', PDF + b'listposa')

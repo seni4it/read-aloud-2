@@ -19,7 +19,8 @@ Desktop reader (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
   GET/POST /library/<id>/position   the book's reading position, kept in .notes/<id>.position.json. POST {i, total,
                                  page, pages, minLeft, at, t}: t is the reader's clock, kept as "ct" (never later than
                                  this server's clock); "t" becomes this server's time of the save. A save with an older
-                                 ct than the kept one is not written; the answer is always the kept record. GET gives
+                                 ct than the kept one is not written; the same place keeps its old t; minLeft may be
+                                 null or missing; the answer is always the kept record. GET gives
                                  null before the first save; /library.json gives it as "position" of each book
   GET /claude/sessions      the Claude desktop app's conversations (title, folder); POST /claude/setting {session, title, cwd, group, auto}
   POST /claude/send         {points: [{book, page, text}]}: key points appended to key-points/<book>.md in that folder
@@ -300,6 +301,15 @@ def notes_rev_save(bid, rev):
 POSITION_NUMBERS = ('i', 'total', 'page', 'pages', 'minLeft', 't', 'ct')  # the keys of a reading position; 'at' is text
 
 
+def content_length(value):
+    """The body length of a request: 0 with no header, None when it is not ASCII digits only (str.isdigit() would take
+    Unicode digits, and int() then fails or reads them)."""
+    value = (value or '').strip()
+    if not value:
+        return 0
+    return int(value) if re.fullmatch(r'[0-9]+', value) else None
+
+
 def position_path(bid):
     return os.path.join(LIB, '.notes', bid + '.position.json')
 
@@ -326,6 +336,8 @@ def position_clean(rec):
     if not (isinstance(rec.get('i'), int) and not isinstance(rec['i'], bool) and rec['i'] >= 0):
         raise ValueError('i must be a sentence number')
     out = {}
+    if rec.get('minLeft', 0) is None:  # the reader's JSON.stringify writes NaN or Infinity as null: no minutes left
+        rec = {k: v for k, v in rec.items() if k != 'minLeft'}
     for k in POSITION_NUMBERS[:-1]:  # 'ct' is set below, never taken from the reader
         if k in rec:
             if not num(rec[k]) or (k in ('total', 'page', 'pages') and not isinstance(rec[k], int)):
@@ -1243,11 +1255,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(403, 'Forbidden')
             return
         url = urllib.parse.urlsplit(self.path)
-        size = (self.headers.get('Content-Length') or '0').strip()
-        if not size.isdigit():  # a negative or bad length: never rfile.read(-1), which waits for the end of the stream
+        size = content_length(self.headers.get('Content-Length'))
+        if size is None:  # a negative or bad length: never rfile.read(-1), which waits for the end of the stream
             self.send_error(400, 'Bad Content-Length')
             return
-        size = int(size)
         try:
             if url.path == '/server/restart':  # the restart button: answer first, then start this server again in place
                 self.copyfile(self.reply(b'{"restarting": true}', 'application/json'), self.wfile)
@@ -1410,6 +1421,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         if kept and isinstance(kept.get('ct'), (int, float)) and kept['ct'] > rec['ct']:
                             rec = kept  # a late save of an older place: the answer is the kept record
                         else:
+                            if kept and kept.get('i') == rec['i'] and kept.get('at', '') == rec.get('at', '') and isinstance(kept.get('t'), (int, float)):
+                                rec['t'] = kept['t']  # the same place: t stays the time the place changed ("last read")
                             os.makedirs(os.path.join(LIB, '.notes'), exist_ok=True)
                             path = position_path(m.group(1))
                             with open(path + '.tmp', 'w', encoding='utf-8') as f:

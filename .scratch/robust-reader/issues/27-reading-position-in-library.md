@@ -118,3 +118,19 @@ New tests:
 - Node, `library-page.test.mjs`: `progressFrom`; the order uses only voice server times, and a browser time far in the future does not win.
 
 Counts: `python -m unittest tests.test_server`: 29 tests, OK (6 runs in a row, all OK). `node --test --test-timeout=120000 tests/node/`: 486 pass, 0 fail (476 at the first run; the other agent adds tests in parallel).
+
+### Second review repairs (10 Nov 2026)
+
+Tests first; the 6 new reader tests and the 3 new voice server tests were red before the repairs.
+
+1. **A tab that did not move writes nothing.** `saveProgress` writes `pr.pos.<document>` and `ra2.lib.<id>` only when the place of this tab changed since its own last write or since the load. The page keeps that place in `positionWritten`, not in the shared browser storage. A tab in the background that closes, or that pauses with no move, never writes its old place with a new time. A Book with no saved copy at all gets one at its first save. Test: "a background tab that did not move writes nothing on hide; the other tab's newer place wins on reopen".
+2. **Nothing before the load.** `saveProgress` returns before any write while the place of the open Book is not loaded, or while the Book has no sentences. Test: "a page hide before the read-in ends writes no own copy".
+3. **`positionSent` after an answer only.** It changes only when the POST answers ok. A failed send is tried again at the next save. While a send waits for its answer, the same place is not sent a second time (`positionSending`). Test: "a failed send is tried again at the next save".
+4. **The GET has a time limit.** After 10 s (`POSITION_GIVE_UP`) the request is aborted (`AbortController`, when the page has it) and counts as no answer. The held sends then go. The read-in still waits 3 s at most. Test: "a GET that never answers holds the sends only until the time limit" (fake timers).
+5. **`t` is the time the place changed.** This is so in `pr.pos`, in `ra2.lib` and in the record that is sent. While the voice reads, the time of a send is the time of the move to that sentence. The voice server keeps the old `t` when the same place is saved again. So the "last read" of the library does not move when a page closes. A place that no owner chose (`t` 0, a new Book that was only opened) is not sent. Tests: "t is the time the place changed: the library copy and a send of the same place keep it" and `test_position_same_place_keeps_its_time`.
+6. **Content-Length.** The new `content_length()` takes ASCII digits only (`re.fullmatch(r'[0-9]+', ...)`). With no header the length is 0. Any other value gives 400. Before, `str.isdigit()` took Unicode digits, and `int()` then failed on '²' or read '١٢' as 12. Tests: `ContentLength.test_only_ascii_digits_are_a_length`, and the raw socket test with these values.
+7. **Minutes left.** The reader leaves out a `minLeft` that is not a finite number. The voice server takes a missing or `null` `minLeft`, but only `minLeft` may be null. When the POST answer is not ok, the reader writes a `console.warn`. Tests: "a minutes-left that is not a number is left out, and a refused send gives a console warning" and `test_position_minutes_left_null_or_missing_is_taken`.
+
+Changed: `extension/pdf/app.js` (the ticket 27 block, `saveProgress`, and the lines of `parseDocument` after the load); `voice-server.py` (`content_length`, `position_clean`, the POST route and the route list); `tests/test_server.py`; `tests/node/reading-position.test.mjs`. The fake voice server in the tests now has the same rule for the same place.
+
+Counts: `python -m unittest tests.test_server`: 32 tests, OK, two runs. `node --test --test-timeout=120000 tests/node/`: 492 pass, 0 fail.

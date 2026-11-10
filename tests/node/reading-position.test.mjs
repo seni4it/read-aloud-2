@@ -87,6 +87,12 @@ function fakeServer() {
   };
   srv.post = (rec) => {
     srv.posts.push(rec);
+    if (srv.failNext) { srv.failNext--; throw new TypeError('Failed to fetch'); }
+    if (srv.refuse) return null;  // HTTP 400
+    if (srv.kept && srv.kept.i === rec.i && srv.kept.at === rec.at && !(srv.kept.ct > Math.min(rec.t ?? Date.now(), Date.now()))) {
+      srv.kept = { ...rec, ct: Math.min(rec.t ?? Date.now(), Date.now()), t: srv.kept.t };  // the same place keeps its time
+      return srv.kept;
+    }
     const now = Date.now(), ct = Math.min(rec.t ?? now, now);
     if (!(srv.kept && srv.kept.ct > ct)) srv.kept = { ...rec, ct, t: now };
     return srv.kept;
@@ -94,11 +100,11 @@ function fakeServer() {
   return srv;
 }
 
-function loadReader({ server = fakeServer(), storage = {} } = {}) {
+function loadReader({ server = fakeServer(), storage = {}, shared = null } = {}) {
   const ids = {};
   const byId = (id) => (ids[id] ||= element(id));
   byId('rateSel').value = '1';
-  const store = new Map([['pr.engine.chosen', 'system'], ...Object.entries(storage)]);
+  const store = shared || new Map([['pr.engine.chosen', 'system'], ...Object.entries(storage)]);
   const parses = [], winListeners = {}, docListeners = {}, timers = [], warnings = [];
   const engine = (id) => class { constructor() { this.id = id; this.ready = true; this.available = true; } async init() {} listVoices() { return [{ id: 'v1', label: 'Voice' }]; }
     speak() { return Promise.resolve(); } stop() {} prefetch() {} };
@@ -133,7 +139,10 @@ function loadReader({ server = fakeServer(), storage = {} } = {}) {
     fetch: async (url, init = {}) => {
       url = String(url);
       if (url.startsWith('/library/file/')) return { ok: true, arrayBuffer: async () => new TextEncoder().encode('%PDF-1.7 test').buffer };
-      if (url === `/library/${ID}/position` && init.method === 'POST') { const kept = server.post(JSON.parse(init.body)); return { ok: true, json: async () => kept }; }
+      if (url === `/library/${ID}/position` && init.method === 'POST') {
+        const kept = server.post(JSON.parse(init.body));
+        return kept ? { ok: true, json: async () => kept } : { ok: false, status: 400, json: async () => ({}) };
+      }
       if (url === `/library/${ID}/position` && server.get) return server.get();
       throw new Error('no network in a test');
     },
@@ -274,4 +283,80 @@ test('the voice server keeps a newer place than the one sent: the reader takes i
   r.hide();
   assert.equal(r.posts.length, 1, 'the old place is not sent again');
   assert.equal(JSON.parse(r.store.get('ra2.lib.' + ID)).i, 80, 'the own copy follows');
+});
+
+// ---- second review ---------------------------------------------------------------------------------------------
+test('a background tab that did not move writes nothing on hide; the other tab\'s newer place wins on reopen', async () => {
+  const srv = fakeServer();
+  const shared = new Map([['pr.engine.chosen', 'system']]);
+  const a = await openWith({ server: srv, shared });
+  a.pause(25);
+  const b = await openWith({ server: srv, shared });
+  assert.equal(b.state.index, 25);
+  b.pause(60);
+  const before = shared.get('pr.pos.' + a.state.docKey);
+  a.hide();                                          // tab A goes to the background, still at 25
+  a.byId('playBtn').fire('click'); a.byId('playBtn').fire('click');   // and a pause there with no move
+  assert.equal(shared.get('pr.pos.' + a.state.docKey), before, 'tab A does not write its old place with a new time');
+  srv.get = () => Promise.resolve({ ok: true, json: async () => null });  // the voice server does not help here
+  const c = await openWith({ server: srv, shared });
+  assert.equal(c.state.index, 60);
+});
+
+test('a page hide before the read-in ends writes no own copy', async () => {
+  const r = loadReader({ storage: { 'pr.pos.x': 'kept' } });
+  await until(() => r.parses.length, 'the read-in');
+  r.hide();
+  for (const [k, v] of r.store) assert.ok(!k.startsWith('pr.pos.') || v === 'kept', 'no new own copy: ' + k);
+  assert.ok(!r.store.has('ra2.lib.' + ID));
+});
+
+test('a failed send is tried again at the next save', async () => {
+  const srv = fakeServer();
+  const r = await openWith({ server: srv });
+  srv.failNext = 1;
+  r.pause(25);
+  await tick(); await tick();
+  assert.equal(srv.kept, null, 'the first send failed');
+  r.hide();
+  await until(() => srv.kept && srv.kept.i === 25, 'the second send');
+});
+
+test('a GET that never answers holds the sends only until the time limit', async () => {
+  const srv = fakeServer();
+  srv.hang = true;
+  const r = loadReader({ server: srv });
+  await endReadIn(r);
+  r.fire(3000);
+  await until(() => r.byId('parseFill').style.width === '100%', 'the end of the read-in');
+  r.pause(40);
+  assert.equal(r.posts.length, 0, 'held');
+  r.fire(10000);
+  await until(() => r.posts.length === 1, 'the held place goes after the time limit');
+  assert.ok(r.warnings.some((w) => /did not answer/.test(w)));
+});
+
+test('t is the time the place changed: the library copy and a send of the same place keep it', async () => {
+  const srv = fakeServer();
+  const r = await openWith({ server: srv });
+  r.pause(25);
+  const t1 = JSON.parse(r.store.get('ra2.lib.' + ID)).t;
+  assert.equal(r.posts[0].t, t1);
+  await new Promise((done) => setTimeout(done, 5));
+  r.byId('playBtn').fire('click'); r.byId('playBtn').fire('click');   // play and pause with no move
+  r.hide();
+  assert.equal(JSON.parse(r.store.get('ra2.lib.' + ID)).t, t1, 'the library "last read" does not move on a close');
+  assert.equal(r.posts.length, 1, 'the same place is not sent again');
+});
+
+test('a minutes-left that is not a number is left out, and a refused send gives a console warning', async () => {
+  const srv = fakeServer();
+  const r = await openWith({ server: srv });
+  r.byId('rateSel').value = 'not a speed';
+  r.pause(25);
+  assert.equal(r.posts.length, 1);
+  assert.equal('minLeft' in r.posts[0], false, 'no minLeft: JSON would make it null');
+  srv.refuse = true;
+  r.state.index = 26; r.hide();
+  await until(() => r.warnings.some((w) => /did not take it/.test(w)), 'the warning');
 });
