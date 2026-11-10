@@ -9,6 +9,7 @@
   h1 { font-size: var(--text-20); line-height: var(--leading-20); margin: 0; }
   .big { height: var(--control-l); border: 0; border-radius: var(--radius-round); background: var(--color-play); color: var(--color-on-play); font: inherit; font-weight: 700; font-size: var(--text-16); cursor: pointer; transition: background-color var(--dur-hover) var(--ease-out); }
   .big:hover { background: var(--color-play-hover); }
+  label.f[hidden] { display: none; }
   label.f { display: grid; gap: var(--space-1); color: var(--color-text-muted); font-size: var(--text-14); line-height: var(--leading-14); }
   select, input[type=range] { width: 100%; font: inherit; accent-color: var(--color-action); }
   /* a select is 40 px high with 16 px text, as in the settings panel of the reader */
@@ -33,6 +34,7 @@
   <h1>Read Aloud 2</h1>
   <button class="big" id="read" type="button">▶ Listen to this page</button>
   <label class="f">Voice <select id="voice"></select></label>
+  <label class="f" id="italianRow" hidden>Voice for Italian <select id="italian"></select></label>
   <label class="f">Speed <b id="rv"></b><input id="rate" type="range" min="0.5" max="2" step="0.1"></label>
   <label class="f">Speed method <select id="method"><option value="A">Voice speaks faster</option><option value="C">Stretch, same pitch</option><option value="B" selected>Simple, as before</option></select></label>
   <section class="switches" aria-labelledby="swHead">

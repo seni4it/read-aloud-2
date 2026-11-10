@@ -120,7 +120,7 @@ test('Player bar settings: headings English, Italian, then the Mac voice; Sara a
   const answer = { server: true, natural: SERVER, system: [{ id: 'Milena', label: 'Milena, Russian' }] };
   const fns = src.match(/\n  function versionLine\(version, voices\) \{[\s\S]*?\n  \}\n  [\s\S]*?\n  function addonVersion\(\) \{[\s\S]*?\n  \}\n/);  // ticket 03: menu() also writes the version line
   const line = el('p');
-  const ctx = { document, Object, String, Map, chrome: { runtime: { getManifest: () => ({ version: '1' }) } }, $: (id) => (id === 'verLine' ? line : box), ask: async () => answer, dead: false, cfg: { voice: 'kokoro:if_sara' }, save() {}, S: {}, play() {} };
+  const ctx = { document, Object, String, Map, chrome: { runtime: { getManifest: () => ({ version: '1' }) } }, $: (id) => (id === 'verLine' ? line : box), ask: async () => answer, dead: false, cfg: { voice: 'kokoro:if_sara' }, save() {}, S: {}, play() {}, showItalian() {} };  // ticket 04: tested in italian-voice-choice.test.mjs
   vm.runInNewContext(`${groups[0]}\n${fns[0]}\n${menu[0]}\nthis.menu = menu;`, ctx);
   await ctx.menu();
   assert.deepEqual(headed(box, 'H4', 'BUTTON'), [
@@ -174,7 +174,7 @@ function readerSelect(engine) {
   assert.match(src, /import \{[^}]*\bvoiceGroups\b[^}]*\} from '\.\/language\.js';/, 'the reader imports voiceGroups');
   const sel = el('select');
   Object.defineProperty(sel, 'options', { get: () => sel.childNodes.flatMap((c) => (c.tagName === 'OPTGROUP' ? c.childNodes : [c])) });
-  const ctx = { document, engine, voiceGroups, els: { voiceSel: sel }, localStorage: { getItem: () => null }, showVoiceName() {} };
+  const ctx = { document, engine, voiceGroups, els: { voiceSel: sel }, localStorage: { getItem: () => null }, showVoiceName() {}, fillItalianSelect() {} };  // ticket 04: tested in italian-voice-choice.test.mjs
   vm.runInNewContext(`${fn[0]}\nfillVoiceSelect();`, ctx);
   return sel;
 }

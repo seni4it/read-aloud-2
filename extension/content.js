@@ -10,7 +10,7 @@
   if (document.documentElement.dataset.readAloud2) return;
   document.documentElement.dataset.readAloud2 = '1';
 
-  const DEFAULTS = { voice: 'kokoro:af_heart', rate: 1.2, follow: true, launcher: true, hoverPlay: true, clickJump: true, pdf: true, hidden: [] };
+  const DEFAULTS = { voice: 'kokoro:af_heart', italianVoice: 'if_sara', rate: 1.2, follow: true, launcher: true, hoverPlay: true, clickJump: true, pdf: true, hidden: [] };
   const SKIP = 'script,style,noscript,template,svg,math,canvas,video,audio,iframe,select,option,textarea,input,button,pre,nav,footer,aside,'
     + '[aria-hidden="true"],[hidden],[role=navigation],[role=banner],[role=contentinfo],[role=complementary],[contenteditable=""],[contenteditable=true],ra2-root,'
     // page clutter Speechify also skips: citation numbers, info boxes, edit links, site notices, share and cookie bars
@@ -331,6 +331,24 @@
       : 'The voice server is old and has no Italian voice. Restart it.';
     return head ? `${head} ${tail}` : tail;
   }
+  // Spec "Italian voices", ticket 04: the voice rule with the stored voice for Italian, the Italian voices of the server
+  // list, and the line that says why another voice reads. Copies of the ones in pdf/language.js (a test keeps them equal).
+  const isItalianVoice = (id) => /^i[fm]_/.test(id || '');
+  function voiceForLanguage(voice, lang, italian = 'if_sara') {
+    if (lang === 'it' && /^[ab][fm]_/.test(voice || '')) return isItalianVoice(italian) ? italian : 'if_sara';
+    if (lang === 'en' && isItalianVoice(voice)) return 'af_heart';
+    return voice;
+  }
+  function italianVoices(voices) {
+    return (voiceGroups(voices).find((g) => g.name === 'Italian') || { voices: [] }).voices;
+  }
+  function voiceReason(chosen, used, lang, place = 'page', name = '') {
+    if (!used || !chosen || used === chosen) return '';
+    const who = name || String(used).replace(/^(kokoro|system):/, '').replace(/^[a-z]{2}_/, '').replace(/^./, (c) => c.toUpperCase());
+    const language = { it: 'Italian', en: 'English', ru: 'Russian' }[lang];
+    if (lang !== 'ru' && /^kokoro:/.test(chosen) && /^system:/.test(used)) return `The voice server does not answer, so ${who} reads this ${place}.`;
+    return language ? `This ${place} is in ${language}, so ${who} reads it.` : `${who} reads this ${place}.`;
+  }
   // The version of the add-on from its manifest. An old tab has no add-on connection: then no version, and no throw.
   function addonVersion() {
     try { return chrome.runtime.getManifest().version || ''; } catch { return ''; }
@@ -348,21 +366,37 @@
     return langOf.lang || (/^en/.test(PAGE_LANG) ? 'en' : '');
   }
   let natOff = false, natTimer = null;  // the voice server failed: the Mac voice reads until it answers again
-  function voiceFor(text, segs = S.segs) {
+  // Ticket 04: the last natural voice list of the voice server. The stored voice for Italian reads only when this list
+  // has it; else Sara (a voice that the voice server does not offer would fail, and the Mac voice would read). Before
+  // the list is known, Sara reads, and the first Italian Sentence asks the list once.
+  let natVoices = null, natAsked = false;
+  function knowVoices(v) {
+    if (v && v.server && Array.isArray(v.natural)) natVoices = v.natural;
+  }
+  function italianFor() {
+    const want = cfg.italianVoice || DEFAULTS.italianVoice;
+    if (want === 'if_sara') return want;
+    if (!natVoices) {
+      if (!natAsked) { natAsked = true; ask({ cmd: 'voices' }).then(knowVoices, () => {}); }
+      return 'if_sara';
+    }
+    return natVoices.some((x) => x && x.id === want) ? want : 'if_sara';
+  }
+  // off: the natural voices are off (natOff; the reason line also gives true when the voice list says so)
+  function voiceFor(text, segs = S.segs, off = natOff) {
     if (/[\u0400-\u04FF]/.test(text || '')) return 'system:Milena';
     const lang = pageLang(segs);
     // English text never goes to the Russian voice (the only Mac voice in the list) or to the
     // Mac default: both give a Russian accent. Samantha is the Mac's own American voice, Alice its Italian voice.
-    if (cfg.voice.startsWith('system:') || (natOff && cfg.voice.startsWith('kokoro:'))) return lang === 'it' ? 'system:Alice' : 'system:Samantha';
-    // Italian text with an English natural voice: Sara (a chosen Nicola stays). English text with an Italian voice:
-    // Heart, as an Italian voice reads English badly.
-    if (lang === 'it' && /^kokoro:[ab]/.test(cfg.voice)) return 'kokoro:if_sara';
-    if (lang === 'en' && /^kokoro:i/.test(cfg.voice)) return 'kokoro:af_heart';
+    if (cfg.voice.startsWith('system:') || (off && cfg.voice.startsWith('kokoro:'))) return lang === 'it' ? 'system:Alice' : 'system:Samantha';
+    // Italian text with an English natural voice: the voice for Italian (Sara or Nicola, ticket 04; a chosen Italian
+    // voice stays). English text with an Italian voice: Heart, as an Italian voice reads English badly.
+    if (cfg.voice.startsWith('kokoro:')) return 'kokoro:' + voiceForLanguage(cfg.voice.slice(7), lang, lang === 'it' ? italianFor() : undefined);
     return cfg.voice;
   }
   function retryNatural() {  // ask the server every 5 s; the next sentence after it answers is natural again
     cancel(natTimer);
-    natTimer = later(() => ask({ cmd: 'voices' }).then((v) => { if (v && v.server) natOff = false; else if (!dead) retryNatural(); }), 5000);
+    natTimer = later(() => ask({ cmd: 'voices' }).then((v) => { knowVoices(v); if (v && v.server) natOff = false; else if (!dead) retryNatural(); }), 5000);
   }
   let cur = cfg.voice;  // the voice of the sentence being read (set by play)
   const engine = () => (cur.startsWith('kokoro:') ? 'kokoro' : 'system');
@@ -719,6 +753,8 @@
     <div class="menu" id="menu" role="dialog" aria-labelledby="menuTitle" tabindex="-1" hidden>
       <h3 id="menuTitle">Settings</h3>
       <h4>Voice</h4><div id="voices"></div>
+      <p class="ver" id="voiceWhy" role="status"></p>
+      <div id="itBox" hidden><h4 id="itHead">Voice for Italian</h4><div class="places" id="itVoices" role="group" aria-labelledby="itHead"></div></div>
       <h4 id="placeHead">Move player</h4>
       <div class="places" role="group" aria-labelledby="placeHead">${['left', 'right', 'top', 'bottom'].map((p) => `<button id="place-${p}" aria-pressed="false">${p[0].toUpperCase() + p.slice(1)}</button>`).join('')}</div>
       <p class="ver" id="verLine" role="status"></p>
@@ -837,15 +873,49 @@
           e.stopPropagation(); cfg.voice = id; save();
           for (const q of box.childNodes) q.classList?.remove('on');
           b.classList.add('on'); if (S.playing && !S.paused) play(S.i, S.w);
+          showWhy();
         });
         box.append(b);
       }
     };
     $('verLine').textContent = versionLine(addonVersion(), v && v.server ? v.natural : null);  // ticket 03
+    showItalian(v);  // ticket 04 (it also keeps the voice list for the voice rule)
     if (!v) { box.textContent = 'The voices did not load. Close and open the settings again.'; return; }
     for (const g of voiceGroups(v.natural)) add(g.name, g.voices, 'kokoro:');  // English, then Italian (h4 headings)
     if (!v.server) box.append(Object.assign(document.createElement('p'), { textContent: 'Natural voices are off: the voice server is not running.' }));
     add('Russian', v.system, 'system:');
+  }
+  // Spec "Italian voices", ticket 04: the setting "Voice for Italian", only when the voice server offers two or more
+  // Italian voices; its choices are the Italian voices of the server list. Then the line that says why another voice
+  // reads this page.
+  let menuOff = false;  // the voice list of the open settings says the voice server is off (for the reason line only)
+  function showItalian(v) {
+    menuOff = !v || !v.server;
+    knowVoices(v);
+    const list = v && v.server ? italianVoices(v.natural) : [];
+    const box = $('itVoices');
+    box.textContent = '';
+    $('itBox').hidden = list.length < 2;
+    if (list.length >= 2) for (const x of list) {
+      const b = document.createElement('button');
+      b.textContent = String(x.label || x.id).split(',')[0];
+      b.setAttribute('aria-pressed', String((cfg.italianVoice || DEFAULTS.italianVoice) === x.id));
+      b.addEventListener('click', (e) => {
+        e.stopPropagation(); cfg.italianVoice = x.id; save();
+        for (const q of box.childNodes) q.setAttribute?.('aria-pressed', String(q === b));
+        const seg = S.segs && S.segs[S.i];
+        if (S.playing && !S.paused && seg && voiceFor(seg.say) !== cur) play(S.i, S.w);
+        showWhy();
+      });
+      box.append(b);
+    }
+    showWhy();
+  }
+  function showWhy() {
+    const seg = S.segs && S.segs[S.i];
+    const text = seg ? seg.say : '';
+    const lang = /[\u0400-\u04FF]/.test(text) ? 'ru' : pageLang(S.segs);
+    $('voiceWhy').textContent = voiceReason(cfg.voice, voiceFor(text, S.segs, natOff || menuOff), lang, 'page');
   }
 
   // ---------- moving the player (ticket 25) and the Listen button (ticket 31): platform pointer events, no library ----------
@@ -1016,7 +1086,7 @@
   chrome.storage.sync.get('ra2').then((r) => { cfg = { ...DEFAULTS, ...(r.ra2 || {}) }; if (!KNOWN.test(cfg.voice)) cfg.voice = DEFAULTS.voice; cur = cfg.voice; ui(); }).catch(() => ui());
   chrome.storage.onChanged.addListener((c) => {
     if (dead) return;
-    if (c.ra2) { cfg = { ...DEFAULTS, ...c.ra2.newValue }; ui(); }
+    if (c.ra2) { cfg = { ...DEFAULTS, ...c.ra2.newValue }; ui(); if (!$('menu').hidden) showWhy(); }
     if (c[PLACE_KEY] && showing && !barDrag.busy()) setPlace(c[PLACE_KEY].newValue, false);  // moved in another tab; a hidden bar reads it at its next show
     if (c[LAUNCH_KEY] && !launchDrag.busy()) { launchAt = c[LAUNCH_KEY].newValue; showLaunch(); }  // the Listen button moved in another tab
   });

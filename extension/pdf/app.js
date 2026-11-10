@@ -8,7 +8,7 @@ import { setupNotes } from './notes.js';
 import { setupAsk } from './ask.js';
 import { newerPosition } from './position.js';
 import { textLanguage, voiceForLanguage } from './language.js';
-import { voiceGroups, versionLine } from './language.js';
+import { voiceGroups, versionLine, italianVoices, voiceReason } from './language.js';
 
 // Hand pdf.js an explicit module worker. Left to its own auto-setup it was
 // silently falling back to a main-thread "fake worker", where render() never
@@ -95,14 +95,25 @@ function setWaiting(on) {
   els.playBtn.setAttribute('aria-busy', on ? 'true' : 'false');
 }
 
+// Spec "Italian voices", ticket 04: the voice for Italian (Sara, the default, or Nicola). One stored setting with the
+// web-page player and the popup: chrome.storage.sync 'ra2'.italianVoice when the reader is a page of the add-on. A reader
+// served by the voice server has no chrome.storage: it keeps its own value in localStorage 'ra2.italianVoice'.
+const ITALIAN_KEY = 'ra2.italianVoice';
+let italianVoice = (() => { try { return localStorage.getItem(ITALIAN_KEY) || 'if_sara'; } catch { return 'if_sara'; } })();
+let italianChosen = false;  // the owner chose in this reader: the first read of the add-on storage must not undo it
+// The stored voice for Italian when the natural voice offers it; else Sara.
+function italianFor() {
+  return engine.id !== 'system' && italianVoices(engine.listVoices()).some(v => v.id === italianVoice) ? italianVoice : 'if_sara';
+}
+
 /**
  * Ticket 32: the voice that reads a text of language lang. An Italian Book read with an English natural voice is
- * read by Sara (Nicola stays Nicola); an English Book with an Italian voice is read by Heart. A Mac voice of the
+ * read by the voice for Italian (ticket 04; a chosen Italian voice stays); an English Book with an Italian voice is read by Heart. A Mac voice of the
  * wrong language goes to the first Mac voice of the text's language, when this Mac has one.
  */
 function readingVoice(lang = state.lang) {
   const chosen = els.voiceSel.value;
-  if (engine.id !== 'system') return voiceForLanguage(chosen, lang);
+  if (engine.id !== 'system') return voiceForLanguage(chosen, lang, italianFor());
   const v = engine.listVoices().find(x => x.id === chosen);
   return lang && v && v.lang && v.lang !== lang ? engine.voiceOf?.(lang) || chosen : chosen;
 }
@@ -115,13 +126,57 @@ function showVoiceName() {
   const swapped = !!els.voiceSel.value && used !== els.voiceSel.value;
   const opt = swapped ? Array.from(els.voiceSel.options || []).find(o => o.value === used)
     : els.voiceSel.selectedOptions && els.voiceSel.selectedOptions[0];
-  const nameOf = opt ? opt.textContent.split(/ — | \(| · /)[0].trim() : swapped ? used.replace(/^[a-z]{2}_/, '').replace(/^./, c => c.toUpperCase()) : '';
+  const nameOf = opt ? opt.textContent.split(/ — | \(| · |,/)[0].trim() : swapped ? used.replace(/^[a-z]{2}_/, '').replace(/^./, c => c.toUpperCase()) : '';
   const name = $('settingsVoice');
   if (name) name.textContent = nameOf;
   const hint = $('voiceHint');
   if (!hint) return;
   hint.hidden = !swapped;
-  hint.textContent = swapped ? `This book is in ${state.lang === 'it' ? 'Italian' : 'English'}, so ${nameOf} reads it.` : '';
+  hint.textContent = swapped ? voiceReason(els.voiceSel.value, used, state.lang, 'book', nameOf) : '';
+}
+
+// Ticket 04: the select "Voice for Italian", only when the natural voice offers two or more Italian voices; its choices
+// are these voices, by their names.
+function fillItalianSelect() {
+  const row = $('italianRow'), sel = $('italianSel');
+  if (!row || !sel) return;
+  const list = engine.id === 'system' ? [] : italianVoices(engine.listVoices());
+  row.hidden = list.length < 2;
+  sel.innerHTML = '';
+  for (const v of list.length >= 2 ? list : []) {
+    const opt = document.createElement('option');
+    opt.value = v.id;
+    opt.textContent = String(v.label || v.id).split(/,| — | · /)[0].trim();
+    sel.appendChild(opt);
+  }
+  sel.value = italianFor();
+}
+
+// Ticket 04: a new voice for Italian is kept here. store: the owner chose it in this reader, so it also goes to the
+// add-on storage (only its key, read fresh: a speed or voice that another tab saved meanwhile is kept); a value that
+// came from the add-on storage is not written back. While reading, the present Sentence is said again from the present
+// word, only when the voice that reads changed (an English Book reads on).
+function setItalianVoice(id, { store = true } = {}) {
+  const before = readingVoice();
+  italianVoice = id || 'if_sara';
+  try { localStorage.setItem(ITALIAN_KEY, italianVoice); } catch { /* storage blocked */ }
+  if (store) {
+    italianChosen = true;
+    const sync = globalThis.chrome?.storage?.sync;
+    try { sync?.get('ra2').then((r) => sync.set({ ra2: { ...(r?.ra2 || {}), italianVoice } })).catch(() => {}); } catch { /* the add-on is gone */ }
+  }
+  fillItalianSelect();
+  showVoiceName();
+  if (state.playing && readingVoice() !== before) { stop(); play(); }
+}
+
+// Ticket 04: the value that the popup or the web-page player stored. It wins at the start, unless the owner chose in
+// this reader before the answer came; a later change there reaches this open reader. No chrome (the reader from the
+// voice server): nothing, and no throw.
+function watchItalianVoice() {
+  const storage = globalThis.chrome?.storage;
+  try { storage?.sync?.get('ra2').then((r) => { const v = r?.ra2?.italianVoice; if (v && !italianChosen && v !== italianVoice) setItalianVoice(v, { store: false }); }, () => {}); } catch { /* the add-on is gone */ }
+  try { storage?.onChanged?.addListener((c) => { const v = c?.ra2?.newValue?.italianVoice; if (v && v !== italianVoice) setItalianVoice(v, { store: false }); }); } catch { /* the add-on is gone */ }
 }
 
 function fillVoiceSelect() {
@@ -141,6 +196,7 @@ function fillVoiceSelect() {
   }
   if (saved && list.some(v => v.id === saved)) els.voiceSel.value = saved;
   els.voiceSel.disabled = !list.length;
+  fillItalianSelect();  // ticket 04
   showVoiceName();
 }
 
@@ -984,6 +1040,10 @@ els.voiceSel.addEventListener('change', () => {
   showVoiceName();
   if (state.playing) { stop(); play(); }  // Read Aloud 2: go on from the present word
 });
+
+// Ticket 04: the voice for Italian.
+$('italianSel')?.addEventListener('change', () => setItalianVoice($('italianSel').value));
+watchItalianVoice();
 
 els.engineSel.addEventListener('change', () => { localStorage.setItem('pr.engine.chosen', els.engineSel.value); selectEngine(els.engineSel.value); });
 

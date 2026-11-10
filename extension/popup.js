@@ -1,5 +1,5 @@
 // Read Aloud 2 popup: start reading the page, pick voice and speed, switch the page helpers on or off.
-const DEFAULTS = { voice: 'kokoro:af_heart', rate: 1.2, follow: true, launcher: true, hoverPlay: true, clickJump: true, pdf: true, hidden: [] };
+const DEFAULTS = { voice: 'kokoro:af_heart', italianVoice: 'if_sara', rate: 1.2, follow: true, launcher: true, hoverPlay: true, clickJump: true, pdf: true, hidden: [] };
 const $ = (id) => document.getElementById(id);
 let cfg = { ...DEFAULTS }, tab = null, host = '';
 const save = () => chrome.storage.sync.set({ ra2: cfg });
@@ -29,6 +29,12 @@ function versionLine(version, voices) {
   const tail = italian ? `${n} natural voice${n === 1 ? '' : 's'}, ${italian} Italian.`
     : 'The voice server is old and has no Italian voice. Restart it.';
   return head ? `${head} ${tail}` : tail;
+}
+
+// The Italian voices of the server list (spec "Italian voices", ticket 04). A copy of the one in pdf/language.js; a
+// test keeps them equal.
+function italianVoices(voices) {
+  return (voiceGroups(voices).find((g) => g.name === 'Italian') || { voices: [] }).voices;
 }
 
 (async () => {
@@ -61,6 +67,17 @@ function versionLine(version, voices) {
   if (v.server) $('method').querySelector('option[value="C"]').disabled = !(v.methods || []).includes('C');  // ticket 06: no ffmpeg on this Mac
   $('voice').value = cfg.voice;
   $('voice').onchange = () => { cfg.voice = $('voice').value; save(); };
+  // ticket 04 (Italian voices): the voice for Italian text, one setting for the web-page player and the reader. It shows
+  // only when the voice server offers two or more Italian voices; its choices are these voices.
+  const italian = v.server ? italianVoices(v.natural) : [];
+  $('italianRow').hidden = italian.length < 2;
+  if (italian.length >= 2) for (const x of italian) $('italian').append(new Option(String(x.label || x.id).split(',')[0], x.id));
+  $('italian').value = cfg.italianVoice || DEFAULTS.italianVoice;
+  $('italian').onchange = async () => {  // only this key, read fresh: a speed or voice that another tab saved is kept
+    cfg.italianVoice = $('italian').value;
+    const now = (await chrome.storage.sync.get('ra2')).ra2 || {};
+    await chrome.storage.sync.set({ ra2: { ...now, italianVoice: cfg.italianVoice } });
+  };
   $('version').textContent = versionLine(chrome.runtime.getManifest().version, v.server ? v.natural : null);
   $('server').innerHTML = v.server ? 'Natural voices: <b>ready</b>.' : 'Natural voices: <b>off</b>. Start the voice server on your Mac (see README).';
 })();

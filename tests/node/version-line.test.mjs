@@ -126,7 +126,7 @@ async function playerMenu(answer, chrome) {
   assert.ok(parts.every(Boolean), 'content.js has voiceGroups, versionLine, addonVersion and menu');
   const box = el('div'), line = el('p');
   const ctx = { document: { createElement: el }, Object, String, Map, Array, chrome, $: (id) => (id === 'verLine' ? line : box),
-    ask: async () => answer, dead: false, cfg: { voice: 'kokoro:af_heart' }, save() {}, S: {}, play() {} };
+    ask: async () => answer, dead: false, cfg: { voice: 'kokoro:af_heart' }, save() {}, S: {}, play() {}, showItalian() {} };  // ticket 04: tested in italian-voice-choice.test.mjs
   vm.runInNewContext(`${parts.map((p) => p[0]).join('\n')}\nthis.menu = menu;`, ctx);
   await ctx.menu();
   return { box, line };

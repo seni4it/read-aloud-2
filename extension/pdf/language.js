@@ -30,12 +30,15 @@ export const isItalianVoice = (id) => /^i[fm]_/.test(id || '');
 
 /**
  * The natural voice that reads a text of language lang, when the owner chose voice.
- * An Italian text read by an English voice goes to Sara (Nicola stays Nicola: he is Italian too).
+ * An Italian text read by an English voice goes to the voice for Italian, italian (the stored setting "Voice for
+ * Italian", spec "Italian voices" ticket 04; Sara when it is not set or is no Italian voice). A chosen Italian voice
+ * keeps its meaning: it reads Italian text itself.
  * An English text read by an Italian voice goes to Heart: an Italian voice reads English badly.
  * An unknown language keeps the chosen voice.
+ * content.js has a copy (it cannot import); a test keeps the copies equal.
  */
-export function voiceForLanguage(voice, lang) {
-  if (lang === 'it' && /^[ab][fm]_/.test(voice || '')) return 'if_sara';
+export function voiceForLanguage(voice, lang, italian = 'if_sara') {
+  if (lang === 'it' && /^[ab][fm]_/.test(voice || '')) return isItalianVoice(italian) ? italian : 'if_sara';
   if (lang === 'en' && isItalianVoice(voice)) return 'af_heart';
   return voice;
 }
@@ -82,4 +85,29 @@ export function versionLine(version, voices) {
   const tail = italian ? `${n} natural voice${n === 1 ? '' : 's'}, ${italian} Italian.`
     : 'The voice server is old and has no Italian voice. Restart it.';
   return head ? `${head} ${tail}` : tail;
+}
+
+/**
+ * Spec "Italian voices", ticket 04: the Italian voices of a voice list (the /voices list of the voice server), in its
+ * order. The setting "Voice for Italian" shows only when there are two or more; its choices are these voices.
+ * content.js and popup.js have a copy (they cannot import); a test keeps the copies equal.
+ */
+export function italianVoices(voices) {
+  return (voiceGroups(voices).find((g) => g.name === 'Italian') || { voices: [] }).voices;
+}
+
+/**
+ * Spec "Italian voices", ticket 04: the line that says why another voice reads, for example "This page is in
+ * Italian, so Sara reads it." '' when the chosen voice reads. chosen: the main voice the owner chose; used: the
+ * voice that reads; both as ids, with or without the "kokoro:" or "system:" of the web player. lang: 'it', 'en',
+ * 'ru' or '' (not sure). place: "page" (the web player) or "book" (the reader). name: the name of the voice that
+ * reads, when the caller knows it; else it comes from the id ("if_sara" gives "Sara").
+ * content.js has a copy (it cannot import); a test keeps the copies equal.
+ */
+export function voiceReason(chosen, used, lang, place = 'page', name = '') {
+  if (!used || !chosen || used === chosen) return '';
+  const who = name || String(used).replace(/^(kokoro|system):/, '').replace(/^[a-z]{2}_/, '').replace(/^./, (c) => c.toUpperCase());
+  const language = { it: 'Italian', en: 'English', ru: 'Russian' }[lang];
+  if (lang !== 'ru' && /^kokoro:/.test(chosen) && /^system:/.test(used)) return `The voice server does not answer, so ${who} reads this ${place}.`;
+  return language ? `This ${place} is in ${language}, so ${who} reads it.` : `${who} reads this ${place}.`;
 }
