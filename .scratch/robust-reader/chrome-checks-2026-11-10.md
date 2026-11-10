@@ -147,3 +147,44 @@ It holds one test key point from the sample paper. The file was not removed, bec
 ## Screenshots
 
 In the scratch folder of this session, `shots/`: reader at 1280, 800 and 400 px in light and dark, reader during play (light and dark), settings panel open (light and dark), library at 1280, 800 and 400 px (light and dark; they show the owner's book covers, so they stay out of the repository), web bar at 1280, 1024 and 400 px (light and dark), the bar at the left edge, the add-on window (light and dark), and the paste page.
+
+## Second run after the repairs
+
+Date: 10 Nov 2026, later the same night. The setup was the same as in the first run: Chrome for Testing 156, started directly as a binary with a new profile folder in the scratch folder, port 9333, and `--use-mock-keychain --password-store=basic` from the first start. No keychain question came, and every page loaded at once. The add-on loaded from the working tree of `extension/`, so the repairs of FAIL 3 and FAIL 5 that are not committed yet were in the test. This run made no Highlight. The Highlights list of the sample Book on the server is `[]` at the end.
+
+### The five old FAILs
+
+- FAIL 1 (ticket 22, "Try sample"): PASS. At 1280, 1024, 800 and 601 px the button has the `hidden` attribute and its computed display is `none`. The top bar has 5 controls at each width.
+- FAIL 2 (ticket 21, sideways scroll): PASS. At 1280, 1024, 800, 601, 600, 400 and 320 px, `document.documentElement.scrollWidth` equals `innerWidth`. That was also true while the label of the settings button (the last control), of the contents button (the first control) and of the follow button showed, on hover and on focus. The library page has no sideways scroll at 1280, 800, 400 and 320 px.
+- FAIL 4 (icon 404): PASS. No response of 400 or more on the reader load, and no console message about the icon.
+- FAIL 5 (add-on on its own pages): PASS. The reader page and the library page at 127.0.0.1:8793 have no `ra2-root` element and no Listen button. In the reader, Tab from the settings button goes to the page body. In the library, Tab from the last × goes to the page body. The made article on 127.0.0.1:8823 still gets the `ra2-root` element and the Listen button.
+
+### FAIL 3: Previous and Next in the web player
+
+The test page had 30 sentences of three lengths, one after the other. "Sentence N is short." takes about 1.3 s. "Sentence N has a middle length …" takes about 3 s. "Sentence N tells a long story …" takes 7 to 12 s.
+
+How the clicks were made: with `Input.dispatchMouseEvent`. One `mouseMoved`, one `mousePressed` and one `mouseReleased` (left button, `clickCount` 1) went to the centre of the button, measured with `getBoundingClientRect()` inside the closed shadow root just before each click. There was one click for each press.
+
+What was recorded:
+
+- every 100 ms, the sentence and the word that the add-on highlights (`CSS.highlights` "ra2-sentence" and "ra2-word");
+- the add-on events that reach the page, logged in the content script's isolated world: `times`, `start`, `end`, `stopped`, `error`, and every tenth `tick`;
+- the network of the add-on's offscreen page (the `/speak` and `/times` requests) and its console. The offscreen console had no message.
+
+The voice was the natural voice `af_heart`, played by the offscreen page. The Mac voice was not used.
+
+- (a) One Previous during sentence k (k from 4 to 11): PASS, 5 of 5. Each time, the highlight went at once (within 10 ms) to sentence k − 1, at its first word "Sentence". It stayed there until that sentence's own `end` event. Only then did sentence k start. Example: Previous at 6602 ms. Sentence 3 `start` at 6618 ms. Sentence 3 `end` at 7917 ms. Sentence 4 `start` at 7939 ms.
+- (b) One Next: PASS, 5 of 5. Exactly +1 each time (2→3, 7→8, 10→11, 13→14, 16→17), at the first word of the sentence.
+- (c) Two Nexts 150 ms apart: PASS, 5 of 5. Exactly +2 each time (4→6, 8→10, 11→13, 14→16, 17→19).
+- (d) Pause, then Next, then Play: PASS, 1 of 1. The reading was paused at sentence 19. Next started sentence 20 at once, and the button showed "Pause". The reading went on to sentence 21 after its end.
+- (e) Pause right after a Next, wait 2 s, then Play: PASS, 11 of 11. The pause came 0, 5, 20, 40, 50, 60, 80 or 100 ms after the Next, in each case after the `start` event of the new sentence. After 2 s the highlight was on the first word of the new sentence, and the button showed "Play". After Play, the word highlight moved again within about 400 ms (`tick` events came again). The sentence played to its end, and the next sentence followed. No stall.
+
+In an early try of (e), the log showed no event for 9 s after Play. That log did not record `tick` events or word changes, and that sentence was a long one (sentence 22). So it is not evidence of a stall. The 11 tries with word tracking all moved.
+
+A note, not a fail: the first sentence of a reading is cut into short pieces for a fast start. One Previous pressed during sentence 2 went to the last piece of sentence 1 ("while the evening light …"), not to the start of sentence 1.
+
+The voice in the first run, when FAIL 3 was seen, was the same natural voice `af_heart` through the offscreen page. The network log of that run shows `/speak?voice=af_heart` requests from the offscreen page, and no Mac voice was used.
+
+### Cleanup
+
+Only the test Chrome PID that this run started, and the static server on port 8823, were stopped. The voice server still answers. No Highlight was made, so no key point file was written. The file from the first run in the atlas project is a separate matter (see "A side effect to clean up").

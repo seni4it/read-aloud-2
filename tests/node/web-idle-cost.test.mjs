@@ -77,13 +77,13 @@ const all = (top, out = []) => { for (const c of top.childNodes) { out.push(c); 
 
 function loadPage(body, opts = {}) {
   calls = { listen: 0, timer: 0, observer: 0, observe: 0, added: 0, sent: 0, style: 0, rect: 0, walker: 0, pageText: 0 };
-  const html = el('html', {}, [body]);
-  const sent = [], onMessage = [], timers = new Map(), observers = [], scrolls = [];
+  const html = el('html', {}, opts.head ? [el('head', {}, opts.head), body] : [body]);  // opts.head: the elements in <head>
+  const sent = [], onMessage = [], timers = new Map(), observers = [], scrolls = [], storageReads = [];
   let now = 0, timerNo = 0, host = null;
   const win = listeners(true), doc = listeners(true);
   const document = {
     documentElement: html, body, contentType: 'text/html', visibilityState: 'visible',
-    querySelector: (s) => all(body).find((n) => n.nodeType === 1 && n.matches(s)) || null,
+    querySelector: (s) => all(html).find((n) => n.nodeType === 1 && n.matches(s)) || null,
     createElement: (t) => { const e = el(t); if (e.tagName === 'RA2-ROOT') host = e; return e; },
     addEventListener: doc.addEventListener,
     createTreeWalker(top, _what, filter) {
@@ -103,7 +103,11 @@ function loadPage(body, opts = {}) {
       sendMessage: (m) => { calls.sent++; sent.push(m); return Promise.resolve(opts.answer ? opts.answer(m) : undefined); },
       onMessage: { addListener: (f) => onMessage.push(f) },
     },
-    storage: { sync: { get: async () => (opts.settings ? { ra2: opts.settings } : {}), set: async () => {} }, onChanged: { addListener() {} } },
+    storage: {
+      sync: { get: async (k) => { storageReads.push(k); return opts.settings ? { ra2: opts.settings } : {}; }, set: async () => {} },
+      local: { get: async (k) => { storageReads.push(k); return {}; }, set: async () => {} },
+      onChanged: { addListener() { storageReads.push('onChanged'); } },
+    },
   };
   class MutationObserver {
     constructor(f) { calls.observer++; this.f = f; this.on = []; observers.push(this); }
@@ -111,7 +115,7 @@ function loadPage(body, opts = {}) {
     disconnect() { this.on = []; }
   }
   const ctx = vm.createContext({
-    document, chrome, console, location: { protocol: 'https:', hostname: 'example.org' },
+    document, chrome, console, location: opts.location || { protocol: 'https:', hostname: 'example.org', port: '', pathname: '/' },
     NodeFilter: { SHOW_TEXT: 4, FILTER_ACCEPT: 1, FILTER_REJECT: 2 },
     MutationObserver,
     Highlight: class { clear() {} add() {} },
@@ -142,7 +146,7 @@ function loadPage(body, opts = {}) {
   const tell = (m) => onMessage.forEach((f) => f({ to: 'page', ...m }));
   const button = (id) => host.shadow.getElementById(id);
   const watching = () => observers.flatMap((o) => o.on.filter((w) => w.subtree).map((w) => w.target));  // the boxes watched with their content
-  return { ctx, html, body, host, button, sent, tell, wait, mutate, win, doc, timers, watching, scrolls };
+  return { ctx, html, body, host, button, sent, tell, wait, mutate, win, doc, timers, watching, scrolls, storageReads, onMessage };
 }
 const page = (...kids) => el('body', {}, kids);
 const para = (words, top) => { const p = el('p', {}, [words]); p.rect = box(top); return p; };
@@ -455,4 +459,39 @@ test('the default voice on an English page warms the natural voice; a Mac voice 
   await flush();
   pg2.button('launch').fire('mouseenter');
   assert.deepEqual(pg2.sent, []);
+});
+
+// ---------- Chrome check of 10 Nov 2026, FAIL 5: the add-on on the project's own reader and library pages ----------
+// The reader (/reader/ on the voice server) and the library (/app/) have their own player. Both carry
+// <meta name="read-aloud-2" content="own-player">: the add-on then does nothing there (no Listen button, no Tab stop).
+test('a page that has its own player (the reader, the library): no player root, no listener, no storage read, no message', async () => {
+  for (const pathname of ['/reader/index.html', '/app/']) {
+    const meta = el('meta', { name: 'read-aloud-2', content: 'own-player' });
+    const pg = loadPage(page(para(LINE, 100)), { head: [meta], location: { protocol: 'http:', hostname: '127.0.0.1', port: '8793', pathname } });
+    await flush();
+    pg.wait(30000);
+    assert.equal(pg.host, null, 'no player root made: ' + pathname);
+    assert.equal(calls.added, 0, 'no node added to the page');
+    assert.equal(calls.listen, 0, 'no page or window listener');
+    assert.equal(calls.timer, 0, 'no timer');
+    assert.deepEqual(pg.storageReads, [], 'no storage read');
+    assert.equal(pg.onMessage.length, 0, 'no message listener');
+    assert.deepEqual(pg.sent, [], 'no message to the add-on');
+    assert.equal(pg.html.dataset.readAloud2, undefined, 'the page is not marked');
+  }
+});
+
+test('the same meta with another content, or a page of another site, still gets the Listen button', async () => {
+  const meta = el('meta', { name: 'read-aloud-2', content: 'something-else' });
+  const pg = loadPage(page(para(LINE, 100)), { head: [meta] });
+  await flush();
+  assert.equal(calls.added, 1, 'the player root');
+  assert.equal(pg.button('launch').hidden, false, 'the Listen button shows');
+});
+
+test('the reader and the library pages carry the own-player meta', () => {
+  for (const f of ['../../extension/pdf/index.html', '../../app/index.html']) {
+    const html = readFileSync(fileURLToPath(new URL(f, import.meta.url)), 'utf8');
+    assert.match(html, /<meta name="read-aloud-2" content="own-player">/, f);
+  }
 });

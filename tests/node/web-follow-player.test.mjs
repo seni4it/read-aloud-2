@@ -374,3 +374,91 @@ test("after 'stopped', a late 'end' of the stopped sentence does not take the vo
   pg.tell({ evt: 'end', id });  // an event of the old sentence that was already on its way
   assert.equal(pg.spoken.length, n, 'no new sentence was sent');
 });
+
+// ---------- Chrome check of 10 Nov 2026, FAIL 3: Previous and Next sentence ----------
+// The reader (extension/pdf/app.js) goes to index - 1 on Previous and to index + 1 on Next. The web player does the same.
+// A late event of the sentence that was skipped (its 'end', a 'tick') must not move the reading on.
+const SIX = () => page(...['one', 'two', 'three', 'four', 'five', 'six'].map((n, k) => para(`Made line number ${n} here.`, 100 + k * 40)));
+function readTo(pg, k) {  // read on until sentence k sounds, 3 of its 5 words said
+  pg.tell({ cmd: 'readPage' });
+  for (let i = 0; i < k; i++) { const id = pg.last().id; pg.tell({ evt: 'start', id }); pg.tell({ evt: 'end', id }); }
+  const id = pg.last().id;
+  pg.tell({ evt: 'start', id });
+  pg.tell({ evt: 'times', id, starts: [0, 0.2, 0.4, 0.6, 0.8] });
+  pg.tell({ evt: 'tick', id, t: 0.65, d: 1 });
+  return id;
+}
+const press = (pg, id) => pg.button(id).fire('click', { stopPropagation() {} });
+const said = (pg) => pg.last().text.match(/number (\w+)/)[1];
+
+test('Previous goes to the sentence before (as in the reader), also after some words were said; a late end of the old sentence does not move it on', () => {
+  const pg = loadPage(SIX());
+  const old = readTo(pg, 3);
+  assert.equal(said(pg), 'four');
+  press(pg, 'back');
+  assert.equal(said(pg), 'three', 'Previous: the sentence before');
+  const n = pg.spoken.length;
+  pg.tell({ evt: 'tick', id: old, t: 0.9, d: 1 });
+  pg.tell({ evt: 'end', id: old });  // the end of the skipped sentence, already on its way
+  assert.equal(pg.spoken.length, n, 'no new sentence after the late end');
+  const now = pg.last().id;
+  pg.tell({ evt: 'start', id: now }); pg.tell({ evt: 'end', id: now });
+  assert.equal(said(pg), 'four', 'after its own end the reading goes on to the next sentence');
+});
+
+test('Next goes exactly one sentence on; a late end of the old sentence does not move it on', () => {
+  const pg = loadPage(SIX());
+  const old = readTo(pg, 2);
+  press(pg, 'fwd');
+  assert.equal(said(pg), 'four');
+  const n = pg.spoken.length;
+  pg.tell({ evt: 'end', id: old });
+  assert.equal(pg.spoken.length, n);
+  assert.equal(said(pg), 'four');
+});
+
+test('two quick presses: Next Next gives k + 2, Previous Previous gives k - 2, and the late ends move nothing', () => {
+  const pg = loadPage(SIX());
+  const old = readTo(pg, 1);
+  const ids = [old];
+  press(pg, 'fwd'); ids.push(pg.last().id);
+  press(pg, 'fwd');
+  assert.equal(said(pg), 'four', 'k + 2');
+  const n = pg.spoken.length;
+  for (const id of ids) pg.tell({ evt: 'end', id });
+  assert.equal(pg.spoken.length, n, 'the ends of the skipped sentences move nothing');
+  press(pg, 'back'); press(pg, 'back');
+  assert.equal(said(pg), 'two', 'k - 2');
+  press(pg, 'back'); press(pg, 'back');
+  assert.equal(said(pg), 'one', 'Previous stops at the first sentence');
+});
+
+// Review of 10 Nov 2026: the ids of the sentences are counted by each load of the page. After a reload in the same tab
+// the new page must not take a late event (for example of the Mac voice) of the old page as its own.
+test('after a reload of the page, a late end of the old page does not move the new page on', () => {
+  const before = loadPage(SIX());
+  before.tell({ cmd: 'readPage' });
+  const oldId = before.last().id;
+  const after = loadPage(SIX());  // the same tab, loaded again
+  after.tell({ cmd: 'readPage' });
+  const n = after.spoken.length;
+  after.tell({ evt: 'end', id: oldId });  // the end of the old page's first sentence comes late
+  assert.equal(after.spoken.length, n, 'no new sentence on the new page');
+  assert.notEqual(after.last().id, oldId, 'the two loads give different ids');
+});
+
+// Review of 10 Nov 2026, point 3: one mouse click on Next reaches the page's click listener (capture, target = the
+// player root) and the button. Only the button moves the reading, and by one sentence; pointerdown and pointerup on
+// the bar (the drag code) move nothing.
+test('one click on Next: the page listener, the drag listeners and the button together send exactly one sentence', () => {
+  const pg = loadPage(SIX());
+  readTo(pg, 1);
+  const n = pg.spoken.length;
+  const bar = pg.button('bar');
+  bar.fire('pointerdown', { button: 0, pointerId: 1, clientX: 600, clientY: 760, target: pg.button('fwd') });
+  bar.fire('pointerup', { button: 0, pointerId: 1, clientX: 600, clientY: 760 });
+  pg.doc.fire('click', { target: pg.host, clientX: 600, clientY: 760 });
+  press(pg, 'fwd');
+  assert.equal(pg.spoken.length, n + 1, 'one new sentence');
+  assert.equal(said(pg), 'three');
+});

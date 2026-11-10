@@ -2,6 +2,11 @@
 // being spoken, and show the player. Highlights use the CSS Custom Highlight API, so the page itself is never changed.
 (() => {
   'use strict';
+  // The reader and the library of the voice server have their own player and say so in a meta tag. The add-on then does
+  // nothing there: no Listen button, no Tab stop, no listener, no storage read. The tag, not the address, so a new port
+  // or the name "localhost" changes nothing (Chrome check of 10 Nov 2026).
+  // Any page may carry this tag and so turn the add-on off for itself: this is accepted (review of 10 Nov 2026).
+  if (document.querySelector('meta[name="read-aloud-2"][content="own-player"]')) return;
   if (document.documentElement.dataset.readAloud2) return;
   document.documentElement.dataset.readAloud2 = '1';
 
@@ -23,7 +28,9 @@
 
   let cfg = { ...DEFAULTS };
   const host = document.createElement('ra2-root');  // the player; made here so that gone() can remove it at any time
-  const S = { segs: [], i: -1, w: 0, playing: false, paused: false, id: 0, follow: true, base: 0, words: [], weights: [], total: 0, tab: null };
+  // id: the sentence number, started at a random value made one time for each load of the page (a page token), so a
+  // late event of the page before a reload in the same tab (its ids also counted from the start) is never taken as ours
+  const S = { segs: [], i: -1, w: 0, playing: false, paused: false, id: Math.floor(Math.random() * 2 ** 32) * 2 ** 20, follow: true, base: 0, words: [], weights: [], total: 0, tab: null };
   const hasHL = typeof Highlight === 'function' && CSS.highlights;
   const hlWord = hasHL ? new Highlight() : null, hlSent = hasHL ? new Highlight() : null;
   if (hasHL) { CSS.highlights.set('ra2-word', hlWord); CSS.highlights.set('ra2-sentence', hlSent); }
@@ -369,7 +376,8 @@
     S.segs = segsFor(el); S.follow = true;
     const hit = locate(x, y); if (hit) play(...hit); else readBlock(blockOf(el));
   }
-  function back() { if (!S.playing) return; play(S.w - S.base > 1 || S.i === 0 ? S.i : S.i - 1); }
+  // the sentence before, as in the reader (jumpTo(index - 1)); the first sentence starts again
+  function back() { if (!S.playing) return; play(Math.max(0, S.i - 1)); }
 
   // ---------- the player (inside a shadow root, so page styles never touch it) ----------
   // The player bar has the look of the reader player bar (ticket 24): previous, play, next, position, speed, follow,

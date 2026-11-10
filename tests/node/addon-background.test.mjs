@@ -226,3 +226,92 @@ test('sound page: the word-time request has a time limit', async () => {
   assert.ok(times, 'a /times request was made');
   assert.ok(times[1].signal, 'the /times request has an abort signal');
 });
+
+// Chrome check of 10 Nov 2026, FAIL 3: Previous moved the reading to the next sentence, Next moved 2 or 3. Each event
+// of the sound page must carry the id of the sentence whose sound made it. An event of a sentence that was stopped
+// (Chrome can hand it out after the switch) must never carry the id of the new sentence, or the page moves on once more.
+function loadOffscreenAudio() {
+  const onMessage = event();
+  const sent = [], made = [];
+  class FakeAudio {
+    constructor() { this.currentTime = 0; this.duration = 1; this.ended = false; this.plays = []; made.push(this); }
+    play() { this.paused = false; return new Promise((ok, no) => this.plays.push({ ok, no })); }
+    // as in Chrome: pause() rejects each play() that has not answered yet with an AbortError
+    pause() { this.paused = true; const p = this.plays; this.plays = []; p.forEach((x) => x.no(Object.assign(new Error('interrupted by pause()'), { name: 'AbortError' }))); }
+    sound() { this.onplaying?.(); const p = this.plays; this.plays = []; p.forEach((x) => x.ok()); }  // the sound starts: 'playing', then play() answers
+    load() {} removeAttribute(k) { if (k === 'src') this.src = ''; }
+  }
+  const ctx = vm.createContext({
+    chrome: { runtime: { onMessage, sendMessage: (m) => { sent.push(m); return Promise.resolve(); } } },
+    Audio: FakeAudio, fetch: async () => ({ json: async () => ({ starts: [] }) }), setInterval, clearInterval, setTimeout, clearTimeout, AbortSignal, console,
+  });
+  vm.runInContext(readFileSync(EXT + 'offscreen.js', 'utf8'), ctx, { filename: 'offscreen.js' });
+  const speak = (id) => onMessage.fire({ to: 'offscreen', cmd: 'speak', tab: 1, id, text: 'Sentence ' + id + '.', voice: 'af', rate: 1, next: [] }, {}, () => {});
+  const cmd = (c) => { let answer; onMessage.fire({ to: 'offscreen', cmd: c }, {}, (v) => { answer = v; }); return answer; };
+  const evts = (evt) => sent.filter((m) => m.evt === evt).map((m) => m.id);
+  return { speak, cmd, made, evts, current: () => made[made.length - 1] };
+}
+
+test('sound page: an end or error of a stopped sentence never carries the id of the sentence after it', async () => {
+  const o = loadOffscreenAudio();
+  o.speak(1); o.current().sound(); await settle();
+  assert.deepEqual(o.evts('start'), [1]);
+  const first = o.current(), firstEnded = first.onended, firstError = first.onerror;
+  o.speak(2);  // Previous or Next: sentence 2 is asked for while sentence 1 sounds
+  await settle();
+  // what Chrome may still hand out for the stopped sound: its 'ended' or 'error', to the element's handler of now
+  first.onended?.(); first.onerror?.();
+  firstEnded?.(); firstError?.();
+  assert.deepEqual(o.evts('end'), [], 'no end for sentence 2 before it was even heard');
+  assert.deepEqual(o.evts('error'), [], 'no error for sentence 2 from the old sound');
+  o.current().sound(); await settle();
+  assert.deepEqual(o.evts('start'), [1, 2]);
+  o.current().ended = true; o.current().onended();
+  o.current().onended?.();  // a second 'ended' of the same sound
+  assert.deepEqual(o.evts('end'), [2], 'sentence 2 ends once');
+  o.cmd('stop');
+});
+
+test('sound page: an end that comes before the sentence started is not sent; it is sent when the start comes', async () => {
+  const o = loadOffscreenAudio();
+  o.speak(1);
+  const a = o.current();
+  a.ended = true; a.onended?.();  // a very short sound that ended before play() answered
+  assert.deepEqual(o.evts('end'), [], 'no end before the start');
+  a.sound(); await settle();
+  assert.deepEqual(o.evts('start'), [1]);
+  assert.deepEqual(o.evts('end'), [1], 'the end follows the start');
+  o.cmd('stop');
+});
+
+// Review of 10 Nov 2026: a pause while the first sound still loads rejects play() with an AbortError. The start must
+// still come (from the element's own 'playing' or from resume), or the end is never sent and the reading stops.
+test('sound page: pause while the sound loads, then resume: one start and one end', async () => {
+  const o = loadOffscreenAudio();
+  o.speak(1);
+  const a = o.current();
+  o.cmd('pause'); await settle();  // the pending play() is rejected with an AbortError
+  assert.deepEqual(o.evts('start'), [], 'nothing was heard yet');
+  assert.equal(o.cmd('resume'), true, 'there is audio to go on with');
+  a.sound(); await settle();
+  assert.deepEqual(o.evts('start'), [1], 'one start');
+  a.ended = true; a.onended(); a.onended();
+  assert.deepEqual(o.evts('end'), [1], 'one end');
+  assert.deepEqual(o.evts('error'), []);
+  o.cmd('stop');
+});
+
+test('sound page: pause while the sound loads, then Next before resume: only the next sentence starts and ends', async () => {
+  const o = loadOffscreenAudio();
+  o.speak(1);
+  const first = o.current();
+  o.cmd('pause'); await settle();
+  o.speak(2);
+  first.onplaying?.(); first.onended?.();  // anything late of the first sound
+  const b = o.current();
+  b.sound(); await settle();
+  b.ended = true; b.onended();
+  assert.deepEqual(o.evts('start'), [2]);
+  assert.deepEqual(o.evts('end'), [2]);
+  o.cmd('stop');
+});
