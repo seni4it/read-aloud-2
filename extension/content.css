@@ -1,3 +1,7 @@
-/* Read Aloud 2: word and sentence highlight (CSS Custom Highlight API: the page's own text is not changed) */
-::highlight(ra2-sentence) { background-color: rgba(255, 140, 0, 0.18); }
-::highlight(ra2-word) { background-color: #FF8C00; color: #111111; }
+/* Read Aloud 2: Word highlight and its Sentence shade (CSS Custom Highlight API: the page's own text is not changed).
+   The colours are the design tokens --color-sentence, --color-word and --color-on-word of extension/pdf/tokens.css
+   (ticket 26). A web page does not load that file, so each var() carries the token value as its fallback, and the
+   names have our prefix, so that a page with its own --color-word cannot change our marks. No file sets the --ra2-
+   names now; tests/node/web-player-leftovers.test.mjs checks that the fallbacks equal the tokens. */
+::highlight(ra2-sentence) { background-color: var(--ra2-color-sentence, rgba(255, 140, 0, 0.18)); }
+::highlight(ra2-word) { background-color: var(--ra2-color-word, #ff8c00); color: var(--ra2-color-on-word, #0f172a); }

@@ -30,7 +30,7 @@
   const host = document.createElement('ra2-root');  // the player; made here so that gone() can remove it at any time
   // id: the sentence number, started at a random value made one time for each load of the page (a page token), so a
   // late event of the page before a reload in the same tab (its ids also counted from the start) is never taken as ours
-  const S = { segs: [], i: -1, w: 0, playing: false, paused: false, id: Math.floor(Math.random() * 2 ** 32) * 2 ** 20, follow: true, base: 0, words: [], weights: [], total: 0, tab: null };
+  const S = { segs: [], i: -1, w: 0, playing: false, paused: false, id: Math.floor(Math.random() * 2 ** 32) * 2 ** 20, follow: true, base: 0, words: [], weights: [], total: 0, tab: null, boxes: [] };
   const hasHL = typeof Highlight === 'function' && CSS.highlights;
   const hlWord = hasHL ? new Highlight() : null, hlSent = hasHL ? new Highlight() : null;
   if (hasHL) { CSS.highlights.set('ra2-word', hlWord); CSS.highlights.set('ra2-sentence', hlSent); }
@@ -154,6 +154,9 @@
   // The first piece read is about 4 words, so the voice starts within half a second (each request costs about
   // 0.2 s plus 0.06 s a word); the rest of the sentence is made while those words play. The cut is at a comma, or
   // before a small joining word, so it sounds like a natural pause.
+  // The pieces are for the voice only. For the owner they stay one Sentence (ticket 26): each piece keeps its whole
+  // Sentence in `of`, so the shade covers the whole Sentence, the count counts it once, and Previous and Next skip the
+  // pieces. Without this, the first Sentence of a page showed as short Sentences (Chrome check of 10 Nov 2026).
   const JOIN = /^(and|or|but|that|which|who|with|without|in|on|of|for|to|from|by|as|at|into|when|while|because|if|the|a|an|is|are|was|were)$/i;
   function quick(seg) {
     const w = seg.words; if (w.length < 8) return [seg];
@@ -163,7 +166,7 @@
     for (let i = 5; i >= 3 && k < 0; i--) if (JOIN.test(word(i + 1))) k = i;  // or before a joining word
     if (k < 0) k = 4;
     const part = (from, to) => { const words = w.slice(from, to); const s = words[0].start, e = to < w.length ? w[to].start : seg.end;
-      return { b: seg.b, start: s, end: e, words, say: seg.b.text.slice(s, e).replace(/\s+/g, ' ').trim() }; };
+      return { b: seg.b, start: s, end: e, words, say: seg.b.text.slice(s, e).replace(/\s+/g, ' ').trim(), of: seg }; };
     return [part(0, k + 1), part(k + 1, w.length)];
   }
 
@@ -228,7 +231,9 @@
     const seg = S.segs[i];
     if (!seg) { finish(); return; }
     S.i = i; S.w = w; S.base = w; S.playing = true; S.paused = false; S.id++; cur = voiceFor(seg.say); S.starts = null; S.wait = true;
-    S.box = scroller(seg.b.el);  // found once for each sentence: it reads the style of each box around the text
+    // the boxes that scroll the text: found once for each block (it reads the style of each box around the text), so the
+    // pieces of one Sentence and the next Sentences of the same paragraph read no style
+    if (S.boxesOf !== seg.b.el) { S.boxes = scrollers(seg.b.el); S.boxesOf = seg.b.el; }
     const words = seg.words.slice(w);
     const text = seg.b.text.slice(words[0].start, seg.end).replace(/\s+/g, ' ').trim();
     // where each word starts in the spoken text, and how long it roughly lasts (for voices without word events)
@@ -236,7 +241,8 @@
     for (const x of words) { const t = seg.b.text.slice(x.start, x.end); const k = text.indexOf(t, pos); S.words.push(k < 0 ? pos : k); pos = (k < 0 ? pos : k) + t.length; }
     S.weights = words.map((x) => { const t = seg.b.text.slice(x.start, x.end); return t.length + 2 + (/[.,;:!?]$/.test(t) ? 4 : 0); });
     S.total = S.weights.reduce((a, c) => a + c, 0);
-    hlSent && (hlSent.clear(), hlSent.add(rangeOf(seg.b, seg.start, seg.end)));
+    const whole = seg.of || seg;  // a piece of a Sentence: the shade covers the whole Sentence
+    hlSent && (hlSent.clear(), hlSent.add(rangeOf(seg.b, whole.start, whole.end)));
     mark(w);
     send({ cmd: 'speak', id: S.id, engine: engine(), voice: voiceId(), rate: cfg.rate, text,
       next: S.segs.slice(i + 1, i + 3).map((s) => s.say) });
@@ -248,22 +254,39 @@
     if (hlWord) { hlWord.clear(); hlWord.add(rangeOf(seg.b, x.start, x.end)); }
     const r = rangeOf(seg.b, x.start, x.end).getBoundingClientRect();
     if (!r.width && !r.height) return;  // the site replaced this text: its place is not known, so the page stays still
-    const box = S.box, v = box ? box.getBoundingClientRect() : { top: 0, bottom: innerHeight };
-    const out = r.top < Math.max(40, v.top) || r.bottom > Math.min(innerHeight - 110, v.bottom);
-    if (out && S.follow) bringIntoView(r, box);
+    let top = 40, bottom = innerHeight - 110;  // the part of the window that each box around the text also shows
+    for (const b of S.boxes) { const v = b.getBoundingClientRect(); top = Math.max(top, v.top); bottom = Math.min(bottom, v.bottom); }
+    const out = r.top < top || r.bottom > bottom;
+    if (out && S.follow) bringIntoView(r, S.boxes);
     $('find')?.classList.toggle('away', out && !S.follow);
   }
-  // Follow moves the box that scrolls the text: on most pages the window, on some sites (docs, web mail) a box in the page.
-  function scroller(el) {  // the nearest box around el that scrolls; null when the window scrolls the text
-    for (let x = el; x && x !== document.body && x !== document.documentElement; x = x.parentElement) {
-      if (/auto|scroll|overlay/.test(getComputedStyle(x).overflowY) && x.scrollHeight > x.clientHeight) return x;
+  // Follow moves the boxes that scroll the text: on most pages the window, on some sites (docs, web mail) a box in the
+  // page, and on some a box in a box. The way up crosses shadow roots (ticket 26): a text in a <slot> goes to its slot,
+  // and the top of a shadow root goes to its host.
+  const up = (x) => x.assignedSlot || x.parentElement || x.getRootNode?.()?.host || null;
+  function scrollers(el) {  // the boxes around el that scroll, the nearest first; [] when only the window scrolls the text
+    const out = [];
+    for (let x = el; x && x !== document.body && x !== document.documentElement; x = up(x)) {
+      if (/auto|scroll|overlay/.test(getComputedStyle(x).overflowY) && x.scrollHeight > x.clientHeight) out.push(x);
     }
-    return null;
+    return out;
   }
-  function bringIntoView(r, box) {  // r: the word's place on the screen; it goes to 40% of the height
+  // r: the word's place on the screen. Each box, the nearest first and then the window, that does not show the word
+  // moves it to 40% of its height. A box moves only the boxes inside it, so the next box uses the new place of the word.
+  // force: the target button; the nearest box (or the window) moves also when it shows the word.
+  function bringIntoView(r, boxes, force) {
     const behavior = matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
-    if (box) box.scrollBy({ top: r.top - box.getBoundingClientRect().top - box.clientHeight / 2.5, behavior });
-    else scrollTo({ top: scrollY + r.top - innerHeight / 2.5, behavior });
+    let t = r.top, b = r.bottom;
+    boxes.forEach((box, k) => {
+      const v = box.getBoundingClientRect();
+      if (!(force && k === 0) && t >= v.top && b <= v.bottom) return;
+      // a box at its scroll limit moves less: only that part moves the word, and the next box or the window does the rest
+      const at = box.scrollTop || 0, max = Math.max(0, box.scrollHeight - box.clientHeight);
+      const d = clamp(t - v.top - box.clientHeight / 2.5, -at, max - at);
+      if (!d) return;
+      box.scrollBy({ top: d, behavior }); t -= d; b -= d;
+    });
+    if ((force && !boxes.length) || t < 40 || b > innerHeight - 110) scrollTo({ top: scrollY + t - innerHeight / 2.5, behavior });
   }
   function pause() {
     if (!S.playing || S.paused) return;
@@ -282,7 +305,7 @@
   function finish() { S.playing = false; S.paused = false; idle(); ui('Finished.'); }
   function idle() {  // the reading ended: clear the marks and go back to the cost of a page where nobody listens
     hlWord && hlWord.clear(); hlSent && hlSent.clear();
-    release(); S.segs = []; S.box = null;
+    release(); S.segs = []; S.boxes = []; S.boxesOf = null;
     cancel(natTimer); natOff = false;  // no voice server retry while nobody listens; the next play tries the natural voice
     cancel(noteTimer); note = '';
   }
@@ -318,7 +341,7 @@
     else if (m.cmd === 'readPage') readPage();
     else if (m.cmd === 'play-pause') (S.playing && !S.paused ? pause() : S.paused ? resume() : readPage());
     else if (m.cmd === 'back') back();
-    else if (m.cmd === 'forward') S.playing && play(S.i + 1);
+    else if (m.cmd === 'forward') next();
   });
   on(document, 'ra2-read', (e) => readBlock(e.detail));  // the paste page asks to read its text
   if (location.protocol === 'chrome-extension:') ask({ cmd: 'myTab' }).then((t) => { S.tab = t; });
@@ -376,8 +399,12 @@
     S.segs = segsFor(el); S.follow = true;
     const hit = locate(x, y); if (hit) play(...hit); else readBlock(blockOf(el));
   }
-  // the sentence before, as in the reader (jumpTo(index - 1)); the first sentence starts again
-  function back() { if (!S.playing) return; play(Math.max(0, S.i - 1)); }
+  // the sentence before, as in the reader (jumpTo(index - 1)); the first sentence starts again. A Sentence in pieces
+  // counts as one: Previous goes to its first piece, Next goes past its last piece.
+  const same = (i, j) => !!S.segs[i]?.of && S.segs[i].of === S.segs[j]?.of;
+  const headOf = (i) => { while (i > 0 && same(i, i - 1)) i--; return i; };
+  function back() { if (!S.playing) return; play(headOf(Math.max(0, headOf(S.i) - 1))); }
+  function next() { if (!S.playing) return; let j = S.i + 1; while (same(j, S.i)) j++; play(j); }
 
   // ---------- the player (inside a shadow root, so page styles never touch it) ----------
   // The player bar has the look of the reader player bar (ticket 24): previous, play, next, position, speed, follow,
@@ -556,10 +583,12 @@
     $('pp').innerHTML = svg(reading ? 'pause' : 'play'); $('pp').setAttribute('aria-label', reading ? 'Pause' : 'Play');
     $('pp').classList.toggle('waiting', !!S.wait && reading);
     $('speed').textContent = fmtRate(cfg.rate);
-    const n = S.segs.length, at = Math.max(0, S.i);
-    $('count').textContent = n ? `${at + 1} / ${n}` : '';
-    $('fill').style.width = n ? `${(((at + 1) / n) * 100).toFixed(1)}%` : '0%';
-    $('left').textContent = n ? timeLeft(at) : '';
+    // the count is of Sentences: the pieces of one Sentence count once
+    let n = 0, at = 1;
+    for (let k = 0; k < S.segs.length; k++) if (!same(k, k - 1)) { n++; if (k <= S.i) at = n; }
+    $('count').textContent = n ? `${at} / ${n}` : '';
+    $('fill').style.width = n ? `${((at / n) * 100).toFixed(1)}%` : '0%';
+    $('left').textContent = n ? timeLeft(Math.max(0, S.i)) : '';
     $('msg').textContent = note;
     $('launch').hidden = active || !cfg.launcher || hiddenHere();
   }
@@ -575,14 +604,14 @@
   const press = (id, fn) => $(id).addEventListener('click', (e) => { e.stopPropagation(); if (!dragged) fn(e); });
   click('pp', () => (S.playing && !S.paused ? pause() : S.paused ? resume() : readPage()));
   click('back', back);
-  click('fwd', () => S.playing && play(S.i + 1));
+  click('fwd', next);
   click('close', () => { stop(); closePops(); });
   click('launch', readPage);
   // Nothing is prepared before the owner shows that he wants to listen: the pointer on this button is the first sign.
   $('launch').addEventListener('mouseenter', () => warm(null, onScreen, pageSegs(root())));
   click('find', () => {
     S.follow = true; const seg = S.segs[S.i]; const x = seg && seg.words[S.w];
-    if (x) { const r = rangeOf(seg.b, x.start, x.end).getBoundingClientRect(); if (r.width || r.height) bringIntoView(r, S.box); }
+    if (x) { const r = rangeOf(seg.b, x.start, x.end).getBoundingClientRect(); if (r.width || r.height) bringIntoView(r, S.boxes, true); }
     $('find').classList.remove('away');
   });
 
