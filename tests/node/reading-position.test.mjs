@@ -52,6 +52,7 @@ test('no own copy: the voice server copy is used; none of both: null', () => {
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import * as language from '../../extension/pdf/language.js';  // ticket 32: app.js imports it
 
 const APP_JS = fileURLToPath(new URL('../../extension/pdf/app.js', import.meta.url));
 const ID = '0123456789ab';
@@ -116,6 +117,7 @@ function loadReader({ server = fakeServer(), storage = {}, shared = null } = {})
     loadLexicon: async () => {}, repairStats: () => ({ repaired: 0 }), withOcr: async (doc) => doc,
     setupNotes: () => ({ reload() {}, markdown() { return ''; }, reset() {}, markAt: () => null }),
     setupAsk: () => ({ reload() {}, highlightsChanged() {}, stopReading() {} }),
+    ...language,  // ticket 32
     newerPosition,
   };
   let src = readFileSync(APP_JS, 'utf8');

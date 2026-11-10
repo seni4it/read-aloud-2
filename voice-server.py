@@ -82,6 +82,7 @@ logging.getLogger('phonemizer').setLevel(logging.ERROR)  # its word-count warnin
 VOICES = [  # his choice (13 Oct 2026): a few good ones, not twenty. Russian is the Mac's own voice (Milena), in the add-on.
     ('af_heart', 'American', 'a', 'Heart, warm female'), ('am_michael', 'American', 'a', 'Michael, deep male'),
     ('bf_emma', 'British', 'b', 'Emma, female'), ('if_sara', 'Italian', 'i', 'Sara, Italian female'),
+    ('im_nicola', 'Italian', 'i', 'Nicola, Italian male'),  # ticket 32: Kokoro's second Italian voice
 ]
 LANG = {v[0]: v[2] for v in VOICES}
 

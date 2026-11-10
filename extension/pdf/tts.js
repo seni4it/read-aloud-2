@@ -10,11 +10,12 @@
 
 /** Split a sentence into word ranges: [{start, end, weight}] */
 function syllables(word) {
-  const w = word.toLowerCase().replace(/[^a-z]/g, '');
+  // Ticket 32: accented vowels count too ("perché", "più"): an Italian word is not cut to fewer syllables.
+  const w = word.toLowerCase().replace(/[^a-zàèéìíòóù]/g, '');
   if (!w) return 1;
   // Rough but effective: count vowel groups, drop silent trailing "e",
   // and never go below one.
-  const groups = w.replace(/e$/, '').match(/[aeiouy]+/g);
+  const groups = w.replace(/e$/, '').match(/[aeiouyàèéìíòóù]+/g);
   return Math.max(1, groups ? groups.length : 1);
 }
 
@@ -108,14 +109,22 @@ export class SystemEngine {
     // or other languages. Show only the handful worth reading a paper in.
     const novelty = /bad news|good news|bahh|bells|boing|bubbles|cellos|jester|organ|superstar|trinoids|whisper|wobble|zarvox|albert|fred|junior|kathy|ralph|grandma|grandpa|eddy|flo|reed|rocko|sandy|shelley/i;
 
-    return [...this.voices]
-      .filter(v => v.lang.toLowerCase().startsWith('en') && !novelty.test(v.name))
+    // Ticket 32: the best English voices, then the best two Italian voices (Alice on a Mac), for Italian books.
+    const best = (lang, n) => [...this.voices]
+      .filter(v => v.lang.toLowerCase().startsWith(lang) && !novelty.test(v.name))
       .sort((a, b) => score(b) - score(a) || a.name.localeCompare(b.name))
-      .slice(0, 6)
+      .slice(0, n)
       .map(v => ({
         id: v.voiceURI,
+        lang,
         label: `${v.name} (${v.lang})${/premium|enhanced/i.test(v.name) ? ' ★' : ''}`
       }));
+    return [...best('en', 6), ...best('it', 2)];
+  }
+
+  /** Ticket 32: the first listed voice of a language ('it', 'en'), or undefined when this Mac has none. */
+  voiceOf(lang) {
+    return this.listVoices().find(v => v.lang === lang)?.id;
   }
 
   async speak(sentence, { voiceId, rate, onWord, onEnd, onError }) {
@@ -758,12 +767,14 @@ export class ServerEngine extends KokoroEngine {
   }
 
   /** Read text with the Mac voice; `at` is where the text starts in the whole sentence (for the word highlight). */
-  #macSpeak(text, at, { rate, onWord, onEnd, onError }) {
+  #macSpeak(text, at, { voiceId, rate, onWord, onEnd, onError }) {
     if (!this.mac) this.mac = new SystemEngine();
     if (!this.mac.available) { onError?.('no voice answers'); return; }
     if (!this.mac.voices.length) this.mac.voices = this.mac.synth.getVoices();
+    // Ticket 32: Italian text (an Italian natural voice was asked) falls to an Italian Mac voice, never to an English one
+    const lang = /^i[fm]_/.test(voiceId || '') ? 'it' : 'en';  // as isItalianVoice() in language.js (tts.js has no imports)
     this.mac.speak({ text }, {
-      voiceId: this.mac.listVoices()[0]?.id, rate,
+      voiceId: this.mac.voiceOf(lang) || this.mac.listVoices()[0]?.id, rate,
       onWord: (start, len) => onWord?.(start + at, len), onEnd, onError
     });
   }

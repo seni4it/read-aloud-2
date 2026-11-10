@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import * as language from '../../extension/pdf/language.js';  // ticket 32: app.js imports it
 
 const APP_JS = fileURLToPath(new URL('../../extension/pdf/app.js', import.meta.url));
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -108,6 +109,7 @@ function loadReader() {
     withOcr: async (doc) => doc,
     setupNotes: () => ({ reload() {}, markdown() { return ''; }, reset() {}, markAt: () => null }),
     setupAsk: () => ({ reload() {}, highlightsChanged() {}, stopReading() {} }),
+    ...language,  // ticket 32
   };
 
   // The import lines become one line that takes the same names from the fakes.

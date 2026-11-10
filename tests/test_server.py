@@ -39,6 +39,12 @@ class Pure(unittest.TestCase):
     def test_word_starts_leaves_none_for_missing_tokens(self):
         self.assertEqual(vs.word_starts('one 23 three', [Tok('one', 0.0), Tok('three', 1.0)], 0.0), [0.0, None, 1.0])
 
+    def test_both_italian_voices_are_offered(self):
+        # ticket 32: Kokoro's two Italian voices, Sara and Nicola, both with the Italian language code
+        self.assertEqual(vs.LANG['if_sara'], 'i')
+        self.assertEqual(vs.LANG['im_nicola'], 'i')
+        self.assertIn(('im_nicola', 'Italian', 'i', 'Nicola, Italian male'), vs.VOICES)
+
     def test_trim_cuts_silence_and_reports_the_shift(self):
         import numpy as np
         audio = np.concatenate([np.zeros(7200), np.ones(2400) * 0.5, np.zeros(12000)]).astype(np.float32)

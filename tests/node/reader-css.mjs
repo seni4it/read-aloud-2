@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import vm from 'node:vm';
+import * as language from '../../extension/pdf/language.js';  // ticket 32: app.js imports it
 
 export const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 export const read = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -208,6 +209,7 @@ export function loadApp({ engine = 'system', store = new Map(), withResizeObserv
     withOcr: async (doc) => doc,
     setupNotes: () => ({ reload() {}, markdown() { return ''; }, reset() {}, markAt: () => null }),
     setupAsk: () => ({ reload() {}, highlightsChanged() {}, stopReading() {} }),
+    ...language,  // ticket 32
   };
   let src = read('extension/pdf/app.js');
   src = src.replace(/^import \* as (\w+) from [^;]+;$/gm, 'const $1 = __modules.$1;')

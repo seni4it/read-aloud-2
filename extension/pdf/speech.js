@@ -118,19 +118,42 @@ const RULES = [
   [/\b[A-Z]{2,5}\b/g, m => (isWord(m) ? null : [...m].join(' '))]
 ];
 
+// Ticket 32: the rules for an Italian book. The English rules above write English words ("nineteen ninety-six",
+// "one point five", "Class two", "U S A"), and the Italian voice reads them badly. The Italian voice says digits
+// right by itself ("1996", "1,5", "50-60"), so numbers pass through unchanged. Only a sign or a unit that it
+// would spell out is said in Italian words. The initialism rule is English only: it asks an English word list.
+const UNITS_IT = {
+  mm: ['millimetro', 'millimetri'], cm: ['centimetro', 'centimetri'], µm: ['micrometro', 'micrometri'],
+  um: ['micrometro', 'micrometri'], ml: ['millilitro', 'millilitri'], kg: ['chilogrammo', 'chilogrammi'],
+  hz: ['hertz', 'hertz']
+};
+const RULES_IT = [
+  [/~\s?(?=\d)/g, () => 'circa '],
+  [/\b(\w+)\^([-\u2212]?)(\w+)\b/g, (m, a, minus, b) => `${a} alla ${minus ? 'meno ' : ''}${b}`],
+  [/[~^|]/g, () => ' '],
+  [/\bpH\b/g, () => 'P H'],
+  // "1,5 mm", "5 mm": the number stays, the unit is said ("1,5 millimetri"); one is singular ("1 millimetro")
+  [/(?<![\w.,])(\d+(?:[.,]\d+)?)\s?(mm|cm|µm|um|ml|kg|Hz)\b/g, (m, n, unit) => {
+    const u = UNITS_IT[unit.toLowerCase()];
+    return u ? `${n} ${u[n === '1' ? 0 : 1]}` : null;
+  }]
+];
+
 /**
  * Rewrite text for speech, keeping the owner of every character.
+ * lang 'it' (ticket 32): the Italian rules; any other value: the English rules.
  *
  * Characters introduced by a rewrite inherit the owner of the first character
  * of the text they replaced, so the highlight lands on the printed glyphs.
  */
-export function normalizeForSpeech(chars, owners) {
+export function normalizeForSpeech(chars, owners, lang = '') {
   const text = chars.join('');
+  const rules = lang === 'it' ? RULES_IT : RULES;
 
   // Collect the edits first so the rules all see the original offsets.
   const edits = [];
   const taken = new Uint8Array(text.length);
-  for (const [re, replace] of RULES) {
+  for (const [re, replace] of rules) {
     re.lastIndex = 0;
     let m;
     while ((m = re.exec(text)) !== null) {

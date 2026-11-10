@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import * as language from '../../extension/pdf/language.js';  // ticket 32: app.js imports it
 
 const TTS_JS = fileURLToPath(new URL('../../extension/pdf/tts.js', import.meta.url));
 const EXT = fileURLToPath(new URL('../../extension/', import.meta.url));
@@ -547,6 +548,7 @@ function loadReaderApp({ methods, stored = 'C' }) {
     loadLexicon: async () => {}, repairStats: () => ({}), withOcr: async (d) => d,
     setupNotes: () => ({ reload() {}, markdown() { return ''; }, reset() {}, markAt: () => null }),
     setupAsk: () => ({ reload() {}, highlightsChanged() {}, stopReading() {} }), newerPosition: () => null,
+    ...language,  // ticket 32
   };
   const src = readFileSync(EXT + 'pdf/app.js', 'utf8').replace(/^import \* as (\w+) from [^;]+;$/gm, 'const $1 = __modules.$1;')
     .replace(/^import \{([^}]+)\} from [^;]+;$/gm, 'const {$1} = __modules;').replaceAll('import.meta.url', '"file:///reader/pdf/app.js"');

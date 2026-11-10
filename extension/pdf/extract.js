@@ -1,5 +1,6 @@
 import { repairWord, repairText, stripUnmapped, repairSplit, respaceLine, resetRepairs, isWord } from './lexicon.js';
 import { normalizeForSpeech } from './speech.js';
+import { textLanguage } from './language.js';
 
 // Turns a PDF into clean, speakable sentences that remember where they came
 // from. Every sentence keeps the list of PDF text items it covers, so the
@@ -1158,7 +1159,7 @@ class TracedText {
   }
 
   /** Apply the noise regexes, then collapse whitespace, keeping owners aligned. */
-  finish(stripCitations, skipParens = false) {
+  finish(stripCitations, skipParens = false, lang = '') {
     // Rejoin split accents before anything else looks at the text.
     const fixed = recomposeAccents(this.chars, this.owners);
     this.chars = fixed.chars;
@@ -1210,7 +1211,8 @@ class TracedText {
     // Last: rewrite what the page prints into what a voice should say —
     // years, decimals, units, Roman numerals, initialisms. Owners come along,
     // so "nineteen ninety-six" still underlines the "1996" on the page.
-    const said = normalizeForSpeech(joined.chars, joined.owners);
+    // Ticket 32: an Italian book gets no English words ("1996" stays digits, which the Italian voice says right).
+    const said = normalizeForSpeech(joined.chars, joined.owners, lang);
 
     return { text: said.chars.join('').trim(), owners: said.owners, raw: said.chars };
   }
@@ -1418,6 +1420,7 @@ export class DocumentBuilder {
     this.chapter = null; // the chapter the running head last named
     this.totalPages = 0; // set by buildDocument; 0 means unknown
     this.skippingRefs = false;
+    this.lang = this.options.lang || '';  // ticket 32: 'it', 'en' or '' (unknown); buildDocument learns it from sample pages
   }
 
   setTotalPages(n) {
@@ -1445,7 +1448,7 @@ export class DocumentBuilder {
     let end = chars.length;
     while (end && /\s/.test(chars[end - 1])) end--;
     if (end > 1 && /[-\u2010\u2011]/.test(chars[end - 1]) && /\p{L}/u.test(chars[end - 2])) { this.buffer.trimSpaces(); this.buffer.trimEnd(1); }
-    const traced = this.buffer.finish(this.options.stripCitations, this.options.skipParens);
+    const traced = this.buffer.finish(this.options.stripCitations, this.options.skipParens, this.lang);
     const made = traceToSentences(traced, this.sections.length - 1);
     this.sentences.push(...made);
     this.buffer = new TracedText();
@@ -1829,6 +1832,8 @@ export async function buildDocument(doc, options = {}, onPage = null) {
   const sample = [...cached.values()].filter(Boolean);
   builder.setRepeatedLines(learnRepeatedLines(sample));
   builder.setTypography(learnTypography(sample));
+  // Ticket 32: the language of the book, from the start of each sample page (a page of front matter alone can mislead).
+  if (!options.lang) builder.lang = textLanguage(sample.map(p => p.lines.map(l => l.text).join(' ').slice(0, 430)).join(' '));
 
   for (let n = 1; n <= total; n++) {
     const pd = cached.has(n) ? cached.get(n) : await tryRead(n);

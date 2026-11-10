@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { setupNotes } from '../../extension/pdf/notes.js';
+import * as language from '../../extension/pdf/language.js';  // ticket 32: app.js imports it
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 async function until(cond, what) {
@@ -657,6 +658,7 @@ function loadReader({ engine = 'system', search = '' } = {}) {
     },
     setupNotes: () => ({ reload() {}, markdown() { return ''; }, reset(id, why) { notes.resets.push(id); notes.why.push(why); }, markAt: () => notes.markHit }),
     setupAsk: (o) => { notes.askArgs = o; return { reload() {}, highlightsChanged() {}, stopReading() {} }; },
+    ...language,  // ticket 32
   };
   let src = readFileSync(APP_JS, 'utf8');
   src = src.replace(/^import \* as (\w+) from [^;]+;$/gm, 'const $1 = __modules.$1;')

@@ -7,6 +7,7 @@ import { withOcr } from './ocr.js';
 import { setupNotes } from './notes.js';
 import { setupAsk } from './ask.js';
 import { newerPosition } from './position.js';
+import { textLanguage, voiceForLanguage } from './language.js';
 
 // Hand pdf.js an explicit module worker. Left to its own auto-setup it was
 // silently falling back to a main-thread "fake worker", where render() never
@@ -51,7 +52,8 @@ let askUI = { reload() {}, highlightsChanged() {}, stopReading() {} };  // Read 
 const state = window.__pr = {
   doc: null,
   docKey: null,
-  libBook: false,  // Read Aloud 2: the open document is the library Book of this page (?lib=), not a PDF opened after it
+  libBook: false,
+  lang: '',        // ticket 32: the language of the Book text ('it', 'en', or '' when unsure), from buildDocument  // Read Aloud 2: the open document is the library Book of this page (?lib=), not a PDF opened after it
   fileName: '',
   buffer: null,
   sentences: [],
@@ -92,11 +94,33 @@ function setWaiting(on) {
   els.playBtn.setAttribute('aria-busy', on ? 'true' : 'false');
 }
 
+/**
+ * Ticket 32: the voice that reads a text of language lang. An Italian Book read with an English natural voice is
+ * read by Sara (Nicola stays Nicola); an English Book with an Italian voice is read by Heart. A Mac voice of the
+ * wrong language goes to the first Mac voice of the text's language, when this Mac has one.
+ */
+function readingVoice(lang = state.lang) {
+  const chosen = els.voiceSel.value;
+  if (engine.id !== 'system') return voiceForLanguage(chosen, lang);
+  const v = engine.listVoices().find(x => x.id === chosen);
+  return lang && v && v.lang && v.lang !== lang ? engine.voiceOf?.(lang) || chosen : chosen;
+}
+
 // Ticket 21: the settings button names the voice that reads ("Heart" of "Heart — US female (A) · American").
+// Ticket 32: when the language of the Book changed the voice, it names the voice that really reads, and a line
+// under the voice list says why.
 function showVoiceName() {
-  const opt = els.voiceSel.selectedOptions && els.voiceSel.selectedOptions[0];
+  const used = readingVoice();
+  const swapped = !!els.voiceSel.value && used !== els.voiceSel.value;
+  const opt = swapped ? Array.from(els.voiceSel.options || []).find(o => o.value === used)
+    : els.voiceSel.selectedOptions && els.voiceSel.selectedOptions[0];
+  const nameOf = opt ? opt.textContent.split(/ — | \(| · /)[0].trim() : swapped ? used.replace(/^[a-z]{2}_/, '').replace(/^./, c => c.toUpperCase()) : '';
   const name = $('settingsVoice');
-  if (name) name.textContent = opt ? opt.textContent.split(/ — | \(| · /)[0].trim() : '';
+  if (name) name.textContent = nameOf;
+  const hint = $('voiceHint');
+  if (!hint) return;
+  hint.hidden = !swapped;
+  hint.textContent = swapped ? `This book is in ${state.lang === 'it' ? 'Italian' : 'English'}, so ${nameOf} reads it.` : '';
 }
 
 function fillVoiceSelect() {
@@ -202,7 +226,7 @@ function speakCurrent() {
 
   state.at = from;
   engine.speak(sentence, {
-    voiceId: els.voiceSel.value,
+    voiceId: readingVoice(),
     rate: Number(els.rateSel.value),
     onWord: (charIndex, charLength) => {
       if (!state.playing) return;
@@ -249,8 +273,8 @@ function speakCurrent() {
   });
 
   // Render the next couple of sentences ahead so Kokoro doesn't leave gaps.
-  engine.prefetch?.(state.sentences[state.index + 1], els.voiceSel.value);
-  engine.prefetch?.(state.sentences[state.index + 2], els.voiceSel.value);
+  engine.prefetch?.(state.sentences[state.index + 1], readingVoice());
+  engine.prefetch?.(state.sentences[state.index + 2], readingVoice());
 }
 
 /**
@@ -342,7 +366,7 @@ function warmCurrent() {
   if (state.playing || !state.sentences.length) return;
   if (!engine.prefetch || engine.id === 'system') return;
   warmTimer = setTimeout(() => {
-    const voice = els.voiceSel.value;
+    const voice = readingVoice();
     engine.prefetch(state.sentences[state.index], voice);
     engine.prefetch(state.sentences[state.index + 1], voice);
   }, 350);
@@ -810,6 +834,7 @@ async function parseDocument() {
   if (token !== state.parseToken) return;
   state.sentences = [];
   state.sections = [];
+  state.lang = '';  // ticket 32: the next Book's language is learned again
   state.itemToSentence.clear();
   state.index = 0;
   state.jumped = false;
@@ -835,6 +860,7 @@ async function parseDocument() {
       els.parseText.textContent = state.openMessage ||
         `Reading text — page ${n} of ${total} · ${b.sentences.length} sentences`;
 
+      if (b.lang !== state.lang) { state.lang = b.lang; showVoiceName(); }  // ticket 32: known after the sample pages
       // Publish what we have so playback can start on page one.
       if (n % 3 === 0 || n === total || state.doc.__scanned) {
         state.sentences = b.sentences;
@@ -966,7 +992,7 @@ els.previewBtn.addEventListener('click', async () => {
   };
   els.previewBtn.disabled = true;
   await engine.speak(demo, {
-    voiceId: els.voiceSel.value,
+    voiceId: state.sentences[state.index] ? readingVoice() : els.voiceSel.value,  // ticket 32: the voice that reads this Book
     rate: Number(els.rateSel.value),
     onEnd: () => { els.previewBtn.disabled = false; if (wasPlaying) play(); },
     onError: () => { els.previewBtn.disabled = false; }
@@ -1224,7 +1250,8 @@ const voice = {
   say(text, cb) {
     if (state.playing) stop();
     els.previewBtn.disabled = false;  // a preview that was playing is silent now
-    engine.speak({ text, charOwners: [] }, { voiceId: els.voiceSel.value, rate: Number(els.rateSel.value), ...cb });
+    // ticket 32: an answer in Italian is read by an Italian voice (a short piece goes by the language of the Book)
+    engine.speak({ text, charOwners: [] }, { voiceId: readingVoice(textLanguage(text) || state.lang), rate: Number(els.rateSel.value), ...cb });
   },
   hush() { engine.stop(); },
 };
@@ -1291,7 +1318,7 @@ async function pollExport() {
         return { title: sec ? sec.title : (i === 0 ? 'Beginning' : `Part ${i + 1}`), text: state.sentences.slice(b, end).map(s => s.text) };
       }).filter(c => c.text.length);
       const r = await fetch(`/library/${LIB_ID}/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: document.title.replace(/ · Read Aloud 2$/, ''), voice: els.voiceSel.value, chapters }) });
+        body: JSON.stringify({ title: document.title.replace(/ · Read Aloud 2$/, ''), voice: readingVoice(), chapters }) });
       els.exportStatus.textContent = r.ok ? 'Export started…' : 'Export is already running.';
       pollExport();
     });

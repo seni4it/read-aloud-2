@@ -266,16 +266,51 @@
     release(); timers.forEach(clearTimeout); timers.clear();
   }
   const send = (m) => { ask(m); };
-  // The voice follows the text: Russian (Cyrillic) is read by the Mac's Russian voice, an Italian page by Sara,
-  // everything else by the voice you chose.
-  const PAGE_IT = /^it/i.test(document.documentElement.lang || '');
+  // The voice follows the text: Russian (Cyrillic) is read by the Mac's Russian voice, an Italian page by an Italian
+  // voice, an English page by an English voice, everything else by the voice you chose.
+  // Ticket 32: a page is Italian when <html lang> says it, or when the text of the reading is clearly Italian (many
+  // pages have no lang, or a wrong one from a template). A page is English when the text is clearly English, or
+  // when lang says English and the text does not say Italian. textLanguage() is a copy of the one in
+  // pdf/language.js (a test keeps them equal); chrome.i18n.detectLanguage is not used, as the reader cannot use it.
+  function textLanguage(text) {
+    const it = new Set(('il lo la gli le un una uno di del dello della dei degli delle al allo alla ai agli alle dal ' +
+      'dalla dai nel nello nella nei negli nelle sul sulla che è ed con non sono questo questa questi queste anche più ' +
+      'tra fra ma si ci essere hanno può dopo molto perché').split(' '));
+    const en = new Set(('the of and to is are was were that this these those with from which have has had been be by ' +
+      'on at its an or not but their they what when will would can there than also into such').split(' '));
+    let i = 0, e = 0;
+    for (const w of String(text || '').slice(0, 6000).toLowerCase().match(/\p{L}+/gu) || []) {
+      if (it.has(w)) i++;
+      else if (en.has(w)) e++;
+    }
+    if (i + e < 4) return '';
+    if (i > 2 * e) return 'it';
+    if (e > 2 * i) return 'en';
+    return '';
+  }
+  const PAGE_LANG = (document.documentElement.lang || '').toLowerCase();
+  let langOf = { segs: null, lang: '' };  // the language of the last reading's Sentences: counted once for each reading
+  function pageLang(segs) {
+    if (/^it/.test(PAGE_LANG)) return 'it';
+    if (!segs || !segs.length) return /^en/.test(PAGE_LANG) ? 'en' : '';
+    if (langOf.segs !== segs) {
+      let sample = '';
+      for (const x of segs) { if (sample.length > 6000) break; sample += x.say + ' '; }
+      langOf = { segs, lang: textLanguage(sample) };
+    }
+    return langOf.lang || (/^en/.test(PAGE_LANG) ? 'en' : '');
+  }
   let natOff = false, natTimer = null;  // the voice server failed: the Mac voice reads until it answers again
-  function voiceFor(text) {
+  function voiceFor(text, segs = S.segs) {
     if (/[\u0400-\u04FF]/.test(text || '')) return 'system:Milena';
+    const lang = pageLang(segs);
     // English text never goes to the Russian voice (the only Mac voice in the list) or to the
-    // Mac default: both give a Russian accent. Samantha is the Mac's own American voice.
-    if (cfg.voice.startsWith('system:') || (natOff && cfg.voice.startsWith('kokoro:'))) return 'system:Samantha';
-    if (PAGE_IT && /^kokoro:(a|b)/.test(cfg.voice)) return 'kokoro:if_sara';
+    // Mac default: both give a Russian accent. Samantha is the Mac's own American voice, Alice its Italian voice.
+    if (cfg.voice.startsWith('system:') || (natOff && cfg.voice.startsWith('kokoro:'))) return lang === 'it' ? 'system:Alice' : 'system:Samantha';
+    // Italian text with an English natural voice: Sara (a chosen Nicola stays). English text with an Italian voice:
+    // Heart, as an Italian voice reads English badly.
+    if (lang === 'it' && /^kokoro:[ab]/.test(cfg.voice)) return 'kokoro:if_sara';
+    if (lang === 'en' && /^kokoro:i/.test(cfg.voice)) return 'kokoro:af_heart';
     return cfg.voice;
   }
   function retryNatural() {  // ask the server every 5 s; the next sentence after it answers is natural again
@@ -420,7 +455,7 @@
     if (S.playing || hiddenHere() || !voiceFor('').startsWith('kokoro:')) return;
     const segs = given || segments(blocks); const i = segs.length ? Math.max(0, at(segs)) : -1;
     if (i < 0) return;
-    const v = voiceFor(segs[i].say);  // the voice that play() will choose for this sentence; never into cur: Pause must keep the voice being read
+    const v = voiceFor(segs[i].say, segs);  // the voice that play() will choose for this sentence; never into cur: Pause must keep the voice being read
     if (!v.startsWith('kokoro:')) return;
     const first = quick(segs[i]);
     const next = first.length === 1 && first[0].words.length < 6 && segs[i + 1] ? quick(segs[i + 1]) : [segs[i + 1]];
@@ -923,7 +958,7 @@
 
   // settings, shared with the popup
   const save = () => { try { chrome.storage.sync.set({ ra2: cfg }).catch(() => {}); } catch { gone(); } };
-  const KNOWN = /^kokoro:(af_heart|am_michael|bf_emma|if_sara)$|^system:/;  // a voice removed from the list falls back to Heart
+  const KNOWN = /^kokoro:(af_heart|am_michael|bf_emma|if_sara|im_nicola)$|^system:/;  // a voice removed from the list falls back to Heart
   chrome.storage.sync.get('ra2').then((r) => { cfg = { ...DEFAULTS, ...(r.ra2 || {}) }; if (!KNOWN.test(cfg.voice)) cfg.voice = DEFAULTS.voice; cur = cfg.voice; ui(); }).catch(() => ui());
   chrome.storage.onChanged.addListener((c) => {
     if (dead) return;
