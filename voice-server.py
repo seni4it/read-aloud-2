@@ -13,7 +13,8 @@ Desktop reader (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
   GET  /library.json        the books in ~/Documents/Read Aloud Library (PDFs dropped there in Finder are picked up)
   GET  /library/file/<id>   one book        GET /library/cover/<id>   its cover (made by macOS Quick Look)
   POST /library/add?name=   add a PDF (body)    POST /library/<id>/opened    POST /library/<id>/remove (to the Trash)
-  GET/POST /library/<id>/notes   the book's highlights (JSON), kept in .notes/<id>.json
+  GET/POST /library/<id>/notes   the book's highlights (JSON), kept in .notes/<id>.json; POST ?base=<n> is refused
+                                 (409) when n is not the save number (X-Notes-Rev) of the last save
   GET /claude/sessions      the Claude desktop app's conversations (title, folder); POST /claude/setting {session, title, cwd, group, auto}
   POST /claude/send         {points: [{book, page, text}]}: key points appended to key-points/<book>.md in that folder
   Ask Claude about the book (folder Books/<book>/, see "Ask Claude" below): GET /ask/status?key=, POST /ask/book
@@ -254,6 +255,38 @@ COVERS = os.path.join(LIB, '.covers')
 STATIC = {'/app/': os.path.join(HERE, 'app'), '/reader/': os.path.join(HERE, 'extension', 'pdf')}
 mimetypes.add_type('text/javascript', '.mjs')
 _lib = threading.Lock()
+_notes = threading.Lock()
+# The save number in a header. The reader of a library Book is a page of this server (same origin); the header is
+# also exposed for a page of another origin (the add-on), so its check is never turned off by the browser.
+NOTES_HEADERS = lambda rev: {'X-Notes-Rev': str(rev), 'Access-Control-Expose-Headers': 'X-Notes-Rev'}  # the highlights of the books: one save or read at a time, with its save number
+
+
+def notes_rev(bid):
+    """The save number of a book's highlights: 0 before the first save, one more for each save. Two tabs of one
+    book: a save sends the number of its last read or save, and the voice server refuses it when the number is old.
+    A damaged number file (empty, not a number) never goes back to 0, which an old tab can hold: it gets a new number
+    from the clock in milliseconds, above every number a tab can hold, so every old save is refused and the tabs
+    read again. Call with _notes held."""
+    path = os.path.join(LIB, '.notes', bid + '.rev')
+    try:
+        with open(path) as f:
+            text = f.read().strip()
+    except FileNotFoundError:
+        return 0
+    if text.isdigit():
+        return int(text)
+    rev = int(time.time() * 1000)
+    notes_rev_save(bid, rev)
+    return rev
+
+
+def notes_rev_save(bid, rev):
+    """Write the save number whole: to a temporary file, then moved over the old one."""
+    os.makedirs(os.path.join(LIB, '.notes'), exist_ok=True)
+    path = os.path.join(LIB, '.notes', bid + '.rev')
+    with open(path + '.tmp', 'w') as f:
+        f.write(str(rev))
+    os.replace(path + '.tmp', path)
 
 
 def lib_index():
@@ -1105,12 +1138,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         m = re.match(r'^/library/([0-9a-f]{12})/notes$', url.path)
         if m:  # the book's highlights (Read Aloud 2 reader)
             path = os.path.join(LIB, '.notes', m.group(1) + '.json')
-            try:
-                with open(path, 'rb') as f:
-                    body = f.read()
-            except OSError:
-                body = b'[]'
-            return self.reply(body, 'application/json')
+            with _notes:
+                try:
+                    with open(path, 'rb') as f:
+                        body = f.read()
+                except OSError:
+                    body = b'[]'
+                rev = notes_rev(m.group(1))
+            return self.reply(body, 'application/json', NOTES_HEADERS(rev))
         m = re.match(r'^/library/(file|cover)/([0-9a-f]{12})$', url.path)
         if m:
             with _lib:
@@ -1301,12 +1336,30 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     data = json.loads(self.rfile.read(size) or b'[]')
                     if not isinstance(data, list):
                         raise ValueError('notes must be a list')
-                    os.makedirs(os.path.join(LIB, '.notes'), exist_ok=True)
-                    tmp = os.path.join(LIB, '.notes', m.group(1) + '.json.tmp')
-                    with open(tmp, 'w', encoding='utf-8') as f:
-                        json.dump(data, f, ensure_ascii=False)
-                    os.replace(tmp, os.path.join(LIB, '.notes', m.group(1) + '.json'))
-                    self.copyfile(self.reply(b'{}', 'application/json'), self.wfile)
+                    base = dict(urllib.parse.parse_qsl(url.query)).get('base')
+                    if base is not None and not base.isdigit():
+                        self.send_error(400, 'base must be a number')
+                        return
+                    with _notes:  # the save number: a save made from an older read than the last save is refused
+                        rev = notes_rev(m.group(1))
+                        if base is not None and int(base) != rev:
+                            body = json.dumps({'rev': rev}).encode()
+                            self.send_response(409)
+                            self.send_header('Content-Type', 'application/json')
+                            self.send_header('Content-Length', str(len(body)))
+                            for k, v in NOTES_HEADERS(rev).items():
+                                self.send_header(k, v)
+                            self.end_headers()
+                            self.wfile.write(body)
+                            return
+                        os.makedirs(os.path.join(LIB, '.notes'), exist_ok=True)
+                        tmp = os.path.join(LIB, '.notes', m.group(1) + '.json.tmp')
+                        with open(tmp, 'w', encoding='utf-8') as f:
+                            json.dump(data, f, ensure_ascii=False)
+                        os.replace(tmp, os.path.join(LIB, '.notes', m.group(1) + '.json'))
+                        rev += 1
+                        notes_rev_save(m.group(1), rev)  # one lock over: read the number, write the notes, write the number
+                    self.copyfile(self.reply(json.dumps({'rev': rev}).encode(), 'application/json', NOTES_HEADERS(rev)), self.wfile)
                     return
                 with _lib:
                     idx = lib_index()
@@ -1327,9 +1380,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         self.copyfile(self.reply(body, 'application/json'), self.wfile)
 
-    def reply(self, body, kind):
+    def reply(self, body, kind, headers=None):
         self.send_response(200)
         self.send_header('Content-Type', kind)
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         return io.BytesIO(body)

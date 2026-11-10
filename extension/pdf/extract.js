@@ -96,6 +96,7 @@ export async function readPage(doc, pageNumber) {
     else { ordered.push([y, [e]]); base = { y, size }; }
   }
   for (const row of ordered) row[1].sort((a, b) => a.x - b.x);
+  moveDropCaps(ordered);
 
 
   // Read Aloud 2: look for the gap between columns in the middle of the TEXT AREA, not of the sheet. A book's
@@ -262,7 +263,7 @@ export async function readPage(doc, pageNumber) {
         const gap = e.x - (prev.x + prev.w);
         const size = Math.abs(prev.item.transform[0]) || 10;
         const joined = !/\s$/.test(prev.item.str) && !/^\s/.test(e.item.str);
-        if (joined && gap > size * 0.16) {
+        if (joined && gap > size * 0.16 && !prev.dropCap) {  // a drop cap is the first letter of the word after it
           tokens.push({
             str: ' ',
             page: pageNumber,
@@ -507,6 +508,35 @@ export async function readPage(doc, pageNumber) {
   // to the viewer, and cleaning it up mid-render makes render() hang forever.
   const split = dropPageFurniture(lines.filter(l => l.text));
   return { page: pageNumber, lines: split.lines, furniture: split.furniture, gutter };
+}
+
+/**
+ * Read Aloud 2: a drop cap beside lines 1 to 3. The big letter's baseline is on the last line beside it, so the
+ * rows put it in front of line 3 ("T and compare ...") and line 1 lost its first letter ("he clinic ...").
+ * A row that starts with one capital letter at least twice the size of the text, with the rows above it (within
+ * the letter's height) all starting right of the letter, and the top one starting with a small letter: the
+ * capital moves to the start of that top row, with no space after it ("The clinic ...").
+ */
+function moveDropCaps(rows) {
+  for (let r = 0; r < rows.length; r++) {
+    const [y, es] = rows[r];
+    const cap = es[0];
+    if (!cap || !/^\p{Lu}$/u.test(cap.item.str.trim())) continue;
+    const capSize = Math.abs(cap.item.transform[0]) || 10;
+    let top = -1;
+    for (let k = r - 1; k >= 0; k--) {
+      if (rows[k][0] - y > capSize * 1.1) break;
+      if (rows[k][1][0].x < cap.x + cap.w - 1) { top = -1; break; }
+      top = k;
+    }
+    if (top < 0) continue;
+    const first = rows[top][1];
+    if (capSize < lineSize(first) * 2 || !/^\p{Ll}/u.test(first[0].item.str)) continue;
+    es.shift();
+    cap.dropCap = true;
+    first.unshift(cap);
+    if (!es.length) { rows.splice(r, 1); r--; }
+  }
 }
 
 /**
@@ -1408,6 +1438,13 @@ export class DocumentBuilder {
       this.buffer = new TracedText();
       return;
     }
+    // Read Aloud 2: a paragraph that ends in a cut word ("long-": the break fell right after a line-end hyphen,
+    // for example at a change of type size) ends in the word, so the voice does not get the hyphen.
+    // A dash after a space ("a dash -") is not a cut word and stays.
+    const { chars } = this.buffer;
+    let end = chars.length;
+    while (end && /\s/.test(chars[end - 1])) end--;
+    if (end > 1 && /[-\u2010\u2011]/.test(chars[end - 1]) && /\p{L}/u.test(chars[end - 2])) { this.buffer.trimSpaces(); this.buffer.trimEnd(1); }
     const traced = this.buffer.finish(this.options.stripCitations, this.options.skipParens);
     const made = traceToSentences(traced, this.sections.length - 1);
     this.sentences.push(...made);

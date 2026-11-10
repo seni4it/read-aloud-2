@@ -18,6 +18,14 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
   let loadId = 0;  // each read and each new book gets a new number: a late answer of an older read is dropped
   let problem = '';  // a save that failed, shown on top of the list until a save works again
   const saving = new Map();  // library id -> its saves: the saves of one book go to the voice server one after the other
+  // library id -> the save number of the last read or save (voice-server.py). A save sends it; the voice server
+  // refuses a save whose number is old, so a second tab of the same Book cannot write over newer highlights.
+  const revs = new Map();
+  const saves = new Map();   // library id -> how many saves of it have had an answer: a read keeps its number only
+                             // when no save of the same Book answered while the read was on the way
+  const OLD_SERVER = 'The voice server is an older version: it gives no save number, so two windows of one book can write over each other\'s highlights. Restart the voice server.';
+  let unchecked = false;     // the open Book is saved without a save number (OLD_SERVER)
+  const numberOf = (r) => { const v = r.headers?.get?.('X-Notes-Rev'); return v != null && /^\d+$/.test(v) ? Number(v) : null; };
   let rowButtons = [];  // the buttons of the rows in the list, to move the focus after a delete
   let filter = 'all';
   let names = { ...DEFAULT_NAMES, ...(load('ra2.groups') || {}) };
@@ -66,21 +74,45 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
   }
   // The whole list of this book, or null when it could not be read. "Nothing saved yet" is a good empty list;
   // an error or a damaged value is not, because a change would then write over the saved highlights.
+  // For a library Book it also gives the save number of the read (null: an older voice server) and the count of
+  // answered saves when the read went; refresh() keeps the number only when the read is still the newest.
   async function read() {
     if (lib) {
       await saving.get(lib);  // a save of this book that is not finished comes first, so the read gets it
+      const id = lib, count = saves.get(id) || 0;
       try {
         // the voice server answers [] for a book with no highlights yet; any other answer that is not ok is an error
-        const all = await ask(`/library/${lib}/notes`, { cache: 'no-store' }, (r) => (r.ok ? r.json() : null));
-        return Array.isArray(all) ? all : null;
-      } catch { return null; }
+        const got = await ask(`/library/${id}/notes`, { cache: 'no-store' }, async (r) => (r.ok ? { list: await r.json(), rev: numberOf(r) } : null));
+        return got && Array.isArray(got.list) ? { all: got.list, rev: got.rev, id, count } : { all: null };
+      } catch { return { all: null }; }
     }
     try {
       const raw = localStorage.getItem('ra2.notes.' + state.docKey);
-      if (raw === null) return [];
+      if (raw === null) return { all: [] };
       const all = JSON.parse(raw);
-      return Array.isArray(all) ? all : null;
-    } catch { return null; }
+      return { all: Array.isArray(all) ? all : null };
+    } catch { return { all: null }; }
+  }
+  // the save number of a read, kept when no save of that Book answered since the read went
+  function keepNumber({ id, rev, count }) {
+    if (!id || (saves.get(id) || 0) !== count) return;
+    if (rev === null) { revs.delete(id); if (id === lib) unchecked = true; } else { revs.set(id, rev); if (id === lib) unchecked = false; }
+  }
+  // Another tab (or window) of this Book saved after this tab read: this tab's change is not saved, and the list
+  // is read again, so the next change starts from the saved highlights.
+  function older() {
+    problem = 'Another window saved the highlights of this book after this window read them. Your last change was not saved. The list now shows the saved highlights.';
+    flash(problem); list();
+    refresh();
+  }
+  // The same for the save of a Book that is not open any more: the owner is told, and that Book is read again
+  // for its number, so its next save is not refused again.
+  function olderElsewhere(id) {
+    problem = 'A change to the highlights of the book opened before was not saved: another window saved that book\'s highlights after this window read them.';
+    flash(problem); list();
+    const count = saves.get(id) || 0;
+    ask(`/library/${id}/notes`, { cache: 'no-store' }, (r) => (r.ok ? numberOf(r) : undefined))
+      .then((rev) => { if (rev !== undefined) keepNumber({ id, rev, count }); }).catch(() => { /* read again at the next open */ });
   }
   function saveFailed(why) {
     problem = `A change was not saved: ${why}. The next change saves all highlights again.`;
@@ -93,8 +125,16 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
       const id = lib;  // a save that waits in the queue goes to its own book, also after another book is opened
       // a save that fails or does not answer in time does not stop the saves after it
       // the message is only about the book that is open now: a late answer of another book's save does not touch it
-      saving.set(id, (saving.get(id) || Promise.resolve()).then(() => ask(`/library/${id}/notes`, { method: 'POST', body: data, headers: { 'Content-Type': 'application/json' } }))
-        .then((r) => { if (!r.ok) throw new Error(r.status); if (problem && id === lib) { problem = ''; list(); } })
+      // the save number is taken when the save goes (after the saves before it), not when the change is made
+      const url = () => `/library/${id}/notes` + (revs.has(id) ? `?base=${revs.get(id)}` : '');
+      saving.set(id, (saving.get(id) || Promise.resolve()).then(() => ask(url(), { method: 'POST', body: data, headers: { 'Content-Type': 'application/json' } }))
+        .then(async (r) => {
+          if (r.status === 409 || r.ok) saves.set(id, (saves.get(id) || 0) + 1);
+          if (r.status === 409) { if (id === lib) older(); else olderElsewhere(id); return; }
+          if (!r.ok) throw new Error(r.status);
+          try { const { rev } = await r.json(); if (Number.isInteger(rev)) revs.set(id, rev); } catch { /* no number: an older voice server */ }
+          if (problem && id === lib) { problem = ''; list(); }
+        })
         .catch(() => { if (id === lib) saveFailed('the voice server did not answer'); }));
     } else if (keep('ra2.notes.' + state.docKey, notes)) { if (problem) problem = ''; } else saveFailed('the browser storage is full or blocked');
     onChange();
@@ -111,8 +151,10 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
     const my = ++loadId;
     readFailed = false; unread = WAIT;
     if (!kp.ok) await kpLoad();
-    const all = await read();
+    const got = await read();
     if (my !== loadId) return;  // a newer book or a newer read came: this answer is old
+    const all = got.all;
+    if (all) keepNumber(got);
     if (!all) {
       readFailed = true; ready = false; notes = [];
       unread = `The highlights could not be read (${lib ? 'the voice server did not answer' : 'the browser storage did not answer'}). Mark again in a moment: the highlights are read again.`;
@@ -345,6 +387,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
       COLORS.map((c) => `<button type="button" data-f="${c}" class="${filter === c ? 'on' : ''}"><span class="dot ${c}"></span>${esc(names[c])}</button>`).join('')
     }</div>`;
     if (problem) box.insertAdjacentHTML('beforeend', `<p class="notes-empty" role="alert">${esc(problem)}</p>`);
+    if (unchecked && lib) box.insertAdjacentHTML('beforeend', `<p class="notes-empty" role="alert">${esc(OLD_SERVER)}</p>`);
     if (!shown.length) {
       box.insertAdjacentHTML('beforeend', `<p class="notes-empty">${!ready ? esc(unread) : notes.length ? 'No highlights in this group.'
         : 'No highlights yet. Select text on the page and choose a group, or press the marker button while it reads.'}</p>`);
@@ -460,7 +503,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
     // written until reload(). id: the library id when this is the library book of the page, else '' (its own key).
     // why: the text for the list and the mark button while no change is possible (default: wait for the read-in).
     reset(id = '', why = WAIT) {
-      loadId++; lib = id; ready = false; readFailed = false; unread = why; problem = ''; notes = []; markBar.hidden = true;
+      loadId++; lib = id; ready = false; readFailed = false; unread = why; problem = ''; unchecked = false; notes = []; markBar.hidden = true;
       viewer.setMarks([]); list();
     },
     reload: refresh,  // after a document is read (or read again)

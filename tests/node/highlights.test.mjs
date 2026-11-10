@@ -94,19 +94,29 @@ function loadNotes({ libId = null, docKey = 'book-a', store = new Map(), server 
 
   // The fake voice server. A POST is held until the test lets it arrive (or it fails, or it never answers).
   // A GET answers at once, or is held when server.holdReads is set. A time limit (abort) rejects a held request.
-  const posts = [], gets = [];
+  const posts = [], gets = [], getUrls = [];
   globalThis.fetch = (url, opts = {}) => new Promise((resolve, reject) => {
     if (url.includes('/claude/')) { reject(new Error('no voice server in this test')); return; }
     opts.signal?.addEventListener('abort', () => reject(new Error('aborted: time limit')));
     if (opts.method === 'POST') {
+      // the save number (voice-server.py): a save with ?base= that is not the number of the last save is refused (409)
       posts.push({ url, body: opts.body,
-        arrive() { server.saved = JSON.parse(this.body); resolve({ ok: true }); },
+        arrive() {
+          const base = new URL(url, 'http://127.0.0.1:8793').searchParams.get('base');
+          const rev = server.rev ?? 0;
+          if (base !== null && Number(base) !== rev) { resolve({ ok: false, status: 409, json: async () => ({ rev }) }); return; }
+          server.saved = JSON.parse(this.body); server.rev = rev + 1;
+          resolve({ ok: true, json: async () => ({ rev: server.rev }) });
+        },
         fail() { resolve({ ok: false, status: 500 }); } });
       return;
     }
     if (server?.down) { reject(new Error('the voice server does not answer')); return; }
     // server.hangBody: the headers come, the body never comes
-    const answer = (list) => resolve({ ok: true, json: server?.hangBody ? () => new Promise(() => {}) : async () => JSON.parse(JSON.stringify(list)) });
+    getUrls.push(url);
+    // rev: the save number this answer carries (a held answer can carry an old one); server.noRev: an older voice server
+    const answer = (list, rev = server?.rev ?? 0) => resolve({ ok: true, headers: { get: (k) => (k === 'X-Notes-Rev' && !server?.noRev ? String(rev) : null) },
+      json: server?.hangBody ? () => new Promise(() => {}) : async () => JSON.parse(JSON.stringify(list)) });
     if (server?.holdReads) gets.push({ url, answer });
     else answer(server?.saved || []);
   });
@@ -130,7 +140,7 @@ function loadNotes({ libId = null, docKey = 'book-a', store = new Map(), server 
       for (const p of n.posts.splice(0).reverse()) p.arrive();
     }
   };
-  const n = { ui, state, ids, byId, store, posts, gets, server, marks, pages, jumps, rows, made, mark, deliver };
+  const n = { ui, state, ids, byId, store, posts, gets, getUrls, server, marks, pages, jumps, rows, made, mark, deliver };
   return n;
 }
 
@@ -219,6 +229,107 @@ test('two fast saves that the network delivers in the other order: the voice ser
   n.mark();                                   // change 2, at once: a second highlight
   await n.deliver();
   assert.equal(server.saved.length, 2, 'the server holds both highlights (the second change)');
+});
+
+test('each save sends the save number of the last read or save of this Book', async () => {
+  const server = { saved: [], rev: 4 };
+  const n = loadNotes({ libId: 'lib1', server });
+  await n.ui.reload();
+  n.mark();
+  await tick();
+  assert.match(n.posts[0].url, /\/library\/lib1\/notes\?base=4$/, 'the number of the read');
+  await n.deliver();
+  n.state.index = 2; n.state.at = 3;
+  n.mark();
+  await tick();
+  assert.match(n.posts[0].url, /\?base=5$/, 'the number of the last save');
+  await n.deliver();
+  assert.equal(server.saved.length, 2);
+});
+
+test('two tabs of one Book: the save of the tab that read before the other tab saved is refused, and it reads again', async () => {
+  const server = { saved: [], rev: 0 };
+  const n = loadNotes({ libId: 'lib1', server });
+  await n.ui.reload();
+  const other = [invented(0, 0, 9), invented(2, 0, 8)];
+  server.saved = other; server.rev = 1;      // the other tab saves its list
+  n.mark();                                   // this tab: a change from its old read
+  await n.deliver();
+  await tick(); await tick(); await tick();
+  assert.equal(server.saved, other, 'the old save does not write over the other tab\'s Highlights');
+  assert.match(n.byId('notes').innerHTML, /Another window saved the highlights of this book/);
+  assert.equal(n.rows().length, 2, 'the list now shows the saved highlights of the other tab');
+  n.state.index = 1; n.state.at = 0;
+  n.mark();                                   // the next change goes from the new read
+  await n.deliver();
+  assert.equal(server.saved.length, 3, 'the new change is added to the other tab\'s Highlights');
+  assert.equal(server.rev, 2);
+});
+
+test('review: a refused save of the Book opened before shows a message, and that Book\'s number is read again', async () => {
+  const server = { saved: [], rev: 0 };
+  const n = loadNotes({ libId: 'aaaaaaaaaaaa', server });
+  await n.ui.reload();
+  n.mark();
+  await tick();
+  const oldSave = n.posts.shift();            // the save of Book A waits
+  n.ui.reset('bbbbbbbbbbbb');
+  await n.ui.reload();                        // Book B is open now
+  server.rev = 3;                             // another window saved Book A
+  oldSave.arrive();                           // 409: the number of this save is old
+  for (let i = 0; i < 6; i++) await tick();
+  assert.match(n.byId('notes').innerHTML, /the book opened before was not saved/, 'the owner sees the change was not saved');
+  assert.match(n.getUrls.at(-1), /\/library\/aaaaaaaaaaaa\/notes/, 'Book A is read again for its number');
+  n.ui.reset('aaaaaaaaaaaa');
+  await n.ui.reload();
+  n.mark();
+  await tick();
+  assert.match(n.posts.at(-1).url, /\?base=3$/, 'Book A saves with its new number');
+});
+
+test('review: a late read with an old number does not replace the number of a newer read', async () => {
+  const server = { saved: [], rev: 5, holdReads: true };
+  const n = loadNotes({ libId: 'lib1', server });
+  const first = n.ui.reload();
+  await tick(); await tick();
+  const second = n.ui.reload();
+  await tick(); await tick();
+  assert.equal(n.gets.length, 2);
+  n.gets[1].answer([], 5);                    // the newer read
+  await second;
+  n.gets[0].answer([], 4);                    // the older read comes late, with an older number
+  await first;
+  n.mark();
+  await tick();
+  assert.match(n.posts[0].url, /\?base=5$/, 'the save sends the number of the newer read');
+});
+
+test('review: a read whose answer comes after a save of the same Book does not bring back the old number', async () => {
+  const server = { saved: [], rev: 0 };
+  const n = loadNotes({ libId: 'lib1', server });
+  await n.ui.reload();
+  server.holdReads = true;
+  const again = n.ui.reload();                // a new read: its answer waits
+  await tick(); await tick();
+  n.mark();                                   // a save during the read
+  await n.deliver();                          // the save is kept: number 1
+  n.gets[0].answer([], 0);                    // the read answers with the number from before the save
+  await again;
+  server.holdReads = false;
+  n.state.index = 2; n.state.at = 3;
+  n.mark();
+  await tick();
+  assert.match(n.posts[0].url, /\?base=1$/, 'the number of the save stays');
+});
+
+test('review: a voice server that sends no save number: the owner is told the check is off', async () => {
+  const server = { saved: [], noRev: true };
+  const n = loadNotes({ libId: 'lib1', server });
+  await n.ui.reload();
+  assert.match(n.byId('notes').innerHTML, /older version/, 'the list says the voice server is older');
+  n.mark();
+  await tick();
+  assert.doesNotMatch(n.posts[0].url, /base=/, 'the save still goes, without a number');
 });
 
 test('a read of the highlights waits for a save that is not finished', async () => {
@@ -539,9 +650,13 @@ function loadReader({ engine = 'system', search = '' } = {}) {
     ServerEngine: fakeEngineClass('kokoro', made),
     loadLexicon: async () => {},
     repairStats: () => ({ repaired: 0 }),
-    withOcr: async (doc) => { if (fakes.ocrFails) throw new Error('scan failed'); return doc; },
+    withOcr: async (doc) => {
+      if (fakes.ocrFailsOnce) { fakes.ocrFailsOnce = false; throw new Error('scan failed'); }
+      if (fakes.ocrFails) throw new Error('scan failed');
+      return doc;
+    },
     setupNotes: () => ({ reload() {}, markdown() { return ''; }, reset(id, why) { notes.resets.push(id); notes.why.push(why); }, markAt: () => notes.markHit }),
-    setupAsk: () => ({ reload() {}, highlightsChanged() {}, stopReading() {} }),
+    setupAsk: (o) => { notes.askArgs = o; return { reload() {}, highlightsChanged() {}, stopReading() {} }; },
   };
   let src = readFileSync(APP_JS, 'utf8');
   src = src.replace(/^import \* as (\w+) from [^;]+;$/gm, 'const $1 = __modules.$1;')
@@ -576,7 +691,7 @@ function loadReader({ engine = 'system', search = '' } = {}) {
     for (const { f } of [...all.filter((l) => l.capture), ...all.filter((l) => !l.capture)]) f(ev);
     return ev;
   };
-  return { ctx, state: ctx.__pr, viewer: ctx.__viewer, els: ids, byId, parses, made, notes, key, docListeners, fakes };
+  return { ctx, state: ctx.__pr, viewer: ctx.__viewer, els: ids, byId, parses, made, notes, key, docListeners, fakes, store };
 }
 
 async function readerWithBook(opts) {
@@ -684,4 +799,48 @@ test('an open that fails after the old Book is gone: the highlights stay closed,
   assert.equal(r.state.sentences.length, 0, 'the old Book\'s text is gone (app.js cleared it before the failure)');
   assert.match(r.notes.why.at(-1) || '', /No book is open/, 'notes.js gets the reason');
   assert.equal(r.notes.resets.at(-1), '', 'no library id');
+});
+
+test('a PDF opened on a library Book page: no "last read" of the library Book, no audio export, Ask Claude uses its own key', async () => {
+  const r = loadReader({ search: '?lib=0123456789ab&name=Invented&file=' + encodeURIComponent('/library/file/0123456789ab') });
+  await until(() => r.parses.length, 'the read-in of the library Book');
+  r.parses[0].finish({ sentences: Array.from({ length: 4 }, (_, i) => sentence(i)), sections: [] });
+  await until(() => r.state.sentences.length === 4, 'the end of the read-in');
+  assert.equal(r.els.exportBtn.hidden, false, 'the library Book can be exported');
+  assert.equal(r.notes.askArgs.libId(), '0123456789ab', 'Ask Claude: the library Book');
+  r.byId('playBtn').fire('click'); r.byId('playBtn').fire('click');   // play, then pause: the place is saved
+  assert.ok(r.store.has('ra2.lib.0123456789ab'), 'the library Book gets its "last read"');
+  r.byId('fileInput').files = [new File(['%PDF-1.7 other'], 'other.pdf')];
+  r.byId('fileInput').fire('change');
+  await until(() => r.parses.length > 1, 'the second read-in');
+  r.parses[1].finish({ sentences: Array.from({ length: 6 }, (_, i) => sentence(i)), sections: [] });
+  await until(() => r.state.sentences.length === 6, 'the end of the second read-in');
+  r.store.delete('ra2.lib.0123456789ab');   // the open saved the library Book's own place before it closed; that is right
+  r.byId('playBtn').fire('click'); r.byId('playBtn').fire('click');
+  assert.equal(r.store.has('ra2.lib.0123456789ab'), false, 'the other PDF does not write the "last read" of the library Book');
+  assert.equal(r.els.exportBtn.hidden, true, 'the audio export of the library Book is not offered for the other PDF');
+  assert.equal(r.notes.askArgs.libId(), '', 'Ask Claude uses the key of the other PDF, not the library Book');
+});
+
+test('an open that fails after the old Book is gone: the old Book opens again, with a message', async () => {
+  const r = await readerWithBook();
+  r.fakes.ocrFailsOnce = true;
+  r.byId('fileInput').files = [new File(['%PDF-1.7 other'], 'other.pdf')];
+  r.byId('fileInput').fire('change');
+  await until(() => r.parses.length > 1, 'the read-in of the old Book again');
+  r.parses[1].finish({ sentences: Array.from({ length: 8 }, (_, i) => sentence(i)), sections: [] });
+  await until(() => r.els.engineStatus.textContent.includes('is open again'), 'the message');
+  assert.match(r.els.engineStatus.textContent, /Could not show "other\.pdf" \(scan failed\)\. "book\.pdf" is open again\./);
+  assert.equal(r.state.fileName, 'book.pdf');
+  assert.equal(r.state.sentences.length, 8, 'the old Book can be read again');
+  assert.equal(r.notes.why.at(-1), undefined, 'notes.js reads the old Book\'s highlights again (no "No book is open")');
+});
+
+test('review: a library Book whose open fails with no Book to bring back: it is not the library Book any more, no audio export', async () => {
+  const r = loadReader({ search: '?lib=0123456789ab&name=Invented&file=' + encodeURIComponent('/library/file/0123456789ab') });
+  r.fakes.ocrFails = true;
+  await until(() => r.els.engineStatus.textContent.includes('Could not show'), 'the message');
+  assert.equal(r.state.libBook, false, 'no library Book is open');
+  assert.equal(r.els.exportBtn.hidden, true, 'the audio export is hidden');
+  assert.equal(r.notes.askArgs.libId(), '', 'Ask Claude has no library Book');
 });

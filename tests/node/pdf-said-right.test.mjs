@@ -202,3 +202,17 @@ test('the word list is loaded again after a failed load', async () => {
     globalThis.fetch = realFetch;
   }
 });
+
+test("a paragraph that ends in 'word-' (a break right after the hyphen) does not give the hyphen to the voice", async () => {
+  const sentences = await sentencesOf([[
+    ...column([OPENING, 'and each patient was part of the long-']),
+    { text: 'term study of the clinic, in a smaller type than the text above it was set', y: 660, size: 8 }
+  ]]);
+  assert.ok(sentences.some(s => /part of the long$/.test(s)), sentences.join(' | '));
+  assert.ok(!sentences.some(s => /-$/.test(s)), 'no sentence ends in a hyphen');
+});
+
+test("a dash at a paragraph end after a space stays: 'the text -' is not a cut word", async () => {
+  const sentences = await sentencesOf([[...column([OPENING, 'and the list ended with x-y and a dash -'])]]);
+  assert.ok(sentences.some(s => /x-y and a dash -$/.test(s)), sentences.join(' | '));
+});

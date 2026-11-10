@@ -22,12 +22,20 @@ These are in `tests/node/*.test.mjs`. They use the test runner that comes with N
 
 The tests import the real files of the reader, for example `extension/pdf/speech.js` and `extension/pdf/lexicon.js`. These files are ES modules, and Node loads them with no change. In the page, `fetch()` loads the word list. Node cannot fetch a file URL, so the tests read `extension/pdf/vendor/lexicon.txt` from the disk and give it to the same `loadLexicon()` function.
 
-Now there are tests for:
+Some of the tests:
 
 - the speech rewrite (`speech.test.mjs`),
 - the ligature repair (`lexicon.test.mjs`),
-- the PDF text of the sample PDFs (`pdf-text.test.mjs`),
+- the PDF text of the sample PDFs and made pages (`pdf-text.test.mjs`, `pdf-layout.test.mjs`, `pdf-said-right.test.mjs`, `pdf-lost-lines.test.mjs`),
+- scanned pages (`scanned-pages.test.mjs`),
+- the highlights and the open of a PDF in the reader (`highlights.test.mjs`),
 - the add-on background script (`addon-background.test.mjs`).
+
+The file name of each test says what it covers. Each file starts with a comment that says more.
+
+## Audio cache size
+
+`node tests/pdf-text/audio-cache-size.mjs` prints how much memory the audio cache of the reader (`tts.js`, 60 sentences) holds for the sample PDFs. Add `--private` to include the private books. It prints numbers only, and needs no voice server.
 
 ## PDF text comparison check
 

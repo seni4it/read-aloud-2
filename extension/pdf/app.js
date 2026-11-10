@@ -50,6 +50,7 @@ let askUI = { reload() {}, highlightsChanged() {}, stopReading() {} };  // Read 
 const state = window.__pr = {
   doc: null,
   docKey: null,
+  libBook: false,  // Read Aloud 2: the open document is the library Book of this page (?lib=), not a PDF opened after it
   fileName: '',
   buffer: null,
   sentences: [],
@@ -495,7 +496,7 @@ function saveProgress() {
   try {
     localStorage.setItem('pr.pos.' + state.docKey, record);
     // Read Aloud 2 desktop library: how far you are, for the progress bar on the book's card
-    if (LIB_ID) localStorage.setItem('ra2.lib.' + LIB_ID, JSON.stringify({ i: state.index, total: state.sentences.length, t: Date.now(), minLeft: wordsLeft() / (WPM * Number(els.rateSel.value || 1)) }));
+    if (LIB_ID && state.libBook) localStorage.setItem('ra2.lib.' + LIB_ID, JSON.stringify({ i: state.index, total: state.sentences.length, t: Date.now(), minLeft: wordsLeft() / (WPM * Number(els.rateSel.value || 1)) }));
     storageWarned = false;
   } catch (err) {
     // Not silent. A full or blocked store means the reader loses their place
@@ -553,10 +554,12 @@ async function keyFor(file, buffer) {
 /* -------------------------------------------------------------- open + parse */
 
 /** Opens a PDF. Gives true when it opened, false when it could not (a message then shows).
- *  library: this is the library book of the page (?lib=), so its highlights are kept with that book. */
-async function openFile(file, { library = false } = {}) {
+ *  library: this is the library book of the page (?lib=), so its highlights are kept with that book.
+ *  restoring: this open brings back the last shown document after a failed open; it does not try again. */
+let shown = null;  // Read Aloud 2: the file of the document on the screen, to open it again when the next open fails
+async function openFile(file, { library = false, restoring = false } = {}) {
   stop();
-  let doc;
+  let doc, old = null;
   try {
     const buffer = await file.arrayBuffer();
     // pdf.js takes ownership of the buffer, so hand it a copy each time.
@@ -572,7 +575,11 @@ async function openFile(file, { library = false } = {}) {
     // Read Aloud 2: from here the old document is gone. Its read-in stops, and none of its sentences show.
     state.parseToken++;
     notesUI.reset(library ? LIB_ID : '');  // the old book's highlights go; a PDF that is not the library book keeps its own
-    const old = state.doc;
+    // a PDF opened on a library Book page is not that Book: no "last read" of the Book, no audio export of it,
+    // and Ask Claude uses the PDF's own key
+    state.libBook = Boolean(LIB_ID && library);
+    els.exportBtn.hidden = !state.libBook;
+    old = state.doc;
     state.doc = doc;
     state.sentences = [];
     state.sections = [];
@@ -594,6 +601,8 @@ async function openFile(file, { library = false } = {}) {
     state.doc = await withOcr(state.doc, setStatus);  // Read Aloud 2: scanned pages are read with Vision
     await viewer.load(state.doc);
     old?.destroy();  // the old document leaves the pdf.js worker
+    old = null;
+    shown = { file, library };
   } catch (err) {
     console.warn('could not open', file.name, err);
     if (!doc) {
@@ -606,8 +615,21 @@ async function openFile(file, { library = false } = {}) {
       setStatus(message);
       return false;
     }
-    setStatus(`Could not show "${file.name}" (${err.message}).`);
-    // the old book's text is gone already (above), so no book can be read or marked: say so in the Highlights tab
+    const why = `Could not show "${file.name}" (${err.message}).`;
+    old?.destroy();  // the old book's text is gone already (above); its file opens again below
+    // Read Aloud 2: the old book comes back, read in again from its file. When that fails too, no book is open.
+    const back = !restoring && shown && shown.file !== file ? shown : null;
+    shown = null;
+    if (back && await openFile(back.file, { library: back.library, restoring: true })) {
+      state.openMessage = `${why} "${back.file.name}" is open again.`;
+      setStatus(state.openMessage);
+      return false;
+    }
+    setStatus(why);
+    // no book is open: not the library Book either, so no "last read", no audio export and no Ask Claude of it
+    state.libBook = false;
+    els.exportBtn.hidden = true;
+    // no book can be read or marked: say so in the Highlights tab
     notesUI.reset('', 'No book is open. Open a PDF to see its highlights.');
     return false;
   }
@@ -995,7 +1017,7 @@ const voice = {
   hush() { engine.stop(); },
 };
 els.playBtn.addEventListener('click', () => askUI.stopReading(), true);
-askUI = setupAsk({ state, els, libId: LIB_ID, jumpTo, highlights: () => notesUI.markdown(), voice });
+askUI = setupAsk({ state, els, libId: () => (state.libBook ? LIB_ID : ''), jumpTo, highlights: () => notesUI.markdown(), voice });
 
 // Read Aloud 2: scroll freely while it reads. Scrolling yourself stops the page from following the voice;
 // the target button in the player takes you back to the word being read and follows again.
@@ -1046,7 +1068,7 @@ async function pollExport() {
   if (LIB_ID) {  // the desktop library: export the book as MP3 files, one per chapter
     els.exportBtn.hidden = false;
     els.exportBtn.addEventListener('click', async () => {
-      if (!state.sentences.length) return;
+      if (!state.sentences.length || !state.libBook) return;
       if (!confirm('Make MP3 files of this book, one per chapter? It takes about a minute for each ten minutes of audio. The files go to Documents › Read Aloud Library › Audio.')) return;
       const secs = (state.sections || []).filter(s => s.level === 0 || !(state.sections || []).some(x => x.level === 0));
       const starts = secs.map(s => s.startSentence).filter(n => n > 0);

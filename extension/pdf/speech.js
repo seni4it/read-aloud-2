@@ -57,7 +57,8 @@ export function sayNumber(n) {
  * ninety-six"; 2020 is "twenty twenty"; 2003 is "two thousand three".
  */
 export function sayYear(n) {
-  if (n < 1000 || n > 2099) return sayNumber(n);
+  // 1000 and 2000 are "one thousand" and "two thousand", never "ten hundred" or "twenty hundred"
+  if (n < 1000 || n > 2099 || n % 1000 === 0) return sayNumber(n);
   const hi = Math.floor(n / 100);
   const lo = n % 100;
   if (lo === 0) return `${under100(hi)} hundred`;
@@ -65,6 +66,9 @@ export function sayYear(n) {
   if (n >= 2000 && lo < 10) return `two thousand ${ONES[lo]}`;
   return `${under100(hi)} ${lo < 10 ? 'oh ' + ONES[lo] : under100(lo)}`;
 }
+
+// a number with thousands commas stays as it is (the voice says it); a number up to 9999 is said in words
+const sayWhole = (n) => (n.includes(',') ? n : sayNumber(Number(n)));
 
 function sayDecimal(whole, frac) {
   const digits = [...frac].map(d => ONES[Number(d)]).join(' ');
@@ -74,6 +78,12 @@ function sayDecimal(whole, frac) {
 // Ordered. Each rule gets the match and returns what should be said instead,
 // or null to leave it alone.
 const RULES = [
+  // Read Aloud 2: the signs ~ ^ | are not said as signs. "~5 mm" is "about five millimetres", "10^3" and "2^n" are
+  // "to the power of"; any other ~ ^ | is a short pause (a space), never "tilde", "caret" or "vertical bar".
+  [/~\s?(?=\d)/g, () => 'about '],
+  [/\b(\w+)\^([-\u2212]?)(\w+)\b/g, (m, a, minus, b) => `${a} to the power of ${minus ? 'minus ' : ''}${b}`],
+  [/[~^|]/g, () => ' '],
+
   // pH is a word to a reader and a mystery to a voice.
   [/\bpH\b/g, () => 'P H'],
 
@@ -83,22 +93,25 @@ const RULES = [
 
   // A year, alone: 1996, 2020. Not 1234 pages or a 2000 mg dose — a bare
   // four-digit number in running text is overwhelmingly a year.
-  [/\b(1[0-9]{3}|20[0-9]{2})\b/g, (m, n) => sayYear(Number(n))],
+  [/(?<!\d,)\b(1[0-9]{3}|20[0-9]{2})\b(?!,\d)/g, (m, n) => sayYear(Number(n))],
 
+  // Read Aloud 2: a number with thousands commas ("1,000", "12,500") goes to the voice whole: the voice says it
+  // right ("one thousand"). The rules below never start or end inside one (before, "1,000-2,000" became
+  // "1,zero to two,000" and "1,500 mm" "1,five hundred millimetres").
   // 50-60 years, 2-4 mm: a voice reads the hyphen as a minus sign.
-  [/\b(\d{1,3})-(\d{1,3})\b/g, (m, a, b) => `${sayNumber(Number(a))} to ${sayNumber(Number(b))}`],
+  [/(?<!\w|\d,)(\d{1,3}(?:,\d{3})*)-(\d{1,3}(?:,\d{3})*)\b(?!,\d)/g, (m, a, b) => `${sayWhole(a)} to ${sayWhole(b)}`],
 
   // "1.5 mm" is one thing to say, so it has to be matched before the decimal
   // rule claims the "1.5" and leaves "mm" behind as "em em".
-  [/\b(\d+(?:\.\d+)?)\s?(mm|cm|µm|um|ml|kg|Hz)\b/g, (m, n, unit) => {
+  [/(?<!\w|\d,)(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s?(mm|cm|µm|um|ml|kg|Hz)\b/g, (m, n, unit) => {
     const u = UNITS[unit.toLowerCase()];
     if (!u) return null;
-    const value = n.includes('.') ? sayDecimal(...n.split('.')) : sayNumber(Number(n));
+    const value = n.includes(',') ? n : n.includes('.') ? sayDecimal(...n.split('.')) : sayNumber(Number(n));
     return `${value} ${u}${Number(n) === 1 ? '' : 's'}`;
   }],
 
   // 1.5, 5.2, 0.75
-  [/\b(\d+)\.(\d+)\b/g, (m, w, f) => sayDecimal(w, f)],
+  [/(?<!\d,)\b(\d+)\.(\d+)\b/g, (m, w, f) => sayDecimal(w, f)],
 
   // An all-capitals token that is not an English word is an initialism.
   // USA -> U S A, VDO -> V D O. ACE and STEP are words, and stay.

@@ -138,6 +138,61 @@ class Http(unittest.TestCase):
         self.assertEqual(get(f'/library/{bid}/notes', self.origin, 'POST', json.dumps(notes).encode())[0], 200)
         self.assertEqual(json.loads(get(f'/library/{bid}/notes')[2]), notes)
 
+    def test_notes_save_with_an_old_number_is_refused(self):
+        # two tabs read the same Book (number 0); the first save wins, the second tab's save is old and is refused
+        bid = self.add('Twotabs.pdf', PDF + b'twotabs')
+        code, h, _ = get(f'/library/{bid}/notes')
+        self.assertEqual(h['X-Notes-Rev'], '0')
+        first = [{'id': 'a', 'text': 'first tab'}]
+        code, h, body = get(f'/library/{bid}/notes?base=0', self.origin, 'POST', json.dumps(first).encode())
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(body), {'rev': 1})
+        code, _, body = get(f'/library/{bid}/notes?base=0', self.origin, 'POST', json.dumps([{'id': 'b'}]).encode())
+        self.assertEqual(code, 409)
+        self.assertEqual(json.loads(body), {'rev': 1})
+        code, h, body = get(f'/library/{bid}/notes')
+        self.assertEqual((json.loads(body), h['X-Notes-Rev']), (first, '1'))
+        # the save with the present number goes, and the number goes up
+        self.assertEqual(get(f'/library/{bid}/notes?base=1', self.origin, 'POST', b'[]')[0], 200)
+        self.assertEqual(get(f'/library/{bid}/notes')[1]['X-Notes-Rev'], '2')
+
+    def test_notes_save_without_a_number_still_goes_and_counts(self):
+        bid = self.add('Nonumber.pdf', PDF + b'nonumber')
+        self.assertEqual(get(f'/library/{bid}/notes', self.origin, 'POST', b'[]')[0], 200)
+        self.assertEqual(get(f'/library/{bid}/notes')[1]['X-Notes-Rev'], '1')
+        self.assertEqual(get(f'/library/{bid}/notes?base=x', self.origin, 'POST', b'[]')[0], 400)
+
+    def test_notes_bad_number_file_refuses_every_old_number(self):
+        # a damaged .rev file never goes back to 0: it gets a new number above every number a tab can hold
+        bid = self.add('Badrev.pdf', PDF + b'badrev')
+        self.assertEqual(get(f'/library/{bid}/notes?base=0', self.origin, 'POST', b'[{"id": "a"}]')[0], 200)
+        rev = os.path.join(TMP, '.notes', bid + '.rev')
+        for damage in ('', 'not a number'):
+            with open(rev, 'w') as f:
+                f.write(damage)
+            n = get(f'/library/{bid}/notes')[1]['X-Notes-Rev']
+            self.assertGreater(int(n), 1, 'not 0 and not the old number')
+            self.assertEqual(get(f'/library/{bid}/notes')[1]['X-Notes-Rev'], n, 'the new number is kept')
+            self.assertEqual(get(f'/library/{bid}/notes?base=1', self.origin, 'POST', b'[]')[0], 409)
+            self.assertEqual(get(f'/library/{bid}/notes?base={n}', self.origin, 'POST', b'[]')[0], 200)
+        self.assertFalse(os.path.exists(rev + '.tmp'), 'the number is written to a temporary file, then moved')
+
+    def test_notes_saves_from_many_threads_each_get_their_own_number(self):
+        bid = self.add('Threads.pdf', PDF + b'threads')
+        codes = []
+        def save():
+            codes.append(get(f'/library/{bid}/notes?base=0', self.origin, 'POST', b'[]')[0])
+        ts = [threading.Thread(target=save) for _ in range(8)]
+        for t in ts: t.start()
+        for t in ts: t.join()
+        self.assertEqual(sorted(codes), [200] + [409] * 7, 'one save with number 0 wins')
+        self.assertEqual(get(f'/library/{bid}/notes')[1]['X-Notes-Rev'], '1')
+
+    def test_notes_number_header_is_exposed_to_other_origins(self):
+        bid = self.add('Expose.pdf', PDF + b'expose')
+        h = get(f'/library/{bid}/notes', {'Origin': 'chrome-extension://abc'})[1]
+        self.assertIn('X-Notes-Rev', h.get('Access-Control-Expose-Headers') or '')
+
     def test_bad_speak_request_is_a_400_not_a_crash(self):
         self.assertEqual(get('/speak?text=&voice=af_heart')[0], 400)
         self.assertEqual(get('/speak?text=hi&voice=nobody')[0], 400)

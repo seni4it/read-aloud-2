@@ -21,7 +21,8 @@ export function setupAsk({ state, els, libId, jumpTo, highlights, voice }) {
   let model = pref('ra2.askModel', 'normal'), sources = pref('ra2.askSources', 'knowledge');
   let autoCheck = pref('ra2.askCheck', '1') === '1';
 
-  const key = () => libId || state.docKey || '';
+  // libId: the library id of the open book ('' for a PDF that is not the library Book); a function, or a fixed id
+  const key = () => (typeof libId === 'function' ? libId() : libId) || state.docKey || '';
   const name = () => (els.docTitle.textContent || 'Book').trim();
   const pageOf = (s) => { const o = s && s.charOwners && s.charOwners.find(Boolean); return o ? o.page : (s && s.page) || 0; };
   const chapterAt = (i) => { let t = ''; for (const s of state.sections || []) if (s.startSentence <= i) t = s.title; return t; };

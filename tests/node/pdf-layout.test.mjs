@@ -363,3 +363,54 @@ test('a body line that names a layout file and a time is read', async () => {
   const text = await readAll([page, column(fill('school')), column(fill('office'))]);
   assert.match(text, /was saved at/);
 });
+
+test('a drop cap beside lines 1 to 3 (its baseline on line 3) starts line 1: "T" + "he clinic" is "The clinic"', async () => {
+  const [a, b, c, ...rest] = FILL;
+  const page = [
+    { y: 672, parts: [{ text: 'T', x: 72, size: 38 }] },
+    { text: 'The'.slice(1) + a.slice(3), x: 100, y: 700 },
+    { text: b, x: 100, y: 686 },
+    { text: c, x: 100, y: 672 },
+    ...column(rest, 658)
+  ];
+  const builder = await buildDocument(fakeDoc([page, column(fill('school')), column(fill('office'))]), DEFAULT_OPTIONS);
+  const text = builder.sentences.map(s => s.text).join(' ');
+  assert.match(text, /^The clinic kept a record of every visit and every treatment that was given, so that the clinic team could look back at the results and compare one group/);
+  assert.doesNotMatch(text, /\bT and compare/);
+  assert.deepEqual(builder.sections.map(s => s.title), ['Beginning']);
+});
+
+test('a big letter alone that is not beside the start of a paragraph is not moved', async () => {
+  const page = [...column(FILL.slice(0, 3)), { y: 600, parts: [{ text: 'A', x: 300, size: 38 }] }, ...column(FILL.slice(3), 560)];
+  const builder = await buildDocument(fakeDoc([page, column(fill('school')), column(fill('office'))]), DEFAULT_OPTIONS);
+  assert.match(builder.sentences.map(s => s.text).join(' '), /^the clinic kept a record/);
+});
+
+// review: the two last checks of moveDropCaps. In both cases the rows above start right of the big letter.
+test('a big capital beside rows whose top row starts with a capital is not moved (a figure label, not a drop cap)', async () => {
+  const [a, b, c, ...rest] = FILL;
+  const page = [
+    { y: 672, parts: [{ text: 'B', x: 72, size: 38 }] },
+    { text: 'The' + a.slice(3), x: 100, y: 700 },
+    { text: b, x: 100, y: 686 },
+    { text: c, x: 100, y: 672 },
+    ...column(rest, 658)
+  ];
+  const text = (await buildDocument(fakeDoc([page, column(fill('school')), column(fill('office'))]), DEFAULT_OPTIONS)).sentences.map(s => s.text).join(' ');
+  assert.doesNotMatch(text, /BThe/);
+  assert.match(text, /^The clinic kept a record/);
+});
+
+test('a capital less than twice the text size beside rows whose top row starts with a small letter is not moved', async () => {
+  const [a, b, c, ...rest] = FILL;
+  const page = [
+    { y: 672, parts: [{ text: 'B', x: 72, size: 19 }] },
+    { text: a, x: 100, y: 700 },
+    { text: b, x: 100, y: 686 },
+    { text: c, x: 100, y: 672 },
+    ...column(rest, 658)
+  ];
+  const text = (await buildDocument(fakeDoc([page, column(fill('school')), column(fill('office'))]), DEFAULT_OPTIONS)).sentences.map(s => s.text).join(' ');
+  assert.doesNotMatch(text, /B(the|was) /, 'the capital is not put in front of a row above it');
+  assert.match(text, /^the clinic kept a record/);
+});

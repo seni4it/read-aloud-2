@@ -103,6 +103,23 @@ the cover as album art, chapter titles as track names). Files go to `Documents/R
 
 `tools/test-window.sh` opens a separate Chrome window with the add-on loaded, without touching your own Chrome.
 
+## Tests
+
+Run all automatic tests with one command at the root of the project:
+
+```
+./run-tests.sh
+```
+
+The last line says `RESULT: PASS` or `RESULT: FAIL`. The command installs nothing, uses no network and does not touch
+the running voice server. `docs/testing.md` tells what each test covers, and how to run the PDF text comparison
+(`node tests/pdf-text/compare.mjs`) before and after a change to the PDF text rules.
+
+## Words
+
+`GLOSSARY.md` gives one name to each part of Read Aloud 2 (add-on, voice server, reader, library, Book, highlight,
+and so on). Use these names in code comments, tickets and messages.
+
 ## Licences
 
 Kokoro-82M: Apache-2.0. mlx-audio: MIT. Both are used from the existing install on this Mac, not copied here.

@@ -111,9 +111,14 @@ async function recognizeNow(page, signal) {
     const baseline = line.box[1];
     line.words.forEach((w, k) => {
       const [x, , bw] = w.box;
-      const [px, py] = base.convertToPdfPoint(x * W, (1 - baseline) * H);  // the line's bottom edge, in PDF units
+      const vx = x * W, vy = (1 - baseline) * H;
+      const [px, py] = base.convertToPdfPoint(vx, vy);  // the line's bottom edge, in PDF units
+      // The page rotation (/Rotate): the picture is the turned page, so its lines run along the turned page. On the
+      // unturned sheet the word gets that direction (along) and its up, as pdf.js gives the text of a turned page.
+      const [ax, ay] = base.convertToPdfPoint(vx + 1, vy), [ux, uy] = base.convertToPdfPoint(vx, vy - 1);
+      const along = [ax - px, ay - py], up = [ux - px, uy - py];
       const last = k === line.words.length - 1;
-      items.push({ str: w.text + (last ? '' : ' '), dir: 'ltr', transform: [size, 0, 0, size, px, py],
+      items.push({ str: w.text + (last ? '' : ' '), dir: 'ltr', transform: [size * along[0], size * along[1], size * up[0], size * up[1], px, py],
         width: bw * W, height: size, fontName: 'ocr', hasEOL: last });
     });
   }

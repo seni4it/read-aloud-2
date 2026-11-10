@@ -191,3 +191,44 @@ test('a read-ahead page that failed is not asked again by read-ahead, only when 
   assert.deepEqual(server.asked.filter((p) => p === 2).length, 2);
   close(doc);
 });
+
+// A page set with /Rotate 90 (pdf.js): the viewport is the turned page (800 x 600 here), and a point of the
+// viewport goes back to the unturned sheet as (x, y) -> (y, x). The words of the picture run along the viewport.
+// An upright page as pdf.js gives it: the viewport y runs down, the PDF y runs up: (x, y) -> (x, 800 - y).
+function turnedBook(turned = true) {
+  const page = {
+    getTextContent: async () => ({ items: [], styles: {} }),
+    getViewport: ({ scale }) => (turned ? { width: 800 * scale, height: 600 * scale, rotation: 90, convertToPdfPoint: (x, y) => [y, x] }
+      : { width: 600 * scale, height: 800 * scale, rotation: 0, convertToPdfPoint: (x, y) => [x, 800 - y] }),
+    render: () => ({ promise: Promise.resolve(), cancel() {} }),
+  };
+  return { numPages: 1, loadingTask: { destroyed: false }, getPage: async () => page };
+}
+const twoWords = { ok: true, json: async () => ({ lines: [{ box: [0.1, 0.5, 0.5, 0.02],
+  words: [{ text: 'alpha', box: [0.1, 0.5, 0.2, 0.02] }, { text: 'beta', box: [0.35, 0.5, 0.2, 0.02] }] }] }) };
+
+test('the words of a scanned page get the page rotation: on an upright page they run along x', async () => {
+  fakeServer((k, ok) => ok(twoWords));
+  const doc = await withOcr(turnedBook(false));
+  const { items } = await (await doc.getPage(1)).getTextContent();
+  const [a, b, c, d] = items[0].transform;
+  assert.deepEqual([a, b, c, d].map((v) => Math.round(v * 100) / 100 + 0), [a, 0, 0, a]);
+  assert.ok(a > 0);
+  close(doc);
+});
+
+test('the words of a scanned page get the page rotation: on a page turned 90 degrees they run along the turned line', async () => {
+  fakeServer((k, ok) => ok(twoWords));
+  const doc = await withOcr(turnedBook());
+  const { items } = await (await doc.getPage(1)).getTextContent();
+  const [a, b, c, d, e, f] = items[0].transform;
+  const size = Math.hypot(a, b);
+  assert.ok(size > 0);
+  // the text direction on the unturned sheet: one quarter turn (pdf.js items of a /Rotate 90 page look the same)
+  assert.deepEqual([a, b, c, d].map((v) => Math.round((v / size) * 100) / 100 + 0), [0, 1, -1, 0]);
+  // the second word is further along the line: on the unturned sheet that is further up (y), at the same x
+  const [, , , , e2, f2] = items[1].transform;
+  assert.ok(f2 > f, 'the next word is further along the line');
+  assert.equal(Math.round(e2), Math.round(e));
+  close(doc);
+});
