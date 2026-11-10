@@ -9,9 +9,11 @@
   h1 { font-size: var(--text-20); line-height: var(--leading-20); margin: 0; }
   .big { height: var(--control-l); border: 0; border-radius: var(--radius-round); background: var(--color-play); color: var(--color-on-play); font: inherit; font-weight: 700; font-size: var(--text-16); cursor: pointer; transition: background-color var(--dur-hover) var(--ease-out); }
   .big:hover { background: var(--color-play-hover); }
-  label.f { display: grid; gap: var(--space-1); color: var(--color-text-muted); font-size: var(--text-14); }
+  label.f { display: grid; gap: var(--space-1); color: var(--color-text-muted); font-size: var(--text-14); line-height: var(--leading-14); }
   select, input[type=range] { width: 100%; font: inherit; accent-color: var(--color-action); }
-  select { padding: var(--space-2); border: 1px solid var(--color-control-border); border-radius: var(--radius-1); background: var(--color-surface); color: var(--color-text); }
+  /* a select is 40 px high with 16 px text, as in the settings panel of the reader */
+  select { min-height: var(--control-m); padding: 0 var(--space-3); font-size: var(--text-16); border: 1px solid var(--color-control-border); border-radius: var(--radius-1); background: var(--color-surface); color: var(--color-text); cursor: pointer; }
+  select:hover { background: var(--color-hover); }
   /* the switches: one group, one label style, words on the left, each row 32 px or more */
   .switches { display: grid; gap: var(--space-1); margin: 0; padding: var(--space-2) 0 0; border-top: 1px solid var(--color-line); }
   .switches h2 { margin: 0 0 var(--space-1); font-size: var(--text-14); line-height: var(--leading-14); color: var(--color-text-muted); font-weight: 600; }

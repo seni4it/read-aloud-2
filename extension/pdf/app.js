@@ -1176,6 +1176,9 @@ function showMethods() {
   if (c) c.disabled = noC;
   els.methodSel.value = noC && wantedMethod === 'C' ? 'A' : wantedMethod;
   if (els.methodHint) els.methodHint.hidden = !(noC && wantedMethod === 'C');
+  // a screen reader reads the hint with the select, only while the hint shows (a hidden hint would be read too)
+  if (els.methodHint?.hidden === false) els.methodSel.setAttribute?.('aria-describedby', 'methodHint');
+  else els.methodSel.removeAttribute?.('aria-describedby');
 }
 if (els.methodSel) {
   showMethods();

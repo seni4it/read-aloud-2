@@ -8,6 +8,10 @@
    Three layers: primitive values (--navy-900), then semantic tokens (--color-text) with a light and a dark mode. */
 
 :root {
+  /* the controls that the browser draws (check boxes, scroll bars, the open list of a select) follow the mode too:
+     without this an empty check box stays white in dark mode */
+  color-scheme: light dark;
+
   /* ---------- primitives: colour ---------- */
   --navy-950: #0f172a;
   --navy-900: #10233f;
