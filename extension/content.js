@@ -259,11 +259,29 @@
   const cancel = (t) => { clearTimeout(t); timers.delete(t); };
   // a page or window listener that does nothing after gone()
   const on = (target, type, f, opts) => target.addEventListener(type, (e) => { if (!dead) f(e); }, opts);
+  let playerStyle = '';  // the style text of the Player bar, set when the player is built; oldTabNote() uses it
   function gone() {
     if (dead) return;
     dead = true; S.playing = S.paused = false; S.id++;
     hlWord && hlWord.clear(); hlSent && hlSent.clear(); host.remove(); undress();
     release(); timers.forEach(clearTimeout); timers.clear();
+    if (playerStyle) oldTabNote();
+  }
+  // Ticket 02 (issue 33): in place of the old player, a small message with the look of the Player bar tells the owner
+  // to reload the page. It uses no add-on call (the connection is gone), no timer and no page listener: only its own
+  // two buttons. gone() runs one time, so the message shows one time for a page. It is not made when the add-on is
+  // gone before the player is built (playerStyle is still empty then).
+  function oldTabNote() {
+    const box = document.createElement('ra2-note');
+    const root = box.attachShadow({ mode: 'closed' });
+    root.innerHTML = playerStyle + `<div class="bar note" role="status">
+      <span>Read Aloud 2 was updated. Reload this page to listen.</span>
+      <button class="reload" id="ra2Reload">Reload this page</button>
+      <button id="ra2NoteClose" aria-label="Close" data-tip="Close">${svg('close')}</button>
+    </div>`;
+    root.getElementById('ra2Reload').addEventListener('click', () => location.reload());
+    root.getElementById('ra2NoteClose').addEventListener('click', () => box.remove());
+    document.documentElement.appendChild(box);
   }
   const send = (m) => { ask(m); };
   // The voice follows the text: Russian (Cyrillic) is read by the Mac's Russian voice, an Italian page by an Italian
@@ -651,6 +669,8 @@
       .pos { width: 64px; }
       .meta .left { display: none; }
     }
+    .note { cursor: auto; user-select: text; -webkit-user-select: text; padding-left: var(--space-4); }
+    .note .reload { width: auto; padding: 0 var(--space-3); border: 1px solid var(--color-control-border); font-weight: 600; white-space: nowrap; }
     @media print { .bar, .launch, .hover, .bubble { display: none; } }
   </style>
   <div class="bar" id="bar" role="toolbar" aria-label="Read Aloud 2 player" data-place="bottom" hidden>
@@ -675,6 +695,7 @@
   <button class="launch" id="launch" title="Listen to this page (Read Aloud 2). Drag to move it." aria-label="Listen to this page" hidden>${svg('ear')}</button>
   <button class="hover" id="hover" title="Listen from here" aria-label="Listen from here" hidden>${svg('play')}</button>
   <button class="bubble" id="bubble" hidden>${svg('play')}Listen</button>`;
+  { const h = String(sh.innerHTML || ''), end = h.indexOf('</style>'); playerStyle = end < 0 ? '' : h.slice(0, end + 8); }  // the look of the Player bar, for oldTabNote()
   const $ = (id) => sh.getElementById(id);
   // On <html>, not <body>: a transform or filter on <body> would move the fixed player off the window.
   const attach = () => { if (!dead && !document.documentElement.contains(host)) document.documentElement.appendChild(host); };
