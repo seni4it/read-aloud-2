@@ -47,6 +47,14 @@ _Avoid_: alignment, timestamps
 The making of the next sentences while the present sentence plays, so that no silence comes between sentences.
 _Avoid_: prefetch, preload, buffer
 
+**Speed method**:
+The way a natural voice gets faster or slower: the voice speaks faster, the normal sound is stretched and keeps its pitch, or the sound plays faster and its pitch goes up.
+_Avoid_: speed mode, time stretch, tempo
+
+**Sound memory**:
+The sound of the sentences that the reader keeps in the browser tab, up to a size limit, so that a step back plays at once.
+_Avoid_: audio cache, buffer
+
 **Speech rewrite**:
 The change of printed text into text that a voice says correctly, for example a year, a unit or a Roman numeral.
 _Avoid_: normalisation, expansion
