@@ -27,7 +27,15 @@
     return t || raw.replace(/\.pdf$/i, '') || 'Untitled';
   }
 
-  // The reading position that the reader keeps: { i, total, t, minLeft }
+  // The reading position that the reader keeps: { i, total, t, minLeft, page, pages }. Two copies (ticket 27): the voice
+  // server's ("position" in /library.json, t = the voice server's time of the save) and the one in this browser
+  // ("ra2.lib.<id>", t = the browser clock). The page shows the voice server copy when there is one: it is the one
+  // that every page shares, and the reader sends it at each pause. The browser copy is only for a Book that the voice
+  // server has no copy of (read before ticket 27); its time is dropped, so the order uses the voice server's times only.
+  function progressFrom(server, browser) {
+    if (server && typeof server === 'object') return server;
+    return browser && typeof browser === 'object' ? { ...browser, t: 0 } : null;
+  }
   function percent(p) {
     return p && p.total > 0 ? Math.max(0, Math.min(100, Math.round(((p.i + 1) / p.total) * 100))) : 0;
   }
@@ -40,7 +48,8 @@
     if (!pct) return 'New';
     if (pct >= 100) return 'Finished';
     const left = p && Number.isFinite(p.minLeft) ? `, ${minutesText(p.minLeft)} left` : '';
-    return `${pct}% done${left}`;
+    const page = p.page > 0 && p.pages > 0 ? `Page ${p.page} of ${p.pages}, ` : '';
+    return `${page}${pct}% done${left}`;
   }
 
   // When the Book was read last, in ms: the voice server's "opened" time or the reader's own save time.
@@ -73,5 +82,5 @@
     return cleanTitle(b.name).toLowerCase().includes(s) || String(b.name || '').toLowerCase().includes(s);
   }
 
-  root.LibraryModel = { cleanTitle, percent, statusText, minutesText, lastRead, pickContinue, sortBooks, matches };
+  root.LibraryModel = { cleanTitle, progressFrom, percent, statusText, minutesText, lastRead, pickContinue, sortBooks, matches };
 })(globalThis);

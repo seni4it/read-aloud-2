@@ -204,6 +204,122 @@ class Http(unittest.TestCase):
         h = get(f'/library/{bid}/notes', {'Origin': 'chrome-extension://abc'})[1]
         self.assertIn('X-Notes-Rev', h.get('Access-Control-Expose-Headers') or '')
 
+    # ---- ticket 27: the Reading position of a Book ----
+    # The reader sends {i, total, page, pages, minLeft, at, t}; t is its own clock. The voice server keeps t as "ct"
+    # (never later than its own clock) and puts its own receipt time in "t".
+    def pos(self, bid, body, origin=None):
+        code, _, out = get(f'/library/{bid}/position', origin or self.origin, 'POST', body if isinstance(body, bytes) else json.dumps(body).encode())
+        return code, (json.loads(out) if code == 200 else None)
+
+    def test_position_round_trip(self):
+        bid = self.add('Pos.pdf', PDF + b'pos')
+        code, _, body = get(f'/library/{bid}/position')
+        self.assertEqual((code, json.loads(body)), (200, None), 'no Reading position before the first save')
+        rec = {'i': 120, 'total': 2400, 'page': 12, 'pages': 240, 'minLeft': 95.5, 'at': 'first words'}
+        before = int(vs.time.time() * 1000)
+        code, kept = self.pos(bid, {**rec, 't': 1000, 'extra': 'x'})
+        self.assertEqual(code, 200)
+        self.assertEqual({k: kept[k] for k in rec}, rec)
+        self.assertNotIn('extra', kept, 'unknown keys are dropped')
+        self.assertEqual(kept['ct'], 1000, 'the reader time is kept as ct')
+        self.assertGreaterEqual(kept['t'], before, 't is the voice server time of the save')
+        self.assertEqual(json.loads(get(f'/library/{bid}/position')[2]), kept)
+
+    def test_position_without_time_gets_the_server_time(self):
+        bid = self.add('PosT.pdf', PDF + b'post')
+        code, kept = self.pos(bid, b'{"i": 3}')
+        self.assertEqual(code, 200)
+        self.assertGreater(kept['t'], 1.7e12)
+        self.assertEqual(kept['ct'], kept['t'])
+
+    def test_position_bad_id(self):
+        self.assertEqual(get('/library/xyz/position')[0], 404)
+        self.assertEqual(get('/library/0123456789ab0/position', self.origin, 'POST', b'{"i": 1}')[0], 404)
+        self.assertEqual(get('/library/..%2f..%2fx/position')[0], 404)
+
+    def test_position_bad_body(self):
+        bid = self.add('PosBad.pdf', PDF + b'posbad')
+        for body in (b'not json', b'[]', b'null', b'{}', b'{"i": -1}', b'{"i": "3"}', b'{"i": 1.5}', b'{"i": true}',
+                     b'{"i": 1, "page": -2}', b'{"i": 1, "minLeft": "x"}', b'{"i": 1, "at": 5}',
+                     json.dumps({'i': 1, 'at': 'x' * 201}).encode()):
+            self.assertEqual(self.pos(bid, body)[0], 400, body)
+        self.assertEqual(self.pos(bid, b'{"i": 1, "at": "' + b'x' * 5000 + b'"}')[0], 413)
+        self.assertEqual(json.loads(get(f'/library/{bid}/position')[2]), None, 'nothing was kept')
+
+    def test_position_infinity_and_nan_are_refused(self):
+        # json.loads reads Infinity, -Infinity and NaN; kept, they would make /library.json invalid JSON
+        bid = self.add('PosInf.pdf', PDF + b'posinf')
+        for body in (b'{"i": 1, "minLeft": Infinity}', b'{"i": 1, "minLeft": -Infinity}', b'{"i": 1, "minLeft": NaN}',
+                     b'{"i": 1, "t": Infinity}', b'{"i": 1, "total": NaN}', b'{"i": Infinity}'):
+            self.assertEqual(self.pos(bid, body)[0], 400, body)
+        self.assertEqual(json.loads(get(f'/library/{bid}/position')[2]), None)
+        with open(os.path.join(TMP, '.notes', bid + '.position.json'), 'w') as f:
+            f.write('{"i": 1, "minLeft": Infinity}')   # a file written by hand or by an old version
+        self.assertIsNone(json.loads(get(f'/library/{bid}/position')[2]), 'a file with Infinity is no position')
+        def strict(c):
+            raise ValueError('not strict JSON: ' + c)
+        books = json.loads(get('/library.json')[2], parse_constant=strict)   # strict JSON: raises on Infinity and NaN
+        self.assertIsNone({x['id']: x for x in books}[bid]['position'])
+
+    def test_position_from_another_site_is_refused(self):
+        bid = self.add('PosSite.pdf', PDF + b'possite')
+        self.assertEqual(self.pos(bid, b'{"i": 1}', {'Origin': 'https://example.com'})[0], 403)
+        self.assertEqual(self.pos(bid, b'{"i": 1}', {'Origin': 'chrome-extension://abc'})[0], 200)
+
+    def test_position_bad_content_length_is_a_400(self):
+        bid = self.add('PosLen.pdf', PDF + b'poslen')
+        for length in ('-1', 'abc', '1e3', ''):
+            with socket.create_connection(('127.0.0.1', PORT), timeout=5) as s:
+                s.sendall((f'POST /library/{bid}/position HTTP/1.1\r\nHost: 127.0.0.1:{PORT}\r\nOrigin: {BASE}\r\n'
+                           f'Content-Length: {length}\r\nConnection: close\r\n\r\n{{"i": 1}}').encode())
+                head = s.recv(200).decode('latin-1')
+            self.assertTrue(head.startswith('HTTP/1.0 400') or head.startswith('HTTP/1.1 400'), (length, head[:40]))
+        self.assertIsNone(json.loads(get(f'/library/{bid}/position')[2]))
+
+    def test_position_is_written_whole(self):
+        bid = self.add('PosFile.pdf', PDF + b'posfile')
+        orig = vs.os.replace
+        moves = []
+        vs.os.replace = lambda a, b: (moves.append((a, b)), orig(a, b))
+        try:
+            self.assertEqual(self.pos(bid, b'{"i": 7, "t": 5}')[0], 200)
+        finally:
+            vs.os.replace = orig
+        path = os.path.join(TMP, '.notes', bid + '.position.json')
+        self.assertIn((path + '.tmp', path), moves, 'a temporary file, then a move over the old one')
+        self.assertFalse(os.path.exists(path + '.tmp'))
+        with open(path) as f:
+            self.assertEqual(json.load(f)['i'], 7)
+
+    def test_position_older_save_is_not_written_and_the_answer_is_the_kept_record(self):
+        bid = self.add('PosOld.pdf', PDF + b'posold')
+        _, first = self.pos(bid, {'i': 50, 't': 2000})
+        code, kept = self.pos(bid, {'i': 10, 't': 1000})
+        self.assertEqual(code, 200)
+        self.assertEqual(kept, first, 'a late save of an old place does not go back; the answer is the kept record')
+        self.assertEqual(json.loads(get(f'/library/{bid}/position')[2])['i'], 50)
+        self.pos(bid, {'i': 10, 't': 3000})
+        self.assertEqual(json.loads(get(f'/library/{bid}/position')[2])['i'], 10, 'a newer save goes back when the owner went back')
+
+    def test_position_far_future_time_does_not_lock_later_saves(self):
+        bid = self.add('PosFuture.pdf', PDF + b'posfuture')
+        code, kept = self.pos(bid, {'i': 99, 't': 9e12})
+        self.assertEqual(code, 200)
+        self.assertLessEqual(kept['ct'], vs.time.time() * 1000, 'a reader time in the future is kept as the voice server time')
+        code, kept = self.pos(bid, {'i': 5, 't': int(vs.time.time() * 1000) + 1})
+        self.assertEqual(kept['i'], 5, 'the next true save is written')
+
+    def test_library_list_gives_the_position(self):
+        a = self.add('ListPosA.pdf', PDF + b'listposa')
+        b = self.add('ListPosB.pdf', PDF + b'listposb')
+        _, kept = self.pos(a, {'i': 4, 'page': 2, 'pages': 9, 't': 10})
+        books = {x['id']: x for x in json.loads(get('/library.json')[2])}
+        self.assertEqual(books[a]['position'], kept)
+        self.assertIsNone(books[b]['position'])
+        with open(os.path.join(TMP, '.notes', b + '.position.json'), 'w') as f:
+            f.write('{damaged')
+        self.assertIsNone({x['id']: x for x in json.loads(get('/library.json')[2])}[b]['position'], 'a damaged file is no position')
+
     def test_bad_speak_request_is_a_400_not_a_crash(self):
         self.assertEqual(get('/speak?text=&voice=af_heart')[0], 400)
         self.assertEqual(get('/speak?text=hi&voice=nobody')[0], 400)

@@ -1,5 +1,6 @@
 // Read Aloud 2 desktop library: the owner's Books as a shelf. Books live in ~/Documents/Read Aloud Library
-// (voice-server.py); the reading position comes from the reader (localStorage "ra2.lib.<id>").
+// (voice-server.py); the reading position comes from the voice server ("position" in /library.json, ticket 27), else
+// from the reader's copy in this browser (localStorage "ra2.lib.<id>"); see progressFrom in library-model.js.
 // Ticket 23: the page opens on "Continue listening" (the Book read last), then the other Books. The rules (clean
 // title, status text, order, the Continue choice) are in library-model.js, which the page loads first.
 (() => {
@@ -10,7 +11,7 @@
   let offline = false;
   let loads = 0;             // each load has a number; an answer of an older load is dropped
   const store = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
-  const progressOf = (b) => store('ra2.lib.' + b.id);
+  const progressOf = (b) => M.progressFrom(b.position, store('ra2.lib.' + b.id));
   const status = (t) => { $('status').textContent = t || ''; };
   const readerUrl = (b) => `/reader/index.html?lib=${b.id}&name=${encodeURIComponent(b.name)}&file=${encodeURIComponent('/library/file/' + b.id)}`;
 

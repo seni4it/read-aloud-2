@@ -153,6 +153,19 @@ test('the card status text: New, the part done with the time left, Finished', ()
   assert.equal(M.statusText({ i: 99, total: 100, minLeft: 0 }), 'Finished');
 });
 
+test('ticket 27: the status text says the page when the Reading position has it', () => {
+  assert.equal(M.statusText({ i: 11, total: 100, page: 12, pages: 240, minLeft: 40 }), 'Page 12 of 240, 12% done, 40 min left');
+  assert.equal(M.statusText({ i: 11, total: 100, page: 12, minLeft: 40 }), '12% done, 40 min left', 'no number of pages: no page text');
+  assert.equal(M.statusText({ i: 99, total: 100, page: 240, pages: 240 }), 'Finished');
+});
+
+test('ticket 27: the voice server copy is shown; the browser copy only when the voice server has none, with no time', () => {
+  const server = { i: 50, total: 100, t: 3000 }, browser = { i: 10, total: 100, t: 9e12 };
+  assert.equal(M.progressFrom(server, browser), server, 'a browser time far in the future does not win');
+  assert.deepEqual({ ...M.progressFrom(null, browser) }, { i: 10, total: 100, t: 0 }, 'the browser clock is not used for the order');
+  assert.equal(M.progressFrom(null, null), null);
+});
+
 test('Continue listening is the Book read last that is not finished; none when no Book was started', () => {
   const books = [
     { id: 'a', name: 'Alpha', added: 1, opened: 100 },
@@ -196,6 +209,36 @@ test('with a started Book the page opens on Continue listening, and its button o
   // the other Books are below it, not the same Book again
   const titles = p.cards().map((c) => c.querySelector('.title').textContent);
   assert.deepEqual(titles, ['First Invented Book', 'Third Invented Book']);
+});
+
+test('ticket 27: with an empty browser storage, Continue listening and the cards show the voice server Reading position', async () => {
+  const books = [
+    { id: 'aa11', name: 'First Invented Book', added: 1, opened: 100, cover: false, position: { i: 4, total: 100, page: 3, pages: 50, minLeft: 90, t: 900 * 1000 } },
+    { id: 'bb22', name: 'Second Invented Book', added: 2, opened: 200, cover: false, position: { i: 11, total: 100, page: 12, pages: 240, minLeft: 40, t: 300 * 1000 } },
+    { id: 'cc33', name: 'Third Invented Book', added: 3, opened: 0, cover: false, position: null },
+  ];
+  const p = loadPage({ books });
+  await settle();
+  const block = p.byId('continue');
+  assert.equal(block.hidden, false);
+  assert.match(block.textContent, /First Invented Book/, 'the Book read last (the voice server save time) comes first');
+  assert.match(block.textContent, /Page 3 of 50, 5% done, 1 h 30 min left/);
+  const cards = p.cards();
+  assert.deepEqual(cards.map((c) => c.querySelector('.title').textContent), ['Second Invented Book', 'Third Invented Book']);
+  assert.equal(cards[0].querySelector('.sub').textContent, 'Page 12 of 240, 12% done, 40 min left');
+  assert.equal(cards[1].querySelector('.sub').textContent, 'New');
+});
+
+test('ticket 27: the order uses the voice server times only; a browser copy with a time far in the future does not win', async () => {
+  const books = [
+    { id: 'aa11', name: 'Old Invented Book', added: 1, opened: 100, cover: false, position: null },
+    { id: 'bb22', name: 'New Invented Book', added: 2, opened: 200, cover: false, position: { i: 4, total: 100, page: 2, pages: 50, t: 300 * 1000 } },
+  ];
+  const p = loadPage({ books, storage: { 'ra2.lib.aa11': progress(49, 100, { t: 9e12 }), 'ra2.lib.bb22': progress(90, 100, { t: 9e12 }) } });
+  await settle();
+  assert.match(p.byId('continue').textContent, /New Invented Book/);
+  assert.match(p.byId('continue').textContent, /Page 2 of 50, 5% done/, 'the voice server copy, not the browser copy');
+  assert.equal(p.cards()[0].querySelector('.sub').textContent, '50% done, 40 min left', 'a Book with no voice server copy shows the browser copy');
 });
 
 test('with no started Book there is no Continue listening block', async () => {

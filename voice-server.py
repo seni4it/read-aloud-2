@@ -16,6 +16,11 @@ Desktop reader (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
   POST /library/add?name=   add a PDF (body)    POST /library/<id>/opened    POST /library/<id>/remove (to the Trash)
   GET/POST /library/<id>/notes   the book's highlights (JSON), kept in .notes/<id>.json; POST ?base=<n> is refused
                                  (409) when n is not the save number (X-Notes-Rev) of the last save
+  GET/POST /library/<id>/position   the book's reading position, kept in .notes/<id>.position.json. POST {i, total,
+                                 page, pages, minLeft, at, t}: t is the reader's clock, kept as "ct" (never later than
+                                 this server's clock); "t" becomes this server's time of the save. A save with an older
+                                 ct than the kept one is not written; the answer is always the kept record. GET gives
+                                 null before the first save; /library.json gives it as "position" of each book
   GET /claude/sessions      the Claude desktop app's conversations (title, folder); POST /claude/setting {session, title, cwd, group, auto}
   POST /claude/send         {points: [{book, page, text}]}: key points appended to key-points/<book>.md in that folder
   Ask Claude about the book (folder Books/<book>/, see "Ask Claude" below): GET /ask/status?key=, POST /ask/book
@@ -33,7 +38,7 @@ Desktop reader (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
 
 Version 1 (~/.claude/read-aloud, port 8791) is not touched.
 """
-import collections, functools, hashlib, html, logging, select, shlex, socket, itertools, http.server, io, json, mimetypes, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.parse, urllib.request
+import collections, functools, math, hashlib, html, logging, select, shlex, socket, itertools, http.server, io, json, mimetypes, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.parse, urllib.request
 
 import numpy as np
 import soundfile as sf
@@ -290,6 +295,52 @@ def notes_rev_save(bid, rev):
     with open(path + '.tmp', 'w') as f:
         f.write(str(rev))
     os.replace(path + '.tmp', path)
+
+
+POSITION_NUMBERS = ('i', 'total', 'page', 'pages', 'minLeft', 't', 'ct')  # the keys of a reading position; 'at' is text
+
+
+def position_path(bid):
+    return os.path.join(LIB, '.notes', bid + '.position.json')
+
+
+def position_read(bid):
+    """The kept reading position of a book, or None (none yet, or a damaged file)."""
+    try:
+        with open(position_path(bid), encoding='utf-8') as f:
+            rec = json.load(f, parse_constant=_no_constant)  # Infinity or NaN in the file: no position
+        return rec if isinstance(rec, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _no_constant(name):
+    raise ValueError(name + ' is not a number')
+
+
+def position_clean(rec):
+    """A reading position from the reader, with only the known keys; ValueError when it is not one."""
+    if not isinstance(rec, dict):
+        raise ValueError('a position must be an object')
+    num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0
+    if not (isinstance(rec.get('i'), int) and not isinstance(rec['i'], bool) and rec['i'] >= 0):
+        raise ValueError('i must be a sentence number')
+    out = {}
+    for k in POSITION_NUMBERS[:-1]:  # 'ct' is set below, never taken from the reader
+        if k in rec:
+            if not num(rec[k]) or (k in ('total', 'page', 'pages') and not isinstance(rec[k], int)):
+                raise ValueError(k + ' must be a number')
+            out[k] = rec[k]
+    if 'at' in rec:
+        if not isinstance(rec['at'], str) or len(rec['at']) > 200:
+            raise ValueError('at must be short text')
+        out['at'] = rec['at']
+    # Times: the reader's clock goes to ct, never later than this server's clock, so a clock that was ahead (or a
+    # t of 9e12) cannot lock the later saves. t is this server's time of the save: the library orders by it.
+    now = int(time.time() * 1000)
+    out['ct'] = min(out.pop('t', now), now)
+    out['t'] = now
+    return out
 
 
 def lib_index():
@@ -1096,7 +1147,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if url.path == '/library.json':
             with _lib:
                 idx = lib_index()
-            books = [{'id': k, **b, 'cover': os.path.exists(os.path.join(COVERS, k + '.png'))} for k, b in idx.items()]
+            books = [{'id': k, **b, 'cover': os.path.exists(os.path.join(COVERS, k + '.png')), 'position': position_read(k)}
+                     for k, b in idx.items()]
             return self.reply(json.dumps(books, ensure_ascii=False).encode(), 'application/json')
         if url.path == '/youtube/status':
             return self.reply(json.dumps(yt_status()).encode(), 'application/json')
@@ -1149,6 +1201,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     body = b'[]'
                 rev = notes_rev(m.group(1))
             return self.reply(body, 'application/json', NOTES_HEADERS(rev))
+        m = re.match(r'^/library/([0-9a-f]{12})/position$', url.path)
+        if m:  # the book's reading position (ticket 27), null before the first save
+            with _notes:
+                rec = position_read(m.group(1))
+            return self.reply(json.dumps(rec, ensure_ascii=False, allow_nan=False).encode(), 'application/json')
         m = re.match(r'^/library/(file|cover)/([0-9a-f]{12})$', url.path)
         if m:
             with _lib:
@@ -1186,7 +1243,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(403, 'Forbidden')
             return
         url = urllib.parse.urlsplit(self.path)
-        size = int(self.headers.get('Content-Length') or 0)
+        size = (self.headers.get('Content-Length') or '0').strip()
+        if not size.isdigit():  # a negative or bad length: never rfile.read(-1), which waits for the end of the stream
+            self.send_error(400, 'Bad Content-Length')
+            return
+        size = int(size)
         try:
             if url.path == '/server/restart':  # the restart button: answer first, then start this server again in place
                 self.copyfile(self.reply(b'{"restarting": true}', 'application/json'), self.wfile)
@@ -1331,9 +1392,30 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         t.start()
                     self.copyfile(self.reply(b'{}', 'application/json'), self.wfile)
                     return
-                m = re.match(r'^/library/([0-9a-f]{12})/(opened|remove|notes)$', url.path)
+                m = re.match(r'^/library/([0-9a-f]{12})/(opened|remove|notes|position)$', url.path)
                 if not m:
                     self.send_error(404, 'Not found')
+                    return
+                if m.group(2) == 'position':  # the reading position: written whole; an older save never goes over a newer one
+                    if size > 4096:
+                        self.send_error(413, 'Position too large')
+                        return
+                    try:
+                        rec = position_clean(json.loads(self.rfile.read(size) or b'null'))
+                    except ValueError as e:  # json.JSONDecodeError is a ValueError
+                        self.send_error(400, str(e)[:200])
+                        return
+                    with _notes:
+                        kept = position_read(m.group(1))
+                        if kept and isinstance(kept.get('ct'), (int, float)) and kept['ct'] > rec['ct']:
+                            rec = kept  # a late save of an older place: the answer is the kept record
+                        else:
+                            os.makedirs(os.path.join(LIB, '.notes'), exist_ok=True)
+                            path = position_path(m.group(1))
+                            with open(path + '.tmp', 'w', encoding='utf-8') as f:
+                                json.dump(rec, f, ensure_ascii=False, allow_nan=False)
+                            os.replace(path + '.tmp', path)
+                    self.copyfile(self.reply(json.dumps(rec, ensure_ascii=False, allow_nan=False).encode(), 'application/json'), self.wfile)
                     return
                 if m.group(2) == 'notes':  # highlights: kept next to the book, written whole each time
                     data = json.loads(self.rfile.read(size) or b'[]')

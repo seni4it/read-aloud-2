@@ -6,6 +6,7 @@ import { loadLexicon, repairStats } from './lexicon.js';
 import { withOcr } from './ocr.js';
 import { setupNotes } from './notes.js';
 import { setupAsk } from './ask.js';
+import { newerPosition } from './position.js';
 
 // Hand pdf.js an explicit module worker. Left to its own auto-setup it was
 // silently falling back to a main-thread "fake worker", where render() never
@@ -221,6 +222,7 @@ function speakCurrent() {
         if (!state.playing) return;
         state.index++;
         state.retried = false;
+        queuePosition();  // ticket 27: the voice server gets the place at most once in POSITION_WAIT ms
         render();
         speakCurrent();
       }, gap);
@@ -317,7 +319,7 @@ function stop() {
   els.playBtn.setAttribute('aria-label', 'Play');
   engine.stop();
   viewer.clearWord();
-  saveProgress();
+  saveProgress(true);  // ticket 27: a pause sends the place to the voice server at once
   // Clear any "generating…" left over from a synthesis we just abandoned.
   if (engine.id !== 'system') {
     setStatus(engine.ready === false ? '' : engineLabel(engine));
@@ -486,17 +488,122 @@ setInterval(() => {
   els.timeLeft.textContent = secondsText(state.leftAt.min - (Date.now() - state.leftAt.t) / 60000);
 }, 1000);
 
-function saveProgress() {
+/* Ticket 27: the Reading position of a library Book also goes to the voice server (/library/<id>/position), so the
+ * library and a page of another origin know it. The own copy in the browser stays.
+ * - Nothing goes before the place of the open Book is loaded: a page that closes during the read-in must not send
+ *   sentence 0 over the true place.
+ * - Sends also wait for the voice server's answer about the open Book (or its failure). The read-in waits 3 s at
+ *   most; a later answer that is newer is used when the owner has not moved yet.
+ * - A place that did not change since the last send is not sent again: a second tab left open on an old place does
+ *   not write it over the place of the tab where the owner reads now.
+ * - The voice server answers each send with the record it keeps. When that is another place (another tab saved
+ *   later), the reader takes it if the owner has not moved, and never sends its older place again. */
+const SERVER = /^https?:/.test(String(location.protocol || location.href || '')) ? '' : 'http://127.0.0.1:8793';
+const POSITION_WAIT = 5000;   // ms: at most one send in this time while the voice reads
+const POSITION_ASK = 3000;    // ms: the read-in waits this long at most for the voice server's copy
+let positionOpen = 0;         // one number for each open; an answer for an older open is dropped
+let positionLoaded = false;   // the place of the open Book is loaded (end of the read-in)
+let positionAnswered = true;  // the voice server answered (or failed) about the open Book
+let positionUsed = null;      // { rec, index }: the copy that the read-in used, and the sentence it gave
+let positionSent = null;      // { i, at }: the place that the voice server has now, as far as this page knows
+let positionQueued = null, positionTimer = null;
+let serverPosition = Promise.resolve(null);  // the voice server's copy for the Book being opened (3 s at most)
+function sentencePage(s) {
+  const o = s && s.charOwners && s.charOwners.find(Boolean);
+  return (o && o.page) || (s && s.page) || 0;
+}
+function positionRecord() {
+  const sentence = state.sentences[state.index];
+  return { i: state.index, total: state.sentences.length, page: sentencePage(sentence), pages: (state.doc && state.doc.numPages) || 0,
+    minLeft: wordsLeft() / (WPM * Number(els.rateSel.value || 1)), at: fingerprint(sentence && sentence.text), t: Date.now() };
+}
+const samePlace = (a, b) => Boolean(a && b) && a.i === b.i && (a.at || '') === (b.at || '');
+function sendPosition() {
+  clearTimeout(positionTimer);
+  positionTimer = null;
+  const rec = positionQueued;
+  positionQueued = null;
+  if (!rec || samePlace(rec, positionSent)) return;
+  positionSent = { i: rec.i, at: rec.at };
+  const open = positionOpen;
+  // keepalive: the send still goes when the page closes. No answer: no message, the own copy works.
+  try {
+    fetch(`${SERVER}/library/${LIB_ID}/position`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rec), keepalive: true })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((kept) => {
+        if (open !== positionOpen || !kept || samePlace(kept, rec)) return;
+        // the voice server keeps a newer place (another tab): take it when the owner is still where this send was
+        positionSent = { i: kept.i, at: kept.at };
+        if (!state.playing && !positionQueued && state.index === rec.i) adoptPosition(kept);
+      })
+      .catch((err) => console.warn('Reading position: the voice server did not take it', err));
+  } catch { /* no voice server */ }
+}
+function queuePosition(now = false, rec = null) {
+  if (!LIB_ID || !state.libBook || !positionLoaded || !state.sentences.length) return;
+  positionQueued = rec || positionRecord();
+  if (!positionAnswered) return;  // held: positionAnswer() sends it
+  if (now) sendPosition();
+  else if (!positionTimer) positionTimer = setTimeout(sendPosition, POSITION_WAIT);
+}
+// The voice server's copy: { answer } with no time limit (null on a failure), and { wait }, POSITION_ASK ms at most.
+function positionFromServer(id) {
+  if (!id) return { answer: Promise.resolve(null), wait: Promise.resolve(null) };
+  const answer = fetch(`${SERVER}/library/${id}/position`, { cache: 'no-store' })
+    .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .catch((err) => { console.warn('Reading position: no answer from the voice server; the own copy is used', err); return null; });
+  let timer = null;
+  const late = new Promise((done) => {
+    timer = setTimeout(() => { console.warn('Reading position: the voice server did not answer in 3 s; the own copy is used'); done(null); }, POSITION_ASK);
+  });
+  answer.then(() => clearTimeout(timer));
+  return { answer, wait: Promise.race([answer, late]) };
+}
+// The answer came: held sends may go. An answer after the read-in that is newer is used if the owner has not moved.
+function positionAnswer(open, rec) {
+  if (open !== positionOpen) return;
+  positionAnswered = true;
+  if (!positionLoaded) return;  // the read-in uses it
+  const used = positionUsed || {};
+  if (rec && rec !== used.rec && !state.playing && state.index === used.index
+      && newerPosition(used.rec, rec, { now: Date.now(), count: state.sentences.length }) === rec) {
+    positionQueued = null;
+    clearTimeout(positionTimer);
+    positionTimer = null;
+    adoptPosition(rec);
+    return;
+  }
+  if (positionQueued) sendPosition();
+}
+// Go to a place that the voice server keeps, with no send back; the own copies follow.
+function adoptPosition(rec) {
+  state.index = placeOf(rec);
+  state.resumeAt = null;
+  positionSent = { i: rec.i, at: rec.at };
+  try {
+    localStorage.setItem('pr.pos.' + state.docKey, JSON.stringify({ i: state.index, at: rec.at, t: Number(rec.t) || Date.now() }));
+    localStorage.setItem('ra2.lib.' + LIB_ID, JSON.stringify({ i: rec.i, total: rec.total, page: rec.page, pages: rec.pages, t: rec.t, minLeft: rec.minLeft }));
+  } catch { /* storage blocked: saveProgress says it */ }
+  render();
+}
+
+function saveProgress(now = false) {
   if (!state.docKey) return;
   const sentence = state.sentences[state.index];
-  const record = JSON.stringify({
-    i: state.index,
-    at: fingerprint(sentence && sentence.text)
-  });
+  const at = fingerprint(sentence && sentence.text);
   try {
+    // ticket 27: the time says when the place changed, so a tab left open on an old place does not look newer
+    // than the place another tab saved later (a close or a pause with no move keeps the old time)
+    let t = Date.now();
+    try { const old = JSON.parse(localStorage.getItem('pr.pos.' + state.docKey)); if (old && old.i === state.index && old.at === at && old.t > 0) t = old.t; } catch { /* no old copy */ }
+    const record = JSON.stringify({ i: state.index, at, t });
     localStorage.setItem('pr.pos.' + state.docKey, record);
     // Read Aloud 2 desktop library: how far you are, for the progress bar on the book's card
-    if (LIB_ID && state.libBook) localStorage.setItem('ra2.lib.' + LIB_ID, JSON.stringify({ i: state.index, total: state.sentences.length, t: Date.now(), minLeft: wordsLeft() / (WPM * Number(els.rateSel.value || 1)) }));
+    if (LIB_ID && state.libBook) {
+      const rec = positionRecord();
+      localStorage.setItem('ra2.lib.' + LIB_ID, JSON.stringify({ i: rec.i, total: rec.total, page: rec.page, pages: rec.pages, t: rec.t, minLeft: rec.minLeft }));
+      queuePosition(now, rec);
+    }
     storageWarned = false;
   } catch (err) {
     // Not silent. A full or blocked store means the reader loses their place
@@ -509,22 +616,26 @@ function saveProgress() {
   }
 }
 
-function loadProgress() {
+function loadProgress(remote = null) {
   if (!state.docKey) return 0;
   const raw = localStorage.getItem('pr.pos.' + state.docKey);
-  if (!raw) return 0;
-
-  // Older saves were a bare number.
-  if (/^\d+$/.test(raw)) {
-    const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? n : 0;
+  let saved = null;
+  if (raw && /^\d+$/.test(raw)) saved = { i: Number(raw) };  // Older saves were a bare number.
+  else if (raw) {
+    try { saved = JSON.parse(raw); } catch { saved = null; }
   }
+  // ticket 27: a library Book also has the voice server's copy; the newer one is used (position.js says how)
+  if (remote) saved = newerPosition(saved, remote, { now: Date.now(), count: state.sentences.length });
+  positionUsed = { rec: saved, index: 0 };
+  return placeOf(saved);
+}
 
-  let saved;
-  try {
-    saved = JSON.parse(raw);
-  } catch {
-    return 0;
+// The sentence of a saved place: found again by its first words, else by its number.
+function placeOf(saved) {
+  if (!saved || typeof saved !== 'object') return 0;
+  if (!saved.at) {
+    const n = Number(saved.i);
+    return Number.isFinite(n) && n > 0 ? n : 0;
   }
   const index = Number.isFinite(saved.i) && saved.i > 0 ? saved.i : 0;
   if (!saved.at) return index;
@@ -579,6 +690,16 @@ async function openFile(file, { library = false, restoring = false } = {}) {
     // and Ask Claude uses the PDF's own key
     state.libBook = Boolean(LIB_ID && library);
     els.exportBtn.hidden = !state.libBook;
+    // ticket 27: the voice server's copy of the Reading position is asked now; the read-in waits for it at its end
+    const open = ++positionOpen;
+    positionLoaded = false;
+    positionAnswered = !state.libBook;
+    positionQueued = null;
+    clearTimeout(positionTimer);
+    positionTimer = null;
+    const asked = positionFromServer(state.libBook ? LIB_ID : '');
+    serverPosition = asked.wait;
+    asked.answer.then((rec) => positionAnswer(open, rec));
     old = state.doc;
     state.doc = doc;
     state.sentences = [];
@@ -719,13 +840,18 @@ async function parseDocument() {
     if (first > 0) startAt = state.sections[first].startSentence;
   }
 
-  const resumeAt = loadProgress();
+  const remotePosition = await serverPosition;  // ticket 27: null when the voice server does not answer (3 s at most)
+  if (token !== state.parseToken) return;
+  const resumeAt = loadProgress(remotePosition);
   // Read Aloud 2: Play or a jump during the read-in: the place stays where the voice or the owner is
   if (!state.playing && !state.jumped) {
     state.index = resumeAt > 0
       ? Math.min(resumeAt, Math.max(0, state.sentences.length - 1))
       : startAt;
   }
+  positionUsed.index = state.index;  // ticket 27: to see later whether the owner moved
+  positionSent = { i: state.index, at: fingerprint(state.sentences[state.index] && state.sentences[state.index].text) };
+  positionLoaded = true;
   render();
 
   warmCurrent();
@@ -979,7 +1105,10 @@ if (typeof ResizeObserver === 'function') {
   }).observe(els.scroller);
 }
 
-window.addEventListener('beforeunload', saveProgress);
+window.addEventListener('beforeunload', () => saveProgress());
+// ticket 27: the page closes or goes to the background: the place goes to the voice server at once
+window.addEventListener('pagehide', () => saveProgress(true));
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveProgress(true); });
 
 const savedRate = localStorage.getItem('pr.rate');
 if (savedRate) els.rateSel.value = savedRate;
@@ -1088,7 +1217,7 @@ async function pollExport() {
   if (LIB_ID) {  // the desktop library: a way back, and the book's "last read" time
     const back = document.getElementById('libraryBtn');
     back.hidden = false;
-    back.addEventListener('click', () => { saveProgress(); location.href = '/app/'; });
+    back.addEventListener('click', () => { saveProgress(true); location.href = '/app/'; });  // ticket 27: sent before the library reads it
     fetch('/library/' + LIB_ID + '/opened', { method: 'POST' }).catch(() => {});
   }
   // Read Aloud 2: a PDF link opened in Chrome arrives here as ?file=<address>
