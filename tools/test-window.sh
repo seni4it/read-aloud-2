@@ -148,7 +148,7 @@ rm -rf "$PROFILE/Default/Service Worker"
 nohup "$REAL" \
   --user-data-dir="$PROFILE" \
   --remote-debugging-port="$PORT" \
-  --use-mock-keychain --password-store=basic \
+  --use-mock-keychain --password-store=basic --mute-audio \
   --no-first-run --no-default-browser-check \
   --load-extension="$DIR/extension" \
   "$URL" >"$LOG" 2>&1 &
