@@ -33,7 +33,7 @@ const els = {
   docTitle: $('docTitle'), pages: $('pages'), scroller: $('scroller'), empty: $('empty'),
   player: $('player'), playBtn: $('playBtn'), playIcon: $('playIcon'),
   prevBtn: $('prevBtn'), nextBtn: $('nextBtn'), seek: $('seek'), pos: $('pos'),
-  voiceSel: $('voiceSel'), rateSel: $('rateSel'), nowReading: $('nowReading'),
+  voiceSel: $('voiceSel'), rateSel: $('rateSel'), methodSel: $('methodSel'), methodHint: $('methodHint'), nowReading: $('nowReading'),
   toc: $('toc'), sidebar: $('sidebar'), tocBtn: $('tocBtn'), closeSidebar: $('closeSidebar'),
   parseBar: $('parseBar'), parseFill: $('parseFill'), parseText: $('parseText'),
   optCitations: $('optCitations'), optCaptions: $('optCaptions'), optRefs: $('optRefs'),
@@ -136,6 +136,7 @@ async function selectEngine(id) {
         setStatus(info.pct != null ? `${info.stage} ${info.pct}%` : info.stage + '…');
       });
       setStatus(engineLabel(next));
+      showMethods();  // ticket 06: the voice server says the speed methods it offers
     } catch (err) {
       // Read Aloud 2: the voice server is down for a moment. Use the Mac voices meanwhile, but do not remember
       // that as your choice, and switch back by itself when the natural voices answer again.
@@ -205,7 +206,7 @@ function speakCurrent() {
     rate: Number(els.rateSel.value),
     onWord: (charIndex, charLength) => {
       if (!state.playing) return;
-      if (!spoke) { spoke = true; setWaiting(false); setStatus(engineLabel(engine)); }  // now: the voice server may have fallen in this sentence
+      if (!spoke) { spoke = true; setWaiting(false); setStatus(engineLabel(engine)); showMethods(); }  // ticket 06: the engine may have read the methods again  // now: the voice server may have fallen in this sentence
       state.at = charIndex + from;  // Read Aloud 2: the word being read, so Pause then Play goes on from here
       const parts = wordPartsAt(full, charIndex + from, charLength);
       if (parts.length) viewer.highlightWord(parts);
@@ -462,6 +463,8 @@ let storageWarned = false;
 
 // Read Aloud 2: how long the rest takes at this speed. The natural voice reads about 160 words a minute at 1x.
 const WPM = 160;
+// Ticket 06: the speed that the ear hears (method A reaches less than the asked speed; the Mac voice: the asked speed)
+function heardRate() { const r = Number(els.rateSel.value || 1); return engine.heardSpeed?.(r) ?? r; }
 function wordsLeft(from = state.index) {
   let n = 0;
   for (let i = from; i < state.sentences.length; i++) n += (state.sentences[i].words ??= (state.sentences[i].text.match(/\S+/g) || []).length);
@@ -474,7 +477,7 @@ function minutesText(min) {
 }
 function timeLeftText() {
   if (!state.sentences.length) return '';
-  const min = wordsLeft() / (WPM * Number(els.rateSel.value || 1));
+  const min = wordsLeft() / (WPM * heardRate());
   state.leftAt = { min, t: Date.now() };  // the live counter below counts on from here
   return minutesText(min);
 }
@@ -522,7 +525,7 @@ function positionRecord(t = Date.now()) {
   const sentence = state.sentences[state.index];
   const rec = { i: state.index, total: state.sentences.length, page: sentencePage(sentence), pages: (state.doc && state.doc.numPages) || 0,
     at: fingerprint(sentence && sentence.text), t };
-  const minLeft = wordsLeft() / (WPM * Number(els.rateSel.value || 1));
+  const minLeft = wordsLeft() / (WPM * heardRate());
   if (Number.isFinite(minLeft)) rec.minLeft = minLeft;  // JSON writes NaN and Infinity as null: left out instead
   return rec;
 }
@@ -938,6 +941,7 @@ els.seek.addEventListener('input', () => { state.scrubPlay ||= state.playing; ju
 els.seek.addEventListener('change', () => { if (state.scrubPlay) { state.scrubPlay = false; play(); } });
 
 els.rateSel.addEventListener('change', () => {
+  setSpeed();  // ticket 06: the new speed for the Sentence and its Read-ahead
   els.timeLeft.textContent = timeLeftText();  // Read Aloud 2
   localStorage.setItem('pr.rate', els.rateSel.value);
   if (state.playing) { stop(); play(); }  // Read Aloud 2: go on from the present word, not from the top of the paragraph
@@ -1148,6 +1152,42 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 
 const savedRate = localStorage.getItem('pr.rate');
 if (savedRate) els.rateSel.value = savedRate;
+
+/* Ticket 06: the speed method (A "Voice speaks faster", the default; C "Stretch, same pitch"; B "Simple, pitch goes
+ * up"). One stored setting with the web-page player: chrome.storage.sync 'ra2'.method when the reader is a page of the
+ * add-on; a reader served by the voice server has no chrome.storage and keeps it in localStorage 'ra2.speedMethod'.
+ * A change while reading says the present Sentence again from the present word at the new speed, as a speed change does. */
+const METHOD_KEY = 'ra2.speedMethod';
+const SYNC = globalThis.chrome?.storage?.sync;
+const knownMethod = (m) => (['A', 'B', 'C'].includes(m) ? m : 'A');
+let wantedMethod = knownMethod(localStorage.getItem(METHOD_KEY));  // the stored choice; what is shown can differ (C without ffmpeg)
+function setSpeed() { engines.kokoro.setSpeed?.(wantedMethod, Number(els.rateSel.value || 1)); }
+// C needs ffmpeg on the voice server. Without it the reader plays A: the select shows A, C is disabled, the hint says
+// why. The stored choice stays C, so C comes back when the voice server can stretch again (review of ticket 06).
+function showMethods() {
+  if (!els.methodSel) return;
+  const methods = engines.kokoro.ready && Array.isArray(engines.kokoro.methods) ? engines.kokoro.methods : null;
+  const noC = Boolean(methods) && !methods.includes('C');
+  const c = els.methodSel.querySelector?.('option[value="C"]');
+  if (c) c.disabled = noC;
+  els.methodSel.value = noC && wantedMethod === 'C' ? 'A' : wantedMethod;
+  if (els.methodHint) els.methodHint.hidden = !(noC && wantedMethod === 'C');
+}
+if (els.methodSel) {
+  showMethods();
+  try { SYNC?.get('ra2').then((r) => { const m = r?.ra2?.method; if (m) { wantedMethod = knownMethod(m); showMethods(); setSpeed(); } }, () => {}); } catch { /* the add-on is gone */ }
+  els.methodSel.addEventListener('change', () => {
+    wantedMethod = knownMethod(els.methodSel.value);
+    localStorage.setItem(METHOD_KEY, wantedMethod);
+    // only the method key, read fresh: a speed or voice that another tab saved meanwhile is kept
+    try { SYNC?.get('ra2').then((r) => SYNC.set({ ra2: { ...(r?.ra2 || {}), method: wantedMethod } })).catch(() => {}); } catch { /* the add-on is gone */ }
+    showMethods();
+    setSpeed();
+    els.timeLeft.textContent = timeLeftText();
+    if (state.playing) { stop(); play(); }  // go on from the present word at the new speed
+  });
+}
+setSpeed();
 if (isNarrow()) els.sidebar.hidden = true;  // ticket 22 review: a narrow window starts with the side bar closed
 
 /* --------------------------------------------------------------------- boot */

@@ -32,6 +32,9 @@ Desktop reader (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
                               POST .../export/cancel; POST .../export/open shows the folder in Finder.
                               Files go to ~/Documents/Read Aloud Library/Audio/<book>/ (READ_ALOUD_AUDIO to change)
   GET /speak?text=&voice=   one sentence as a WAV file (24 kHz); recent ones are kept, so replay and read-ahead are instant
+                            &speed=0.5..4&method=A|B|C (ticket 06): A the model speaks at that speed, C the speed-1
+                            sound stretched by ffmpeg (pitch kept), B the speed-1 sound (the browser plays it faster);
+                            a bad speed or method, or C without ffmpeg, is a 400. /voices says the methods ("speed")
   GET /times?text=&voice=   when each word of that sentence starts, in seconds of the WAV (Kokoro's own timings), as
                             {"starts": [...]}, one per space-separated word; null where Kokoro gave none
                             &ahead=1|2|3 marks read-ahead (3 next sentences, 2 under the mouse, 1 on screen, with &batch=):
@@ -48,8 +51,31 @@ PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8793
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL = 'mlx-community/Kokoro-82M-bf16'
 ALLOWED = {f'localhost:{PORT}', f'127.0.0.1:{PORT}', f'[::1]:{PORT}'}
+
+
+def own_origins(port):
+    """The pages of this server under each of its names. A page of one name may read the answers of the other name
+    (ticket 06, part 1: the reader opened from http://localhost:8793 asked http://127.0.0.1:8793 and was blocked)."""
+    return {f'http://localhost:{port}', f'http://127.0.0.1:{port}', f'http://[::1]:{port}'}
+
+
+OWN_ORIGINS = own_origins(PORT)
 MAX_CHARS = 1500  # a sentence, or a paragraph from the PDF viewer
 CACHE_BYTES = 96 * 1024 * 1024  # recent sentences kept as WAV; a count alone let long paragraphs fill 1 GB
+# Ticket 06, the speed method (owner's decision of 10 Nov 2026). A: the voice model speaks at the asked speed (Kokoro's
+# speed parameter), played at rate 1: the pitch stays. C: the speed-1 sound stretched by ffmpeg (atempo), pitch kept.
+# B: the speed-1 sound, played faster by the browser (the pitch goes up); the server makes nothing new for B.
+SPEED_MIN, SPEED_MAX = 0.5, 4.0  # the speeds that the reader (0.75 to 3) and the add-on (0.5 to 4) offer
+METHODS = ('A', 'B', 'C')
+
+
+def find_ffmpeg():
+    """ffmpeg for method C. The LaunchAgent's PATH may not have Homebrew in it, so look there too."""
+    return shutil.which('ffmpeg') or next((p for p in ('/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg')
+                                           if os.access(p, os.X_OK)), None)
+
+
+STRETCH = find_ffmpeg()  # found once at start; None: method C is not offered (the /voices answer says so)
 logging.getLogger('phonemizer').setLevel(logging.ERROR)  # its word-count warnings, one per sentence, filled the log
 
 # name, accent, language code, label. Kokoro grades: heart and bella are its best English voices.
@@ -67,6 +93,7 @@ _waiting, _seq, _batch = set(), itertools.count(), [0]
 _cache = collections.OrderedDict()
 _cache_lock = threading.Lock()  # request threads share the cache
 _cache_size = [0]
+_stretching = {}  # key -> lock: the method C stretches that run now (ticket 06)
 _broken = set()  # languages that failed to load (Italian needs espeak-ng)
 
 
@@ -138,17 +165,85 @@ def cache_put(key, value):
             _cache_size[0] -= len(_cache.popitem(last=False)[1][0])
 
 
-def speak(text, voice, ahead=False, prio=1, batch=0, gone=None):
-    """gone: a function that says the listener closed the connection (skipped on); then nothing is made (None)."""
-    key = (voice, text)
+def sound_key(voice, text, speed=1.0, method='A'):
+    """The cache key. Speed 1 is the same sound for all methods, and B always uses that sound: one entry."""
+    if speed == 1 or method == 'B':
+        return (voice, text)
+    return (voice, text, method, speed)
+
+
+def speed_args(q):
+    """(speed, method) of a request; ValueError for a speed that is not a finite number in the offered range, an
+    unknown method, or method C without ffmpeg. 1.5 and 1.50 are one speed (2 decimals)."""
+    speed = float(q.get('speed', '1'))
+    if not math.isfinite(speed) or not SPEED_MIN <= speed <= SPEED_MAX:
+        raise ValueError('speed')
+    method = q.get('method', 'A')
+    if method not in METHODS:
+        raise ValueError('method')
+    speed = round(speed, 2)
+    if method == 'C' and speed != 1 and not STRETCH:
+        raise ValueError('no ffmpeg: method C is not offered')
+    return speed, method
+
+
+def atempo_chain(speed):
+    """ffmpeg atempo filters for speed. Older ffmpeg takes 0.5 to 2.0 in one filter, so a larger factor is a chain."""
+    parts = []
+    while speed > 2.0:
+        parts.append(2.0)
+        speed /= 2.0
+    while speed < 0.5:
+        parts.append(0.5)
+        speed /= 0.5
+    parts.append(speed)
+    return ','.join(f'atempo={p:.6g}' for p in parts)
+
+
+def stretch_wav(wav, speed):
+    """The WAV played speed times faster with the same pitch (ffmpeg atempo); 24 kHz mono 16-bit WAV again."""
+    try:
+        out = subprocess.run([STRETCH, '-loglevel', 'error', '-f', 'wav', '-i', 'pipe:0', '-filter:a', atempo_chain(speed),
+                              '-f', 's16le', '-acodec', 'pcm_s16le', '-ar', '24000', '-ac', '1', 'pipe:1'],
+                             input=wav, capture_output=True, check=True, timeout=120).stdout
+    except (subprocess.SubprocessError, OSError) as e:  # the detail (path, arguments, ffmpeg's words) goes to the log only
+        print(time.strftime('%H:%M:%S'), 'stretch failed:', repr(e), (getattr(e, 'stderr', b'') or b'')[:300], file=sys.stderr, flush=True)
+        raise RuntimeError('The stretch of the sound failed') from None
+    buf = io.BytesIO()
+    sf.write(buf, np.frombuffer(out, dtype='<i2'), 24000, format='WAV', subtype='PCM_16')
+    return buf.getvalue()
+
+
+def speak(text, voice, ahead=False, prio=1, batch=0, gone=None, speed=1.0, method='A'):
+    """gone: a function that says the listener closed the connection (skipped on); then nothing is made (None).
+    speed and method: see speed_args(). The Word timing always matches the sound that is sent."""
+    key = sound_key(voice, text, speed, method)
     got = cache_get(key)
     if got:
         return got
+    if len(key) > 2 and method == 'C':  # from the speed-1 sound (kept as its own entry); ffmpeg needs no engine turn
+        with _cache_lock:  # one stretch for one key: a second request waits for the first and takes its sound
+            lock = _stretching.setdefault(key, threading.Lock())
+        try:
+            with lock:
+                got = cache_get(key)
+                if got:
+                    return got
+                base = speak(text, voice, ahead, prio, batch, gone)
+                if base is None:
+                    return None
+                got = (stretch_wav(base[0], speed), [None if s is None else round(s / speed, 3) for s in base[1]])
+                cache_put(key, got)
+                return got
+        finally:
+            with _cache_lock:
+                if _stretching.get(key) is lock and not lock.locked():
+                    _stretching.pop(key, None)
     if not ahead:
         with _turn:
             _urgent[0] += 1
     try:
-        return _make(key, text, voice, ahead, prio, batch, gone)
+        return _make(key, text, voice, ahead, prio, batch, gone, speed if len(key) > 2 else 1.0)
     finally:
         if not ahead:
             with _turn:
@@ -156,14 +251,15 @@ def speak(text, voice, ahead=False, prio=1, batch=0, gone=None):
                 _turn.notify_all()
 
 
-def synth(text, voice):
+def synth(text, voice, speed=1.0):
     """Audio and Kokoro's tokens (with start times). English goes through the pipeline directly, which keeps
-    the timings; other languages use the plain path (no timings: the reader estimates them)."""
+    the timings; other languages use the plain path (no timings: the reader estimates them). speed: Kokoro's own
+    speed parameter (method A); its tokens have the times of that sound."""
     m = model()
     if LANG[voice] in ('a', 'b'):
         pipe = m._get_pipeline(LANG[voice])
         parts, tokens, offset = [], [], 0.0
-        for r in pipe(text, voice=voice, speed=1, split_pattern=r'\n+'):
+        for r in pipe(text, voice=voice, speed=speed, split_pattern=r'\n+'):
             if r.audio is None:
                 continue
             a = np.array(r.audio).reshape(-1)
@@ -174,7 +270,7 @@ def synth(text, voice):
             parts.append(a)
             offset += len(a) / 24000
         return (np.concatenate(parts) if parts else np.zeros(2400)), tokens
-    parts = [np.array(r.audio) for r in m.generate(text=text, voice=voice, speed=1.0, lang_code=LANG[voice])]
+    parts = [np.array(r.audio) for r in m.generate(text=text, voice=voice, speed=speed, lang_code=LANG[voice])]
     return (np.concatenate(parts) if parts else np.zeros(2400)), []
 
 
@@ -207,7 +303,7 @@ def _take(ahead, prio, batch):
             _turn.notify_all()
 
 
-def _make(key, text, voice, ahead=False, prio=1, batch=0, gone=None):
+def _make(key, text, voice, ahead=False, prio=1, batch=0, gone=None, speed=1.0):
     if not _take(ahead, prio, batch):
         return None
     try:  # stored before the lock opens, so a second ask for the same sentence finds it ready
@@ -217,8 +313,8 @@ def _make(key, text, voice, ahead=False, prio=1, batch=0, gone=None):
         if gone and gone():  # he skipped on while this sentence waited for the engine: the engine goes to the next one
             return None
         if os.environ.get('VOICE_LOG'):
-            print(time.strftime('%H:%M:%S'), 'ahead' if ahead else 'NOW  ', voice, repr(text[:70]), flush=True)
-        audio, tokens = synth(text, voice)
+            print(time.strftime('%H:%M:%S'), 'ahead' if ahead else 'NOW  ', voice, speed, repr(text[:70]), flush=True)
+        audio, tokens = synth(text, voice, speed)
         wav, shift = trim(audio, text)
         buf = io.BytesIO()
         sf.write(buf, wav, 24000, format='WAV', subtype='PCM_16')
@@ -1135,7 +1231,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         q = dict(urllib.parse.parse_qsl(url.query))
         if url.path == '/voices':
             data = [{'id': v, 'accent': a, 'label': l} for v, a, c, l in VOICES if c not in _broken]
-            return self.reply(json.dumps({'voices': data, 'ready': _model is not None}).encode(), 'application/json')
+            speed = {'min': SPEED_MIN, 'max': SPEED_MAX, 'methods': [m for m in METHODS if m != 'C' or STRETCH]}
+            return self.reply(json.dumps({'voices': data, 'ready': _model is not None, 'speed': speed}).encode(), 'application/json')
         if url.path in ('/speak', '/times'):
             text = re.sub(r'\s+', ' ', q.get('text', '')).strip()[:MAX_CHARS]
             voice = q.get('voice', 'af_heart')
@@ -1143,10 +1240,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_error(400, 'Bad text or voice')
                 return None
             try:
+                speed, method = speed_args(q)
+            except ValueError as e:
+                self.send_error(400, 'Bad speed or method: ' + str(e))
+                return None
+            try:
                 ahead = q.get('ahead', '0')
                 batch = q.get('batch', '0')
                 got = speak(text, voice, ahead=ahead != '0', prio=int(ahead) if ahead.isdigit() else 1,
-                            batch=int(batch) if batch.isdigit() else 0, gone=self.gone)
+                            batch=int(batch) if batch.isdigit() else 0, gone=self.gone, speed=speed, method=method)
                 if got is None:
                     self.send_error(409, 'Skipped: you scrolled on')
                     return None
@@ -1491,7 +1593,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not getattr(self, '_cc', False):
             self.send_header('Cache-Control', 'no-store')
         self._cc = False
+        origin = self.headers.get('Origin') or ''
+        if origin in OWN_ORIGINS:  # ticket 06, part 1: a page of localhost may read the answers of 127.0.0.1, and back
+            self.send_header('Access-Control-Allow-Origin', origin)
+        self.send_header('Vary', 'Origin')  # always: the answer depends on the Origin
         super().end_headers()
+
+    def do_OPTIONS(self):
+        """The browser's question before a POST with a body type (a picture to /ocr) from the other name of this server."""
+        if (self.headers.get('Host') or '').lower() not in ALLOWED or (self.headers.get('Origin') or '') not in OWN_ORIGINS:
+            self.send_error(403, 'Forbidden')
+            return
+        self.send_response(204)
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Access-Control-Max-Age', '600')
+        self.send_header('Content-Length', '0')
+        self.end_headers()
 
     def log_message(self, *args):
         pass

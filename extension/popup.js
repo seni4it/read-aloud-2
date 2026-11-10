@@ -14,6 +14,13 @@ const save = () => chrome.storage.sync.set({ ra2: cfg });
   $('site').onchange = () => { cfg.hidden = $('site').checked ? [...new Set([...cfg.hidden, host])] : cfg.hidden.filter((h) => h !== host); save(); };
   $('rate').oninput = () => { $('rv').textContent = Number($('rate').value).toFixed(1) + '×'; };
   $('rate').onchange = () => { cfg.rate = Number($('rate').value); save(); };
+  // ticket 06: the speed method, one setting for the web-page player and the reader (ra2.method; A when not set)
+  $('method').value = ['A', 'B', 'C'].includes(cfg.method) ? cfg.method : 'A';
+  $('method').onchange = async () => {  // only the method key, read fresh: a speed or voice that another tab saved is kept
+    cfg.method = $('method').value;
+    const now = (await chrome.storage.sync.get('ra2')).ra2 || {};
+    await chrome.storage.sync.set({ ra2: { ...now, method: cfg.method } });
+  };
 
   const v = await chrome.runtime.sendMessage({ to: 'bg', cmd: 'voices' });
   const group = (label, list, prefix) => {
@@ -24,6 +31,7 @@ const save = () => chrome.storage.sync.set({ ra2: cfg });
   };
   group('Voices', v.natural, 'kokoro:');
   group('Russian', v.system, 'system:');
+  if (v.server) $('method').querySelector('option[value="C"]').disabled = !(v.methods || []).includes('C');  // ticket 06: no ffmpeg on this Mac
   $('voice').value = cfg.voice;
   $('voice').onchange = () => { cfg.voice = $('voice').value; save(); };
   $('server').innerHTML = v.server ? 'Natural voices: <b>ready</b>.' : 'Natural voices: <b>off</b>. Start the voice server on your Mac (see README).';

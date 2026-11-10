@@ -424,7 +424,7 @@
     if (!v.startsWith('kokoro:')) return;
     const first = quick(segs[i]);
     const next = first.length === 1 && first[0].words.length < 6 && segs[i + 1] ? quick(segs[i + 1]) : [segs[i + 1]];
-    send({ cmd: 'warm', voice: v.slice(7), prio, texts: [...first, ...next].filter(Boolean).map((x) => x.say).slice(0, 2) });
+    send({ cmd: 'warm', voice: v.slice(7), prio, rate: cfg.rate, texts: [...first, ...next].filter(Boolean).map((x) => x.say).slice(0, 2) });  // rate: ticket 06
   }
   const onScreen = (segs) => segs.findIndex((s) => { const r = rangeOf(s.b, s.start, s.end).getBoundingClientRect(); return r.bottom > 60 && r.height > 0; });
   function readPage() {  // from the first sentence on screen, or the top of the article
@@ -655,9 +655,20 @@
     $('msg').textContent = note;
     $('launch').hidden = active || !cfg.launcher || hiddenHere();
   }
+  // Ticket 06: the speed that the ear hears. Method A (the voice speaks faster) reaches less than asked: about 1.84 at 2
+  // and 2.18 at 3. The same curve as heardSpeed() in pdf/tts.js (a test keeps them equal).
+  function heardSpeed(method, rate) {
+    const pts = [[1, 1], [1.1, 1.048], [1.5, 1.532], [2, 1.836], [3, 2.176]];
+    if (method !== 'A' || !(rate > 1)) return rate;
+    for (let k = 1; k < pts.length; k++) {
+      const [x0, y0] = pts[k - 1], [x1, y1] = pts[k];
+      if (rate <= x1 || k === pts.length - 1) return y0 + ((rate - x0) * (y1 - y0)) / (x1 - x0);
+    }
+    return rate;
+  }
   function timeLeft(at) {  // about 160 words a minute at speed 1
     let words = 0; for (let k = at; k < S.segs.length; k++) words += S.segs[k].words.length;
-    const min = words / (160 * cfg.rate);
+    const min = words / (160 * heardSpeed(cfg.method || 'A', cfg.rate));
     return min < 1 ? '< 1 min left' : `${Math.round(min)} min left`;
   }
   const hiddenHere = () => cfg.hidden.includes(location.hostname);

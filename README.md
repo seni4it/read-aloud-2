@@ -28,6 +28,7 @@ Without the voice server the add-on still works, with the voices built into the 
 ## What it does
 
 - Toolbar button: "Listen to this page", voice, speed, switches.
+- Speed method (toolbar button and the settings of the reader, one setting for both): "Voice speaks faster" (the default: the voice itself speaks faster, the pitch stays), "Stretch, same pitch" (the voice server stretches the sound with ffmpeg; offered only when ffmpeg is on the Mac), "Simple, pitch goes up" (the sound plays faster, the pitch goes up). "Voice speaks faster" is not exact: at 2x the voice reaches about 1.8x, at 3x about 2.2x.
 - Round listen button on the right edge of every page.
 - A small play button beside the paragraph under the mouse: reads from there.
 - Select text: a "Listen" bubble reads just that.
@@ -92,7 +93,7 @@ server when needed and opens your library in its own window (Chrome, without tab
 
 In the reader of a library book, **Export audio (MP3)** in the side bar makes one MP3 per chapter (64 kb/s mono,
 the cover as album art, chapter titles as track names). Files go to `Documents/Read Aloud Library/Audio/<book>/`
-(`READ_ALOUD_AUDIO` changes the folder). The reader shows the time left to read at the current speed.
+(`READ_ALOUD_AUDIO` changes the folder). The reader shows the time left to read at the current speed. The MP3 files are always at speed 1; the speed method does not change them.
 
 ## Start the voices at login
 

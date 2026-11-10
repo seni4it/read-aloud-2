@@ -7,15 +7,18 @@ const SERVER = 'http://127.0.0.1:8793';
 // once more (Chrome check of 10 Nov 2026: Previous went to the next sentence, Next moved 2 or 3).
 let audio = null, cur = null, timer = null, begin = null;  // begin(): the start of the sentence of now, one time
 
-const url = (text, voice, ahead = '') => `${SERVER}/speak?voice=${encodeURIComponent(voice)}&text=${encodeURIComponent(text)}${ahead}`;
+// Ticket 06: the speed and method of the sound (the background's plan); speed 1 asks the plain sound (one for all methods).
+const sp = (speed, method) => (speed && speed !== 1 ? `&speed=${speed}&method=${method}` : '');
+const url = (text, voice, speed, method, ahead = '') => `${SERVER}/speak?voice=${encodeURIComponent(voice)}&text=${encodeURIComponent(text)}${sp(speed, method)}${ahead}`;
 // Read-ahead waits in its own line: 3 = next sentences while reading, 2 = where the mouse rests (newest first),
 // 1 = what is on screen (top first; an older screen is dropped). Two at a time, sent to "localhost" so they never
 // hold up the sentence you are waiting for, which goes to "127.0.0.1" (Chrome allows 6 requests per address).
 const AHEAD = 'http://localhost:8793';
 let line = [], busy = 0, seq = 0, screen = 0;
-function early(texts, voice, prio = 3, batch = 0) {
+function early(texts, voice, prio = 3, batch = 0, speed = 1, method = '') {
   if (prio === 1) { screen = Math.max(screen, batch); line = line.filter((x) => x.prio !== 1); }
-  for (const text of texts) line.push({ text, voice, prio, batch, n: prio === 1 ? -seq++ : seq++ });
+  line = line.filter((x) => x.speed === speed && x.method === method);  // ticket 06: Read-ahead of an old speed is not wanted now
+  for (const text of texts) line.push({ text, voice, prio, batch, speed, method, n: prio === 1 ? -seq++ : seq++ });
   pump();
 }
 function pump() {
@@ -24,7 +27,7 @@ function pump() {
     const x = line.shift();
     if (x.prio === 1 && x.batch < screen) continue;
     busy++;
-    fetch(`${AHEAD}/speak?voice=${encodeURIComponent(x.voice)}&text=${encodeURIComponent(x.text)}&ahead=${x.prio}&batch=${x.batch}`)
+    fetch(`${AHEAD}/speak?voice=${encodeURIComponent(x.voice)}&text=${encodeURIComponent(x.text)}${sp(x.speed, x.method)}&ahead=${x.prio}&batch=${x.batch}`)
       .catch(() => {}).finally(() => { busy--; pump(); });
   }
 }
@@ -49,13 +52,13 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
   if (m.cmd === 'speak') {
     stop(); cur = m;
     const a = audio = new Audio();
-    a.preservesPitch = true;  // faster speech keeps the same voice pitch
+    a.preservesPitch = m.keepPitch !== false;  // ticket 06: B lets the pitch go up; A and C play at rate 1
     let started = false, ended = false;
     // The end only after the start, and once: the page goes on to the next sentence only when this one was heard.
     const end = () => { if (cur !== m || !started || ended) return; ended = true; ticking(false); send(m, 'end'); };
-    a.src = url(m.text, m.voice); a.playbackRate = m.rate;  // the sentence to hear goes first
-    a.onloadeddata = () => { if (cur === m) early(m.next, m.voice); };  // then the next ones are prepared while this one plays
-    fetch(url(m.text, m.voice).replace('/speak?', '/times?'), { signal: AbortSignal.timeout(5000) }).then((r) => r.json())  // when each word starts (Kokoro's own timings)
+    a.src = url(m.text, m.voice, m.speed, m.method); a.playbackRate = m.rate;  // the sentence to hear goes first
+    a.onloadeddata = () => { if (cur === m) early(m.next, m.voice, 3, 0, m.speed, m.method); };  // then the next ones are prepared while this one plays
+    fetch(url(m.text, m.voice, m.speed, m.method).replace('/speak?', '/times?'), { signal: AbortSignal.timeout(5000) }).then((r) => r.json())  // when each word starts (Kokoro's own timings)
       .then(({ starts }) => send(m, 'times', { starts })).catch(() => {});
     a.onended = end;
     a.onerror = () => { if (cur !== m) return; ticking(false); send(m, 'error', { why: 'The voice server on this Mac did not answer.' }); };
@@ -71,7 +74,7 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     a.onplaying = begin;
     a.play().then(begin).catch((e) => { if (cur === m && e.name !== 'AbortError') send(m, 'error', { why: 'The voice could not play: ' + e.message }); });
     reply(true);  // tells the background that the sentence was taken
-  } else if (m.cmd === 'warm') early(m.texts, m.voice, m.prio, m.batch);
+  } else if (m.cmd === 'warm') early(m.texts, m.voice, m.prio, m.batch, m.speed, m.method);
   else if (m.cmd === 'stop') stop();
   else if (m.cmd === 'pause') { if (audio) audio.pause(); ticking(false); }
   else if (m.cmd === 'resume') {  // answers whether there was audio to go on with
@@ -80,5 +83,8 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     audio.play().then(() => { if (cur !== was) return; first?.(); ticking(true); }).catch(() => {});
     reply(true);
   }
-  else if (m.cmd === 'rate') { if (audio) audio.playbackRate = m.rate; }
+  else if (m.cmd === 'rate') {  // only for a sound of the same speed (the background checks); begin() keeps the new rate
+    if (cur) cur.rate = m.rate;
+    if (audio) { audio.playbackRate = m.rate; if (m.keepPitch !== undefined) audio.preservesPitch = m.keepPitch !== false; }
+  }
 });

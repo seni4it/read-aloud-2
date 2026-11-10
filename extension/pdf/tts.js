@@ -351,8 +351,69 @@ export class SoundMemory {
   }
 }
 
-/** The key of the sound of text in voiceId (the sound memory and the open requests). */
-const soundKey = (voiceId, text) => voiceId + '\u0000' + text;
+/**
+ * The key of the sound of text in voiceId (the sound memory and the open requests). plan (ticket 06): a sound made at
+ * another speed than 1 (methods A and C) is another sound; speed 1 is one sound for all methods.
+ */
+const soundKey = (voiceId, text, plan) => voiceId + '\u0000' + text + (plan && plan.speed !== 1 ? '\u0000' + plan.method + plan.speed : '');
+
+/* ------------------------------------------------- ticket 06: the speed method */
+
+/**
+ * The speed method, a setting (owner's decision of 10 Nov 2026). A, the default: the voice model makes the speech at
+ * the asked speed and it plays at rate 1, so the pitch stays. C: the voice server stretches the speed-1 sound with
+ * ffmpeg, pitch kept (added for comparison). B: the speed-1 sound plays faster, the pitch goes up (the method before).
+ * The same labels are in pdf/index.html (methodSel) and popup.html (method); a test keeps them equal.
+ */
+export const SPEED_METHODS = [
+  { id: 'A', label: 'Voice speaks faster' },
+  { id: 'C', label: 'Stretch, same pitch' },
+  { id: 'B', label: 'Simple, pitch goes up' }
+];
+export const SPEED_METHOD_DEFAULT = 'A';
+const SPEED_MIN = 0.5, SPEED_MAX = 4;  // the range that voice-server.py takes (SPEED_MIN, SPEED_MAX)
+
+/**
+ * What to ask the voice server for, and how to play it: { speed, method, rate }. speed 1 (method '') is the plain
+ * sound. methods: what the voice server offers (its /voices answer); a method it does not offer falls to A, then B.
+ * B and speed 1 ask the plain sound and play it at `rate`; A and C ask the sound at `speed` and play it at rate 1.
+ */
+export function speedPlan(method, rate, methods = ['A', 'B', 'C']) {
+  rate = Number(rate) || 1;
+  let m = SPEED_METHODS.some((x) => x.id === method) ? method : SPEED_METHOD_DEFAULT;
+  if (!methods.includes(m)) m = methods.includes('A') ? 'A' : 'B';
+  if (rate === 1 || m === 'B') return { speed: 1, method: '', rate };
+  const speed = Math.min(SPEED_MAX, Math.max(SPEED_MIN, Math.round(rate * 100) / 100));
+  return { speed, method: m, rate: rate / speed };
+}
+
+/**
+ * The speed that the ear hears. Method A is not exact: the model reaches about 1.84 at 2 and 2.18 at 3 (prototype of
+ * 10 Nov 2026, tools/speed-compare.py: 15.86 s at 1.0, 15.14 at 1.1, 10.35 at 1.5, 8.64 at 2.0, 7.29 at 3.0). The
+ * reader plays what the model gives; only the time left uses this. B and C reach the asked speed.
+ */
+const HEARD_A = [[1, 1], [1.1, 1.048], [1.5, 1.532], [2, 1.836], [3, 2.176]];
+export function heardSpeed(method, rate) {
+  if (method !== 'A' || !(rate > 1)) return rate;
+  for (let k = 1; k < HEARD_A.length; k++) {
+    const [x0, y0] = HEARD_A[k - 1], [x1, y1] = HEARD_A[k];
+    if (rate <= x1 || k === HEARD_A.length - 1) return y0 + ((rate - x0) * (y1 - y0)) / (x1 - x0);
+  }
+  return rate;
+}
+
+/**
+ * The voice server's address (ticket 06, part 1). The reader served by the voice server (http://localhost:8793 or
+ * http://127.0.0.1:8793) asks its own origin: a page of localhost could not read the answers of 127.0.0.1 (CORS),
+ * and the natural voice fell to the Mac voice. Other pages (the add-on's own pages) ask the fixed address.
+ */
+export function serverBase(loc) {
+  const fixed = 'http://127.0.0.1:8793';
+  try {
+    if (/^https?:$/.test(loc.protocol) && loc.port === '8793' && ['localhost', '127.0.0.1', '[::1]'].includes(loc.hostname)) return loc.origin;
+  } catch { /* no location */ }
+  return fixed;
+}
 
 export class KokoroEngine {
   // Kokoro ships 50-odd voices at wildly varying quality. These are the three
@@ -531,7 +592,7 @@ function notAnswering(message) {
  * at the start of a sentence when the server answers again.
  */
 export class ServerEngine extends KokoroEngine {
-  static SERVER = 'http://127.0.0.1:8793';
+  static SERVER = serverBase(typeof location === 'undefined' ? undefined : location);
   static WAIT_MS = 30000;    // time limit for a sentence someone waits to hear
   static AHEAD_MS = 120000;  // time limit for read-ahead (the server makes it only when nobody waits)
   static INIT_MS = 3000;     // time limit for the voice list
@@ -547,7 +608,27 @@ export class ServerEngine extends KokoroEngine {
     this.mac = null;
     this.wake = null;           // ends the wait of speak() for the sound that plays now
     this.asking = false;        // a question "are you back?" to the server is open or was asked a moment ago
+    this.method = SPEED_METHOD_DEFAULT;  // ticket 06: the speed method (app.js setSpeed)
+    this.rate = 1;              // the speed of the Read-ahead (the last speak, or setSpeed)
+    this.methods = ['B'];       // what the voice server offers; its /voices answer says (an old server: B only)
   }
+
+  /** Ticket 06: the speed method and the speed. The next speak() and prefetch() use them. */
+  setSpeed(method, rate) {
+    this.method = method;
+    this.rate = Number(rate) || 1;
+  }
+
+  #plan(rate = this.rate) { return speedPlan(this.method, rate, this.methods); }
+
+  /** Ask the voice server again which speed methods it offers (after a 400 to a request with a speed). */
+  #readMethods() {
+    return ServerEngine.#ask(ServerEngine.SERVER + '/voices', new AbortController(), ServerEngine.INIT_MS).then(r => r.json())
+      .then(({ speed }) => { this.methods = Array.isArray(speed?.methods) ? speed.methods : ['B']; }).catch(() => {});
+  }
+
+  /** The method that really plays now (C falls to A when the voice server has no ffmpeg). */
+  heardSpeed(rate) { const p = this.#plan(rate); return heardSpeed(p.speed === 1 ? 'B' : p.method, rate); }
 
   get available() { return true; }
 
@@ -561,8 +642,9 @@ export class ServerEngine extends KokoroEngine {
 
   init() {
     if (this.ready) return Promise.resolve(true);
-    return ServerEngine.#ask(ServerEngine.SERVER + '/voices', new AbortController(), ServerEngine.INIT_MS).then(r => r.json()).then(({ voices }) => {
+    return ServerEngine.#ask(ServerEngine.SERVER + '/voices', new AbortController(), ServerEngine.INIT_MS).then(r => r.json()).then(({ voices, speed }) => {
       this.voices = voices.map(v => ({ id: v.id, label: `${v.label} · ${v.accent}` }));
+      this.methods = Array.isArray(speed?.methods) ? speed.methods : ['B'];  // ticket 06
       this.ready = true;
       return true;
     }).catch(() => { throw new Error('the voice server on this Mac is not running'); });
@@ -570,8 +652,8 @@ export class ServerEngine extends KokoroEngine {
 
   listVoices() { return this.voices; }
 
-  render(sentence, voiceId, ahead = false) {
-    const key = soundKey(voiceId, sentence.text);
+  render(sentence, voiceId, ahead = false, plan = this.#plan()) {
+    const key = soundKey(voiceId, sentence.text, plan);
     if (this.cache.has(key)) return Promise.resolve(this.cache.get(key));
     const open = this.requests.get(key);
     if (open) {
@@ -579,7 +661,7 @@ export class ServerEngine extends KokoroEngine {
       return open.job;
     }
     const ac = new AbortController();
-    const entry = { ac, ahead, voiceId, text: sentence.text, timer: null, tries: 0 };
+    const entry = { ac, ahead, voiceId, text: sentence.text, plan, timer: null, tries: 0 };
     entry.job = new Promise((resolve, reject) => {
       Object.assign(entry, { resolve, reject });
       ac.signal.addEventListener('abort', () => reject(ac.signal.reason));
@@ -623,10 +705,12 @@ export class ServerEngine extends KokoroEngine {
   /** One request for the sound and the word timing of entry; entry ends with the first answer, or the last failure. */
   #try(entry, ahead) {
     const { ac } = entry;
-    const query = `voice=${encodeURIComponent(entry.voiceId)}&text=${encodeURIComponent(entry.text)}${ahead ? '&ahead=3' : ''}`;
+    const { speed, method } = entry.plan;
+    const query = `voice=${encodeURIComponent(entry.voiceId)}&text=${encodeURIComponent(entry.text)}` +
+      `${speed !== 1 ? `&speed=${speed}&method=${method}` : ''}${ahead ? '&ahead=3' : ''}`;
     const get = path => ServerEngine.#ask(`${ServerEngine.SERVER}/${path}?${query}`, ac);
     entry.tries++;
-    get('speak').then(r => { if (!r.ok) throw new Error('voice server: ' + r.status); return r.arrayBuffer(); })
+    get('speak').then(r => { if (!r.ok) throw Object.assign(new Error('voice server: ' + r.status), { status: r.status }); return r.arrayBuffer(); })
       .then(buf => Promise.all([new OfflineAudioContext(1, 1, 24000).decodeAudioData(buf),
         // No word timing from the server: the timing is estimated. A cancel is not "no word timing".
         get('times').then(r => r.json()).catch(err => { if (ac.signal.aborted) throw ac.signal.reason; return {}; })]))
@@ -668,8 +752,9 @@ export class ServerEngine extends KokoroEngine {
   prefetch(sentence, voiceId) {
     if (!sentence || this.down) return;
     const parts = ServerEngine.parts(sentence.text);
-    this.cache.alsoNeed(parts.map((p) => soundKey(voiceId, p.text)));
-    for (const p of parts) this.render(p, voiceId, true).catch(() => {});
+    const plan = this.#plan();
+    this.cache.alsoNeed(parts.map((p) => soundKey(voiceId, p.text, plan)));
+    for (const p of parts) this.render(p, voiceId, true, plan).catch(() => {});
   }
 
   /** Read text with the Mac voice; `at` is where the text starts in the whole sentence (for the word highlight). */
@@ -688,13 +773,15 @@ export class ServerEngine extends KokoroEngine {
     this.#halt(false);
     const token = this.token;
     const parts = ServerEngine.parts(sentence.text);
-    this.cache.need(parts.map((p) => soundKey(voiceId, p.text)));  // its sound never goes out of the memory while it plays
+    this.rate = Number(rate) || 1;  // the Read-ahead after this Sentence is made at its speed
+    const plan = this.#plan();      // ticket 06: A and C ask the sound at the speed and play it at plan.rate (1)
+    this.cache.need(parts.map((p) => soundKey(voiceId, p.text, plan)));  // its sound never goes out of the memory while it plays
     if (this.down) {
       this.#askBack();  // the answer counts from the next sentence: a sentence is never cut in two voices
       this.#macSpeak(sentence.text, 0, opts);
       return;
     }
-    const jobs = parts.map((p) => this.render(p, voiceId));  // the first is asked for first
+    const jobs = parts.map((p) => this.render(p, voiceId, false, plan));  // the first is asked for first
     for (const j of jobs) j.catch(() => {});  // a failed second piece is handled below, not left unhandled
     if (!this.ctx) this.ctx = new AudioContext();
     if (this.ctx.state === 'suspended') this.ctx.resume();
@@ -708,7 +795,7 @@ export class ServerEngine extends KokoroEngine {
         const at = parts[k].at;
         await new Promise((done) => {
           this.wake = done;  // stop() ends this wait: the sound's own end never comes then
-          playBuffer(this.ctx, buffer, { ...parts[k], starts }, rate, this.handle,
+          playBuffer(this.ctx, buffer, { ...parts[k], starts }, plan.rate, this.handle,
             { onWord: (start, len) => onWord?.(start + at, len), onEnd: done });
         });
         if (token !== this.token) return;
@@ -716,6 +803,19 @@ export class ServerEngine extends KokoroEngine {
       onEnd?.();
     } catch (err) {
       if (token !== this.token) return;
+      // Ticket 06 review: a 400 to a sound with a speed (the voice server lost ffmpeg, or changed): read its methods
+      // again and say the rest of the Sentence with the new plan (C falls to A), before any server-failure path.
+      if (err?.status === 400 && plan.speed !== 1 && !opts.replanned) {
+        await this.#readMethods();
+        if (token !== this.token) return;
+        const next = this.#plan(rate);
+        if (next.speed !== plan.speed || next.method !== plan.method) {
+          const at = parts[k].at;
+          this.speak({ ...sentence, text: sentence.text.slice(at), starts: undefined },
+            { ...opts, replanned: true, onWord: (start, len) => onWord?.(start + at, len) });
+          return;
+        }
+      }
       if (err?.down) this.#macSpeak(sentence.text.slice(parts[k].at), parts[k].at, opts);
       else onError?.(err.message || String(err));
     }

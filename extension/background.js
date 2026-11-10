@@ -3,7 +3,40 @@
 // Two engines: "kokoro" = natural voices from voice-server.py on this Mac (played in an offscreen page),
 // "system" = the voices built into the Mac and Chrome (chrome.tts).
 const SERVER = 'http://127.0.0.1:8793';
-let owner = null;  // { tab, id, engine, ext }: who is speaking now; ext = an add-on page (the paste page)
+let owner = null;  // { tab, id, engine, ext, plan }: who is speaking now; ext = an add-on page (the paste page)
+
+// Ticket 06, the speed method. One stored setting for the web-page player, the paste page and the reader of the
+// add-on: chrome.storage.sync 'ra2'.method ('A' when not set; the popup and the reader write it). The same rule as
+// speedPlan() in pdf/tts.js (a test keeps them equal): A asks the voice model for the speed and plays at rate 1;
+// C asks the voice server to stretch (ffmpeg); B plays the speed-1 sound faster, the pitch goes up. The voice server's
+// /voices answer says the methods it offers. One rule with the reader (review of ticket 06): C without ffmpeg plays A;
+// an old voice server (no "speed" in /voices) or no answer plays B.
+const METHODS = ['A', 'B', 'C'];
+let offered = null, offeredAt = 0;  // the methods of the voice server; an answer or a failure is kept for a minute
+async function serverMethods() {
+  if (offered && Date.now() - offeredAt < 60000) return offered;
+  try {
+    const r = await fetch(SERVER + '/voices', { signal: AbortSignal.timeout(2000) });
+    const speed = (await r.json()).speed;
+    offered = Array.isArray(speed && speed.methods) ? speed.methods : ['B'];  // an old voice server: speed by the browser
+  } catch { offered = ['B']; }  // no answer: B, and not asked again for each Sentence
+  offeredAt = Date.now();
+  return offered;
+}
+const setting = () => chrome.storage.sync.get('ra2').then((r) => (r && r.ra2) || {}, () => ({}));
+// The same rule as speedPlan() in pdf/tts.js, plus keepPitch: the pitch goes up only when the plain sound plays faster.
+function soundPlan(method, rate, methods) {
+  rate = Number(rate) || 1;
+  let m = METHODS.includes(method) ? method : 'A';
+  if (!methods.includes(m)) m = methods.includes('A') ? 'A' : 'B';
+  if (rate === 1 || m === 'B') return { speed: 1, method: '', rate, keepPitch: rate === 1 };
+  const speed = Math.min(4, Math.max(0.5, Math.round(rate * 100) / 100));
+  return { speed, method: m, rate: rate / speed, keepPitch: true };
+}
+async function planFor(rate) {
+  const method = (await setting()).method || 'A';
+  return soundPlan(method, rate, rate === 1 || method === 'B' ? METHODS : await serverMethods());
+}
 // An add-on page has no content script: it hears events only by a runtime broadcast. A web tab hears them
 // by tabs.sendMessage alone, so its 14 ticks a second are not copied to every add-on page.
 const isAddonPage = (sender) => !sender.tab || String(sender.url || '').startsWith(chrome.runtime.getURL(''));
@@ -60,10 +93,14 @@ async function speak(tab, m, ext) {
     });
     return;
   }
-  try { await offscreen(); } catch (e) { tell(tab, { evt: 'error', id: m.id, why: 'Audio player did not open: ' + (e && e.message) }, ext); return; }
+  const plan = await planFor(m.rate);
+  if (!mine()) return;  // a newer sentence came while the setting was read
+  owner.plan = plan;
+  try { await offscreen(); } catch (e) { if (mine()) tell(tab, { evt: 'error', id: m.id, why: 'Audio player did not open: ' + (e && e.message) }, ext); return; }
+  if (!mine()) return;  // a newer sentence came while the sound page opened
   // The sound page answers true when it took the sentence. No answer (it was closing, or not listening yet):
   // the page gets an error, so it does not stay in 'playing' with no sound.
-  chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'speak', tab, id: m.id, text: m.text, voice: m.voice, rate: m.rate, next: m.next || [] })
+  chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'speak', tab, id: m.id, text: m.text, voice: m.voice, next: m.next || [], ...plan })
     .then((took) => { if (took !== true && mine()) tell(tab, { evt: 'error', id: m.id, why: 'Audio player did not take the sentence.' }, ext); },
       (e) => { if (mine()) tell(tab, { evt: 'error', id: m.id, why: 'Audio player: ' + (e && e.message) }, ext); });
 }
@@ -74,10 +111,25 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     const ext = isAddonPage(sender);
     if (m.cmd === 'speak') speak(tab, m, ext);
     else if (m.cmd === 'stop') { if (owner && owner.tab === tab) stopOwner(tab); }
-    else if (m.cmd === 'warm') offscreen().then(() => chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'warm', texts: m.texts, voice: m.voice, prio: m.prio, batch: m.batch })).catch(() => {});
+    else if (m.cmd === 'warm') {  // the screen's Read-ahead: at the speed and method of the setting
+      // the tab's present speed first (content.js sends it); the stored speed for an older page
+      (m.rate ? Promise.resolve(m.rate) : setting().then((s) => Number(s.rate) || 1)).then(planFor).then((plan) => offscreen().then(() => chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'warm',
+        texts: m.texts, voice: m.voice, prio: m.prio, batch: m.batch, speed: plan.speed, method: plan.method }))).catch(() => {});
+    }
     else if (m.cmd === 'resume') resume(tab, m.id, ext);
-    else if (['pause', 'rate'].includes(m.cmd) && owner && owner.tab === tab && owner.engine === 'kokoro') {
-      chrome.runtime.sendMessage({ to: 'offscreen', cmd: m.cmd, rate: m.rate }).catch(() => {});
+    else if (m.cmd === 'pause' && owner && owner.tab === tab && owner.engine === 'kokoro') {
+      chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'pause' }).catch(() => {});
+    } else if (m.cmd === 'rate' && owner && owner.tab === tab && owner.engine === 'kokoro') {
+      // Ticket 06: a sound of the same speed (B, or speed 1) only changes its rate. A sound made at another speed
+      // (A, C) cannot: the page says the Sentence again from the present word ('lost'), at the new speed.
+      const was = owner;
+      planFor(m.rate).then((plan) => {
+        if (owner !== was) return;
+        if (was.plan && plan.speed === was.plan.speed && plan.method === was.plan.method) {
+          was.plan = plan;
+          chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'rate', rate: plan.rate, keepPitch: plan.keepPitch }).catch(() => {});
+        } else tell(tab, { evt: 'lost', id: was.id }, was.ext);
+      });
     } else if (m.cmd === 'voices') { voices().then(reply); return true; }
     else if (m.cmd === 'myTab') reply(tab);
   } else if (m.to === 'bg-evt') {  // from the offscreen page
@@ -91,7 +143,10 @@ async function voices() {
   try {
     // a time limit: a server that accepts and then waits (the model still loading) must not hold the voice list
     const r = await fetch(SERVER + '/voices', { signal: AbortSignal.timeout(2000) });
-    out.natural = (await r.json()).voices; out.server = true;
+    const j = await r.json();
+    out.natural = j.voices; out.server = true;
+    offered = Array.isArray(j.speed && j.speed.methods) ? j.speed.methods : ['B']; offeredAt = Date.now();  // ticket 06
+    out.methods = offered;
   } catch { /* voice server off: system voices only */ }
   // built-in voices: only Russian (Kokoro has none); Milena, the Mac's own, first
   out.system = (await chrome.tts.getVoices()).filter((v) => /^ru/i.test(v.lang || '') && !v.remote)

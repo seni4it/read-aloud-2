@@ -1,7 +1,7 @@
 """Tests of the voice server without the voice model: the library, the cache, files and errors.
 Run:  ~/.local/share/uv/tools/mlx-audio/bin/python -m unittest discover -s tests -v
 """
-import functools, importlib.util, json, os, socket, sys, tempfile, threading, unittest, urllib.error, urllib.request
+import functools, importlib.util, io, json, os, socket, sys, tempfile, threading, unittest, urllib.error, urllib.request
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TMP = tempfile.mkdtemp(prefix='read-aloud-test-')
@@ -352,6 +352,245 @@ class Http(unittest.TestCase):
     def test_bad_speak_request_is_a_400_not_a_crash(self):
         self.assertEqual(get('/speak?text=&voice=af_heart')[0], 400)
         self.assertEqual(get('/speak?text=hi&voice=nobody')[0], 400)
+
+
+# ---- ticket 06: the speed method. The voice model is never loaded: synth() is a fake that gives a sound of
+# 1 second / speed with three words, and records each call. ffmpeg is a fake too, except in one test that runs only
+# when this Mac has ffmpeg.
+class FakeVoice:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, text, voice, speed=1.0):
+        import numpy as np
+        self.calls.append((text, voice, speed))
+        n = int(24000 / speed)
+        audio = np.concatenate([np.zeros(2400), np.ones(n) * 0.3, np.zeros(2400)]).astype(np.float32)
+        words = text.split()
+        return audio, [Tok(w, 0.1 + k * 0.4 / speed) for k, w in enumerate(words)]
+
+
+class SpeedMethod(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        with socket.socket() as s:
+            s.bind(('127.0.0.1', 0))
+            cls.port = s.getsockname()[1]
+        cls.old_allowed = vs.ALLOWED
+        vs.ALLOWED = {f'127.0.0.1:{cls.port}'}  # this test server's own port
+        cls.srv = vs.Server(('127.0.0.1', cls.port), functools.partial(vs.Handler, directory=HERE))
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        vs.ALLOWED = cls.old_allowed
+
+    def setUp(self):
+        self.voice = FakeVoice()
+        self.old = (vs.synth, vs.STRETCH, vs.stretch_wav)
+        vs.synth = self.voice
+        vs._cache.clear(); vs._cache_size[0] = 0
+
+    def tearDown(self):
+        vs.synth, vs.STRETCH, vs.stretch_wav = self.old
+        vs._cache.clear(); vs._cache_size[0] = 0
+
+    def ask(self, path, headers=None):
+        req = urllib.request.Request(f'http://127.0.0.1:{self.port}{path}', headers=headers or {})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, r.headers, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers, e.read()
+
+    def test_bad_speed_or_method_is_a_400(self):
+        for q in ('speed=abc', 'speed=nan', 'speed=inf', 'speed=-1', 'speed=0', 'speed=0.4', 'speed=4.5', 'speed=1e9',
+                  'speed=2&method=X', 'speed=2&method=a'):
+            self.assertEqual(self.ask('/speak?text=Hello%20there.&voice=af_heart&' + q)[0], 400, q)
+            self.assertEqual(self.ask('/times?text=Hello%20there.&voice=af_heart&' + q)[0], 400, q)
+        self.assertEqual(self.voice.calls, [], 'nothing is made for a bad request')
+
+    def test_method_a_asks_the_model_for_the_speed_and_its_word_timing_matches(self):
+        code, h, wav = self.ask('/speak?text=Hello%20big%20world.&voice=af_heart&speed=2&method=A')
+        self.assertEqual(code, 200)
+        self.assertEqual(self.voice.calls, [('Hello big world.', 'af_heart', 2.0)])
+        import soundfile as sf
+        audio, sr = sf.read(io.BytesIO(wav))
+        self.assertAlmostEqual(len(audio) / sr, 0.03 + 0.5 + 0.1, delta=0.02)  # the model's own speed-2 sound, trimmed
+        starts = json.loads(self.ask('/times?text=Hello%20big%20world.&voice=af_heart&speed=2&method=A')[2])['starts']
+        self.assertEqual(len(self.voice.calls), 1, '/times uses the kept sound of the same speed')
+        shift = 0.1 - 0.03  # trim() cuts the silence before the voice but 0.03 s
+        self.assertEqual(starts, [round(0.1 - shift, 3), round(0.3 - shift, 3), round(0.5 - shift, 3)])
+
+    def test_speed_one_is_one_sound_for_all_methods(self):
+        for q in ('', '&speed=1', '&speed=1&method=A', '&speed=1.0&method=C', '&method=B', '&speed=2&method=B'):
+            self.assertEqual(self.ask('/speak?text=Same%20sound.&voice=af_heart' + q)[0], 200, q)
+        self.assertEqual(self.voice.calls, [('Same sound.', 'af_heart', 1.0)], 'B never makes another sound: it plays the speed-1 sound faster')
+        self.assertEqual(len(vs._cache), 1)
+
+    def test_cache_key_has_the_method_and_the_speed(self):
+        self.assertEqual(vs.sound_key('v', 't', 1.0, 'A'), ('v', 't'))
+        self.assertEqual(vs.sound_key('v', 't', 2.0, 'B'), ('v', 't'))
+        self.assertEqual(vs.sound_key('v', 't', 1.5, 'A'), ('v', 't', 'A', 1.5))
+        self.assertEqual(vs.sound_key('v', 't', 1.5, 'C'), ('v', 't', 'C', 1.5))
+        for q in ('&speed=1.5&method=A', '&speed=1.50&method=A', '&speed=2&method=A'):
+            self.ask('/speak?text=Keyed.&voice=af_heart' + q)
+        self.assertEqual([c[2] for c in self.voice.calls], [1.5, 2.0], '1.5 and 1.50 are the same sound')
+
+    def test_atempo_chain_stays_in_the_range_of_each_filter(self):
+        self.assertEqual(vs.atempo_chain(1.5), 'atempo=1.5')
+        self.assertEqual(vs.atempo_chain(2.0), 'atempo=2')
+        self.assertEqual(vs.atempo_chain(3.0), 'atempo=2,atempo=1.5')
+        self.assertEqual(vs.atempo_chain(4.0), 'atempo=2,atempo=2')
+        self.assertEqual(vs.atempo_chain(0.75), 'atempo=0.75')
+
+    def test_method_c_stretches_the_speed_one_sound_and_scales_the_word_timing(self):
+        import numpy as np, soundfile as sf
+        seen = []
+        def fake_stretch(wav, speed):
+            seen.append(speed)
+            a, sr = sf.read(io.BytesIO(wav), dtype='float32')
+            out = io.BytesIO()
+            sf.write(out, a[::2] if speed == 2 else a, sr, format='WAV', subtype='PCM_16')
+            return out.getvalue()
+        vs.STRETCH, vs.stretch_wav = '/fake/ffmpeg', fake_stretch
+        one = json.loads(self.ask('/times?text=Hello%20big%20world.&voice=af_heart')[2])['starts']
+        code, _, wav = self.ask('/speak?text=Hello%20big%20world.&voice=af_heart&speed=2&method=C')
+        self.assertEqual(code, 200)
+        self.assertEqual(seen, [2.0])
+        self.assertEqual(self.voice.calls, [('Hello big world.', 'af_heart', 1.0)], 'C is made from the speed-1 sound')
+        two = json.loads(self.ask('/times?text=Hello%20big%20world.&voice=af_heart&speed=2&method=C')[2])['starts']
+        self.assertEqual(two, [round(s / 2, 3) for s in one])
+        self.assertEqual(seen, [2.0], 'the stretched sound is kept')
+
+    def test_without_ffmpeg_method_c_is_refused_and_not_offered(self):
+        vs.STRETCH = None
+        self.assertEqual(self.ask('/speak?text=Hi%20there.&voice=af_heart&speed=2&method=C')[0], 400)
+        self.assertEqual(self.ask('/speak?text=Hi%20there.&voice=af_heart&speed=1&method=C')[0], 200, 'speed 1 needs no stretch')
+        caps = json.loads(self.ask('/voices')[2])['speed']
+        self.assertEqual(caps['methods'], ['A', 'B'])
+        self.assertEqual((caps['min'], caps['max']), (vs.SPEED_MIN, vs.SPEED_MAX))
+        vs.STRETCH = '/fake/ffmpeg'
+        self.assertEqual(json.loads(self.ask('/voices')[2])['speed']['methods'], ['A', 'B', 'C'])
+
+    @unittest.skipUnless(vs.find_ffmpeg(), 'no ffmpeg on this Mac')
+    def test_real_ffmpeg_stretch_gives_the_asked_length(self):
+        import numpy as np, soundfile as sf
+        t = np.arange(24000) / 24000
+        buf = io.BytesIO()
+        sf.write(buf, (0.3 * np.sin(2 * np.pi * 220 * t)).astype(np.float32), 24000, format='WAV', subtype='PCM_16')
+        vs.STRETCH = vs.find_ffmpeg()
+        for speed in (1.5, 3.0):
+            out, sr = sf.read(io.BytesIO(vs.stretch_wav(buf.getvalue(), speed)))
+            self.assertEqual(sr, 24000)
+            self.assertAlmostEqual(len(out) / sr, 1 / speed, delta=0.03)
+
+
+    # ---- review repairs (10 Nov 2026)
+    def test_a_failed_stretch_answers_500_with_a_fixed_text_and_no_path(self):
+        vs.STRETCH = '/secret/place/ffmpeg'
+        def broken(*a, **k):
+            raise vs.subprocess.CalledProcessError(1, ['/secret/place/ffmpeg', '-i', 'pipe:0'], stderr=b'bad filter')
+        old_run = vs.subprocess.run
+        vs.subprocess.run = broken
+        try:
+            code, _, body = self.ask('/speak?text=Hello%20there.&voice=af_heart&speed=2&method=C')
+        finally:
+            vs.subprocess.run = old_run
+        self.assertEqual(code, 500)
+        self.assertNotIn(b'/secret', body)
+        self.assertNotIn(b'pipe:0', body)
+        self.assertIn(b'stretch', body)
+
+    def test_two_requests_for_the_same_stretch_make_it_once(self):
+        import time as _t
+        seen = []
+        def slow(wav, speed):
+            seen.append(speed)
+            _t.sleep(0.3)
+            return wav
+        vs.STRETCH, vs.stretch_wav = '/fake/ffmpeg', slow
+        self.ask('/speak?text=Twice%20stretched.&voice=af_heart')  # the speed-1 sound is ready
+        out = []
+        th = [threading.Thread(target=lambda: out.append(self.ask('/speak?text=Twice%20stretched.&voice=af_heart&speed=1.5&method=C')[0]))
+              for _ in range(2)]
+        for t in th:
+            t.start()
+        for t in th:
+            t.join()
+        self.assertEqual(out, [200, 200])
+        self.assertEqual(seen, [1.5], 'the second request waits for the first and takes its sound')
+
+    @unittest.skipUnless(vs.find_ffmpeg(), 'no ffmpeg on this Mac')
+    def test_method_c_through_speak_with_real_ffmpeg(self):
+        import soundfile as sf
+        vs.STRETCH = vs.find_ffmpeg()
+        vs.stretch_wav = self.old[2]  # the real one
+        _, _, one = self.ask('/speak?text=Hello%20big%20world.&voice=af_heart')
+        code, h, wav = self.ask('/speak?text=Hello%20big%20world.&voice=af_heart&speed=2&method=C')
+        self.assertEqual((code, h['Content-Type']), (200, 'audio/wav'))
+        a1, sr1 = sf.read(io.BytesIO(one))
+        a2, sr2 = sf.read(io.BytesIO(wav))
+        self.assertEqual(sr2, 24000)
+        self.assertAlmostEqual(len(a2) / sr2, len(a1) / sr1 / 2, delta=0.03)
+        self.assertEqual(self.voice.calls, [('Hello big world.', 'af_heart', 1.0)])
+
+
+class OwnOrigins(unittest.TestCase):
+    """Part 1 of ticket 06: the reader opened from http://localhost:PORT asks http://127.0.0.1:PORT (or the other
+    way round). The server allows both names of its own port, and nothing else."""
+    @classmethod
+    def setUpClass(cls):
+        with socket.socket() as s:
+            s.bind(('127.0.0.1', 0))
+            cls.port = s.getsockname()[1]
+        cls.old = vs.ALLOWED, vs.OWN_ORIGINS
+        vs.ALLOWED = {f'localhost:{cls.port}', f'127.0.0.1:{cls.port}', f'[::1]:{cls.port}'}
+        vs.OWN_ORIGINS = vs.own_origins(cls.port)
+        cls.srv = vs.Server(('127.0.0.1', cls.port), functools.partial(vs.Handler, directory=HERE))
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        vs.ALLOWED, vs.OWN_ORIGINS = cls.old
+
+    def ask(self, path, headers=None, method='GET'):
+        req = urllib.request.Request(f'http://127.0.0.1:{self.port}{path}', headers=headers or {}, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, r.headers
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers
+
+    def test_both_names_of_the_own_port_may_read_the_answers(self):
+        for origin in (f'http://localhost:{self.port}', f'http://127.0.0.1:{self.port}'):
+            code, h = self.ask('/voices', {'Origin': origin})
+            self.assertEqual(code, 200)
+            self.assertEqual(h['Access-Control-Allow-Origin'], origin)
+            self.assertIn('Origin', h.get('Vary', ''))
+        self.assertEqual(self.ask('/speak?text=&voice=af_heart', {'Origin': f'http://localhost:{self.port}'})[1]['Access-Control-Allow-Origin'],
+                         f'http://localhost:{self.port}', 'an error answer is readable too, so the reader sees the 400')
+
+    def test_vary_origin_is_always_sent(self):
+        # a cache between must never give one origin's answer (with or without the allow header) to another
+        for h in ({}, {'Origin': 'https://example.com'}, {'Origin': f'http://localhost:{self.port}'}):
+            self.assertIn('Origin', self.ask('/voices', h)[1].get('Vary', ''), h)
+
+    def test_other_origins_get_no_allow_header(self):
+        for origin in ('https://example.com', f'http://localhost:{self.port + 1}', 'null'):
+            self.assertIsNone(self.ask('/voices', {'Origin': origin})[1]['Access-Control-Allow-Origin'], origin)
+        self.assertIsNone(self.ask('/voices')[1]['Access-Control-Allow-Origin'])
+
+    def test_preflight_of_the_own_origins_only(self):
+        origin = f'http://localhost:{self.port}'
+        code, h = self.ask('/ocr', {'Origin': origin, 'Access-Control-Request-Method': 'POST',
+                                    'Access-Control-Request-Headers': 'content-type'}, 'OPTIONS')
+        self.assertEqual(code, 204)
+        self.assertEqual(h['Access-Control-Allow-Origin'], origin)
+        self.assertIn('POST', h['Access-Control-Allow-Methods'])
+        self.assertEqual(self.ask('/ocr', {'Origin': 'https://example.com', 'Access-Control-Request-Method': 'POST'}, 'OPTIONS')[0], 403)
 
 
 if __name__ == '__main__':

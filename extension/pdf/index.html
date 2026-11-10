@@ -128,6 +128,14 @@
         </select>
       </label>
       <label class="field"><span>Voice</span><select id="voiceSel"></select></label>
+      <label class="field"><span>Speed method</span>
+        <select id="methodSel">
+          <option value="A" selected>Voice speaks faster</option>
+          <option value="C">Stretch, same pitch</option>
+          <option value="B">Simple, pitch goes up</option>
+        </select>
+      </label>
+      <p class="status" id="methodHint" hidden>Stretch, same pitch is not available: this Mac has no ffmpeg. The voice speaks faster for now.</p>
       <button type="button" class="btn ghost" id="previewBtn"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M9 18V5l11-2v13" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="6" cy="18" r="3" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="17" cy="16" r="3" fill="none" stroke="currentColor" stroke-width="2"/></svg>Hear this voice</button>
     </section>
     <section class="settings-group" id="readGroup" aria-labelledby="readHead">
