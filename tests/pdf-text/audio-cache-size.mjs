@@ -1,10 +1,11 @@
-// How much memory the audio cache of the reader holds. No voice server is needed. Only numbers are printed:
-// no text and no file names.
+// How much sound the sound memory of the reader holds, and how many Sentences fit in it. No voice server is needed.
+// Only numbers are printed: no text and no file names.
 //
 // Where the numbers come from (read from the source files below, so they cannot drift; the script stops when one
 // is not found):
-//  - CACHE, the sentences kept: extension/pdf/tts.js, `this.cache.size > 60` in KokoroEngine.render() and in
-//    ServerEngine.render() (a number inside a method, not exported).
+//  - LIMIT, the bytes kept: extension/pdf/tts.js, `export const SOUND_MEMORY_MB = 64;` (1 MB = 1024 * 1024 bytes).
+//    The memory takes the least recently used Sentence out first. The Sentence that plays and the Read-ahead never
+//    go out, so the memory can be over the limit by at most those three Sentences (ticket 28).
 //  - RATE, the samples a second: extension/pdf/tts.js, ServerEngine decodes the WAV of the voice server with
 //    `new OfflineAudioContext(1, 1, 24000)`. The cache keeps `b.getChannelData(0)`: a Float32Array, 4 bytes a sample.
 //    (KokoroEngine, the voice model in the page, keeps the sample rate its worker gives; the voice is the same model
@@ -28,14 +29,15 @@ function one(text, re, what) {
   return found[0];
 }
 const TTS = source('tts.js');
-const CACHE = one(TTS, /this\.cache\.size > (\d+)/g, 'the cache size in tts.js');
+const LIMIT = one(TTS, /export const SOUND_MEMORY_MB = (\d+);/g, 'SOUND_MEMORY_MB in tts.js') * 1024 * 1024;
 const RATE = one(TTS, /new OfflineAudioContext\(1, 1, (\d+)\)/g, 'the sample rate in tts.js');
 const WPM = one(source('app.js'), /const WPM = (\d+);/g, 'WPM in app.js');
 const BYTES = 4;  // Float32Array
 const words = (s) => s.split(/\s+/).filter(Boolean).length;
 const seconds = (s) => (words(s) / WPM) * 60;
-const mb = (b) => (b / 1e6).toFixed(1) + ' MB';
+const mb = (b) => (b / 1024 / 1024).toFixed(1) + ' MB';  // 1 MB = 1024 * 1024 bytes, as SOUND_MEMORY_MB
 
+console.log(`limit of the sound memory: ${mb(LIMIT)} (${(LIMIT / (RATE * BYTES) / 60).toFixed(1)} minutes of speech)`);
 const sets = [PUBLIC_SET, ...(process.argv.includes('--private') ? [privateSet()] : [])];
 for (const set of sets) {
   const lengths = [];
@@ -44,11 +46,18 @@ for (const set of sets) {
   lengths.sort((a, b) => a - b);
   const mean = lengths.reduce((a, b) => a + b, 0) / lengths.length;
   const at = (q) => lengths[Math.min(lengths.length - 1, Math.floor(lengths.length * q))];
-  // the 60 longest sentences together: the most the cache can hold for these books
-  const n = Math.min(CACHE, lengths.length);
-  const worst = lengths.slice(-n).reduce((a, b) => a + b, 0);
+  const bytes = (s) => s * RATE * BYTES;
+  // How many Sentences fit: of the usual length, and of the longest (the fewest that fit).
+  const usual = Math.floor(LIMIT / bytes(mean));
+  let fewest = 0;
+  for (let used = 0, i = lengths.length - 1; i >= 0 && used + bytes(lengths[i]) <= LIMIT; i--) { used += bytes(lengths[i]); fewest++; }
+  // Most held, an estimate: the limit, plus the three longest Sentences when they are the one that plays and the
+  // Read-ahead. The voice server engine splits a Sentence of 12 words or more in two pieces (ServerEngine.parts), and
+  // a Sentence that is started at a clicked word is a new, shorter text, so the true figure can differ a little.
+  const most = LIMIT + bytes(lengths.slice(-3).reduce((a, b) => a + b, 0));
   console.log(`${set.name}: ${lengths.length} sentences; seconds of speech a sentence: mean ${mean.toFixed(1)}, ` +
     `median ${at(0.5).toFixed(1)}, 95% ${at(0.95).toFixed(1)}, longest ${lengths.at(-1).toFixed(1)}`);
-  console.log(`  one sentence: mean ${mb(mean * RATE * BYTES)}; cache of ${n}: usual ${mb(n * mean * RATE * BYTES)}, ` +
-    `at most ${mb(worst * RATE * BYTES)} (the ${n} longest sentences)`);
+  console.log(`  one sentence: mean ${mb(bytes(mean))}, longest ${mb(bytes(lengths.at(-1)))}; ` +
+    `the memory holds about ${usual} usual sentences, at least ${fewest} (the longest); at most about ${mb(most)} ` +
+    `(an estimate: the limit and the 3 longest sentences, when they play and are read ahead)`);
 }

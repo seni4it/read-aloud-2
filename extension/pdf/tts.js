@@ -255,6 +255,105 @@ function playBuffer(ctx, buffer, sentence, rate, handle, { onWord, onEnd }) {
   source.start();
 }
 
+/* ------------------------------------------------------------ sound memory */
+
+/**
+ * The most sound the reader keeps, in MB (1 MB = 1024 * 1024 bytes). The voice server sends 24 kHz samples and the
+ * reader keeps them as Float32 (4 bytes), so 64 MB is about 11 minutes of speech: many Sentences, also when a
+ * Sentence is a long paragraph. Before (ticket 28) the reader kept 60 Sentences: about 96 MB, and up to 234 MB.
+ */
+export const SOUND_MEMORY_MB = 64;
+
+/** The bytes that one kept sound holds: its samples (Float32Array, 4 bytes a sample, one channel). */
+function soundBytes(data) {
+  const a = data?.audio;
+  if (!a) return 0;
+  // A view on a larger buffer keeps the whole buffer: count what is held, never less than the samples.
+  return Math.max(a.byteLength || 0, a.buffer?.byteLength || 0);
+}
+
+/**
+ * The sound of Sentences that the reader keeps, so that a Sentence read again or made as Read-ahead does not wait
+ * for the voice. A Map with a limit in bytes: when the memory is over the limit (after a new sound, or when a new
+ * Sentence starts), the least recently used sounds go out first. The sounds of the Sentence that plays now (need) and
+ * of the Read-ahead (alsoNeed) never go out, so no silence comes between Sentences; when they alone are over the limit
+ * they all stay, and they go out later, when they are no longer needed. So one Sentence larger than the limit plays.
+ * There is no limit by count: the bytes are what costs, and a count limit could only take out needed Read-ahead.
+ */
+export class SoundMemory {
+  static AHEAD = 2;  // the reader asks Read-ahead for the next 2 Sentences (app.js speakCurrent and warmCurrent)
+
+  constructor(limit = SOUND_MEMORY_MB * 1024 * 1024) {
+    this.limit = limit;
+    this.bytes = 0;
+    this.map = new Map();  // key -> sound; the oldest use first
+    this.playing = new Set();
+    this.ahead = [];       // the keys of the last AHEAD Read-ahead calls, the newest last
+  }
+
+  get size() { return this.map.size; }
+  has(key) { return this.map.has(key); }
+  keys() { return this.map.keys(); }
+  values() { return this.map.values(); }
+
+  /** The sound of key; a found sound counts as the newest use. */
+  get(key) {
+    const data = this.map.get(key);
+    if (data !== undefined) { this.map.delete(key); this.map.set(key, data); }
+    return data;
+  }
+
+  set(key, data) {
+    this.delete(key);
+    this.map.set(key, data);
+    this.bytes += soundBytes(data);
+    this.#trim();
+    return this;
+  }
+
+  delete(key) {
+    if (!this.map.has(key)) return false;
+    this.bytes -= soundBytes(this.map.get(key));
+    return this.map.delete(key);
+  }
+
+  /**
+   * A new Sentence starts: its keys are needed now, and the Sentence that played before is no longer needed.
+   * The Read-ahead stays needed: the reader can ask it before speak() (app.js warmCurrent while paused, then Play).
+   * A Read-ahead entry that is now the Sentence that plays is taken off the Read-ahead list.
+   */
+  need(keys) {
+    this.playing = new Set(keys);
+    this.ahead = this.ahead.filter((ks) => !ks.every((k) => this.playing.has(k)));
+    this.#trim();
+  }
+
+  /** The keys of one Read-ahead Sentence are needed next. Only the last AHEAD calls count. */
+  alsoNeed(keys) {
+    this.ahead.push([...keys]);
+    if (this.ahead.length > SoundMemory.AHEAD) this.ahead.shift();
+  }
+
+  #needed(key) {
+    return this.playing.has(key) || this.ahead.some((keys) => keys.includes(key));
+  }
+
+  // Takes the oldest sounds that are not needed out, until the memory is under the limit. It runs after set() and
+  // need(). need() keeps the Read-ahead, so the next Sentences are still there when the reader asks them again just
+  // after speak(). alsoNeed() takes nothing out: a Read-ahead entry that it replaces goes at the next set() or need().
+  #trim() {
+    for (const [key, data] of this.map) {
+      if (this.bytes <= this.limit) return;
+      if (this.#needed(key)) continue;
+      this.map.delete(key);
+      this.bytes -= soundBytes(data);
+    }
+  }
+}
+
+/** The key of the sound of text in voiceId (the sound memory and the open requests). */
+const soundKey = (voiceId, text) => voiceId + '\u0000' + text;
+
 export class KokoroEngine {
   // Kokoro ships 50-odd voices at wildly varying quality. These are the three
   // the model card grades highest for English; the rest are graded C or below
@@ -271,7 +370,7 @@ export class KokoroEngine {
     this.worker = null;
     this.ctx = null;
     this.handle = { source: null, raf: null, tickIsTimer: false };
-    this.cache = new Map();
+    this.cache = new SoundMemory();  // the sound of Sentences, limited by bytes (ticket 28)
     this.inflight = new Map();
     this.available_voices = null;
     this.ready = false;
@@ -354,7 +453,7 @@ export class KokoroEngine {
 
   async render(sentence, voiceId) {
     if (!this.ready) throw new Error('voice model is still loading');
-    const key = voiceId + '\u0000' + sentence.text;
+    const key = soundKey(voiceId, sentence.text);
     if (this.cache.has(key)) return this.cache.get(key);
     if (this.inflight.has(key)) return this.inflight.get(key);
 
@@ -363,9 +462,7 @@ export class KokoroEngine {
       this.pending.set(id, { resolve, reject });
       this.worker.postMessage({ type: 'generate', id, text: sentence.text, voice: voiceId });
     }).then(data => {
-      this.cache.set(key, data);
-      // Keep the cache from growing without bound on a long book.
-      if (this.cache.size > 60) this.cache.delete(this.cache.keys().next().value);
+      this.cache.set(key, data);  // the sound memory keeps it within its limit in bytes
       this.inflight.delete(key);
       return data;
     }).catch(err => {
@@ -380,12 +477,14 @@ export class KokoroEngine {
   /** Warm the next block so playback doesn't gap between paragraphs. */
   prefetch(sentence, voiceId) {
     if (!this.ready || !sentence) return;
+    this.cache.alsoNeed([soundKey(voiceId, sentence.text)]);
     this.render(sentence, voiceId).catch(() => {});
   }
 
   async speak(sentence, { voiceId, rate, onWord, onEnd, onError }) {
     this.stop();
     const token = this.token;
+    this.cache.need([soundKey(voiceId, sentence.text)]);
     if (!this.ready) { onError?.('voice model is still loading'); return; }
 
     try {
@@ -472,7 +571,7 @@ export class ServerEngine extends KokoroEngine {
   listVoices() { return this.voices; }
 
   render(sentence, voiceId, ahead = false) {
-    const key = voiceId + '\u0000' + sentence.text;
+    const key = soundKey(voiceId, sentence.text);
     if (this.cache.has(key)) return Promise.resolve(this.cache.get(key));
     const open = this.requests.get(key);
     if (open) {
@@ -485,8 +584,7 @@ export class ServerEngine extends KokoroEngine {
       Object.assign(entry, { resolve, reject });
       ac.signal.addEventListener('abort', () => reject(ac.signal.reason));
     }).then(data => {
-      this.cache.set(key, data);
-      if (this.cache.size > 60) this.cache.delete(this.cache.keys().next().value);
+      this.cache.set(key, data);  // the sound memory keeps it within its limit in bytes
       return data;
     }).catch(err => {
       if (err?.down) this.#fall();
@@ -569,7 +667,9 @@ export class ServerEngine extends KokoroEngine {
 
   prefetch(sentence, voiceId) {
     if (!sentence || this.down) return;
-    for (const p of ServerEngine.parts(sentence.text)) this.render(p, voiceId, true).catch(() => {});
+    const parts = ServerEngine.parts(sentence.text);
+    this.cache.alsoNeed(parts.map((p) => soundKey(voiceId, p.text)));
+    for (const p of parts) this.render(p, voiceId, true).catch(() => {});
   }
 
   /** Read text with the Mac voice; `at` is where the text starts in the whole sentence (for the word highlight). */
@@ -587,12 +687,13 @@ export class ServerEngine extends KokoroEngine {
     const { voiceId, rate, onWord, onEnd, onError } = opts;
     this.#halt(false);
     const token = this.token;
+    const parts = ServerEngine.parts(sentence.text);
+    this.cache.need(parts.map((p) => soundKey(voiceId, p.text)));  // its sound never goes out of the memory while it plays
     if (this.down) {
       this.#askBack();  // the answer counts from the next sentence: a sentence is never cut in two voices
       this.#macSpeak(sentence.text, 0, opts);
       return;
     }
-    const parts = ServerEngine.parts(sentence.text);
     const jobs = parts.map((p) => this.render(p, voiceId));  // the first is asked for first
     for (const j of jobs) j.catch(() => {});  // a failed second piece is handled below, not left unhandled
     if (!this.ctx) this.ctx = new AudioContext();
