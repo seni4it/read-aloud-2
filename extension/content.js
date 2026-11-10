@@ -32,6 +32,26 @@
   // late event of the page before a reload in the same tab (its ids also counted from the start) is never taken as ours
   const S = { segs: [], i: -1, w: 0, playing: false, paused: false, id: Math.floor(Math.random() * 2 ** 32) * 2 ** 20, follow: true, base: 0, words: [], weights: [], total: 0, tab: null, boxes: [] };
   const hasHL = typeof Highlight === 'function' && CSS.highlights;
+  // The ::highlight() rules of content.css style the text of the document only. Text in a shadow root takes its style
+  // from the style sheets of that root, so the same rules go into each shadow root that is read, as an adopted style
+  // sheet (no element is added to the page), and leave it when the reading ends. The values come from the token block
+  // below; tests/node/web-player-leftovers.test.mjs checks that this text equals content.css (without its comment).
+  const hlCss = (t = TOKENS.root) => `::highlight(ra2-sentence) { background-color: var(--ra2-color-sentence, ${t['--color-sentence']}); }\n`
+    + `::highlight(ra2-word) { background-color: var(--ra2-color-word, ${t['--color-word']}); color: var(--ra2-color-on-word, ${t['--color-on-word']}); }\n`;
+  let hlSheet = null;
+  const dressed = new Set();  // the shadow roots that hold hlSheet now
+  function dress(node) {
+    const r = hasHL && node.getRootNode?.();
+    if (!r || !r.host || dressed.has(r) || !r.adoptedStyleSheets || typeof CSSStyleSheet !== 'function') return;
+    try {
+      if (!hlSheet) { hlSheet = new CSSStyleSheet(); hlSheet.replaceSync(hlCss()); }
+      r.adoptedStyleSheets = [...r.adoptedStyleSheets, hlSheet]; dressed.add(r);
+    } catch { /* a page that does not allow it: the marks of that text have no colour */ }
+  }
+  function undress() {
+    for (const r of dressed) try { r.adoptedStyleSheets = [...r.adoptedStyleSheets].filter((x) => x !== hlSheet); } catch { /* the root is gone */ }
+    dressed.clear();
+  }
   const hlWord = hasHL ? new Highlight() : null, hlSent = hasHL ? new Highlight() : null;
   if (hasHL) { CSS.highlights.set('ra2-word', hlWord); CSS.highlights.set('ra2-sentence', hlSent); }
 
@@ -69,17 +89,51 @@
     if (!c || c === document.body || c === document.documentElement) return false;
     return !(range && !c.matches(HARD) && (c.contains(range.startContainer) || c.contains(range.endContainer)));
   }
-  function collect(top, range) {
-    vis.clear(); blk.clear();
-    const out = [];
-    const walk = document.createTreeWalker(top, NodeFilter.SHOW_TEXT, {
+  // skipped(), also for text in a shadow root: a nav or a cookie bar of the page around its host leaves it out too
+  function skippedDeep(el, sel, range) {
+    for (let x = el; x; x = x.getRootNode?.()?.host) if (skipped(x, sel, range)) return true;
+    return false;
+  }
+  // The text nodes under top in the order of the page as it shows (ticket 26, Chrome check). The walk goes into each
+  // open shadow root (element.shadowRoot) at the place of its host, and a <slot> gives the nodes it shows; the light
+  // children of a host are read through its slots only. A closed shadow root cannot be read; the player's root is closed.
+  // The filter is asked in tree order, so it collects the nodes itself and goes into a shadow root at the right place.
+  function textsIn(top, range, found, roots) {
+    const into = (n) => {
+      if (n.shadowRoot) return [n.shadowRoot];
+      const a = n.localName === 'slot' && typeof n.assignedNodes === 'function' ? n.assignedNodes({ flatten: true }) : null;
+      return a && a.length ? a : null;
+    };
+    const take = (n) => {
+      if (!n.data.trim() || (range && !range.intersectsNode(n))) return;
+      const p = n.parentElement;
+      if (p && !skippedDeep(p, skip, range) && visible(p)) found.push(n);
+    };
+    const enter = (n) => {
+      if (n.nodeType === 3) { take(n); return; }
+      if (n.nodeType === 11) { roots.add(n); textsIn(n, range, found, roots); return; }
+      if (n.nodeType !== 1 || n === host) return;
+      const inner = into(n);
+      if (inner) inner.forEach(enter); else textsIn(n, range, found, roots);
+    };
+    const walk = document.createTreeWalker(top, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
       acceptNode(n) {
-        if (!n.data.trim() || (range && !range.intersectsNode(n))) return NodeFilter.FILTER_REJECT;
-        const p = n.parentElement;
-        return p && !skipped(p, skip, range) && visible(p) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+        if (n.nodeType === 3) { take(n); return NodeFilter.FILTER_REJECT; }
+        if (n === host) return NodeFilter.FILTER_REJECT;
+        const inner = into(n);
+        if (!inner) return NodeFilter.FILTER_SKIP;  // go into its children
+        inner.forEach(enter);
+        return NodeFilter.FILTER_REJECT;  // its light children come through its slots
       },
     });
-    for (let n; (n = walk.nextNode());) {
+    while (walk.nextNode());
+  }
+  function collect(top, range) {
+    vis.clear(); blk.clear();
+    const out = [], found = [], roots = new Set();
+    textsIn(top, range, found, roots);
+    out.roots = roots;  // the open shadow roots that were read: pageSegs() watches them
+    for (const n of found) {
       let s = 0, e = n.data.length;
       if (range && n === range.startContainer) s = range.startOffset;
       if (range && n === range.endContainer) e = range.endOffset;
@@ -110,10 +164,15 @@
   function pageSegs(top) {
     if (!kept || kept.top !== top) {
       release();
-      kept = { top, segs: segments(collect(top)) };
-      // a change inside the read area, or the removal of the area itself (a site that replaces its article)
-      watch ||= new MutationObserver((list) => { if (!kept || !kept.top.isConnected || list.some((m) => kept.top.contains(m.target))) release(); });
+      const blocks = collect(top);
+      kept = { top, segs: segments(blocks), roots: blocks.roots };
+      // a change inside the read area or in a shadow root that was read, or the removal of the area itself (a site
+      // that replaces its article)
+      watch ||= new MutationObserver((list) => {
+        if (!kept || !kept.top.isConnected || list.some((m) => kept.top.contains(m.target) || kept.roots.has(m.target.getRootNode?.()))) release();
+      });
       watch.observe(top, { childList: true, subtree: true, characterData: true });
+      for (const r of blocks.roots) watch.observe(r, { childList: true, subtree: true, characterData: true });
       for (let a = top.parentNode; a; a = a.parentNode) watch.observe(a, { childList: true });  // only its own children: a few calls
     }
     return kept.segs.slice();
@@ -203,7 +262,7 @@
   function gone() {
     if (dead) return;
     dead = true; S.playing = S.paused = false; S.id++;
-    hlWord && hlWord.clear(); hlSent && hlSent.clear(); host.remove();
+    hlWord && hlWord.clear(); hlSent && hlSent.clear(); host.remove(); undress();
     release(); timers.forEach(clearTimeout); timers.clear();
   }
   const send = (m) => { ask(m); };
@@ -242,6 +301,7 @@
     S.weights = words.map((x) => { const t = seg.b.text.slice(x.start, x.end); return t.length + 2 + (/[.,;:!?]$/.test(t) ? 4 : 0); });
     S.total = S.weights.reduce((a, c) => a + c, 0);
     const whole = seg.of || seg;  // a piece of a Sentence: the shade covers the whole Sentence
+    dress(seg.b.parts[0].node);  // text in a shadow root: the highlight style goes into that root
     hlSent && (hlSent.clear(), hlSent.add(rangeOf(seg.b, whole.start, whole.end)));
     mark(w);
     send({ cmd: 'speak', id: S.id, engine: engine(), voice: voiceId(), rate: cfg.rate, text,
@@ -304,7 +364,7 @@
   }
   function finish() { S.playing = false; S.paused = false; idle(); ui('Finished.'); }
   function idle() {  // the reading ended: clear the marks and go back to the cost of a page where nobody listens
-    hlWord && hlWord.clear(); hlSent && hlSent.clear();
+    hlWord && hlWord.clear(); hlSent && hlSent.clear(); undress();
     release(); S.segs = []; S.boxes = []; S.boxesOf = null;
     cancel(natTimer); natOff = false;  // no voice server retry while nobody listens; the next play tries the natural voice
     cancel(noteTimer); note = '';
@@ -379,7 +439,9 @@
     hideBubble();
   }
   function caretAt(x, y) {
-    const c = document.caretPositionFromPoint ? document.caretPositionFromPoint(x, y) : null;
+    // the open shadow roots of the reading: without them Chrome gives the host, not the word inside it
+    const shadowRoots = [...new Set(S.segs.map((s) => s.b.parts[0].node.getRootNode?.()).filter((r) => r && r.host))];
+    const c = document.caretPositionFromPoint ? document.caretPositionFromPoint(x, y, { shadowRoots }) : null;
     if (c) return [c.offsetNode, c.offset];
     const r = document.caretRangeFromPoint && document.caretRangeFromPoint(x, y);
     return r ? [r.startContainer, r.startOffset] : [null, 0];
@@ -419,6 +481,7 @@
       '--color-chrome': '#10233f', '--color-on-chrome': '#ffffff', '--color-chrome-hover': 'rgba(255, 255, 255, 0.14)',
       '--color-play': '#ff8c00', '--color-play-hover': '#ffa033', '--color-on-play': '#0f172a', '--color-progress': '#c25e00',
       '--color-focus': '#3b82f6',
+      '--color-word': '#ff8c00', '--color-on-word': '#0f172a', '--color-sentence': 'rgba(255, 140, 0, 0.18)',  // the marks on the page text (content.css)
       '--font-ui': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
       '--text-12': '12px', '--leading-12': '16px', '--text-14': '14px', '--leading-14': '20px', '--text-16': '16px', '--leading-16': '24px',
       '--space-1': '4px', '--space-2': '8px', '--space-3': '12px', '--space-4': '16px',
@@ -776,7 +839,8 @@
   on(document, 'click', (e) => {
     if (e.target !== host) closePops();  // a press outside the player closes its list or panel
     if (!cfg.clickJump || !(S.playing || S.paused) || e.target === host || !e.detail) return;
-    if (e.target.closest('a,button,input,select,textarea,label,[role=button],[contenteditable]') || String(getSelection()).trim()) return;
+    const tgt = e.composedPath?.()[0] || e.target;  // in a shadow root: the element clicked, not its host
+    if (tgt.closest?.('a,button,input,select,textarea,label,[role=button],[contenteditable]') || String(getSelection()).trim()) return;
     const hit = locate(e.clientX, e.clientY); if (hit) play(...hit);
   }, true);
 

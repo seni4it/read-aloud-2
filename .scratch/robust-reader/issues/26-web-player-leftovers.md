@@ -116,3 +116,46 @@ The review found 7 points. Each has a test first, in tests/node/web-player-lefto
 7. Our own names. content.css uses `--ra2-color-sentence`, `--ra2-color-word` and `--ra2-color-on-word` (`extension/content.css:6-7`), each with the value of its token in tokens.css as fallback. So a page with its own `--color-word` cannot change our marks. content.js does not set these names (its TOKENS block has none of them), so there is nothing to keep in step there. The test checks the new names and the fallbacks.
 
 Counts: before the repairs 4 of the 23 tests in this file failed (box at its limit, twice; style reads; the names). After the repairs all node tests pass: 469 of 469.
+
+### Chrome check repairs (10 Nov 2026)
+
+The real Chrome check had one FAIL: on a page whose text is in a scrolling box inside an open shadow root, Listen said "Finished." at once, with no count and no Word highlight. Text shown through a `<slot>` and nested boxes passed.
+
+Cause. `collect()` found the text with a TreeWalker over the page. A TreeWalker does not go into shadow roots, so the text in the shadow root was never found. The later steps had three more gaps for such text. The `::highlight()` rules of content.css style only the text of the document, not the text in a shadow root. The caret under a click was asked without the shadow roots, so Chrome gives the host and not the word. A link in a shadow root was not seen as a link, because the click target is the host.
+
+What changed (extension/content.js).
+- Lines 93-136: `textsIn()` walks the page in the order that it shows. It goes into each open shadow root (`element.shadowRoot`) at the place of its host. A `<slot>` gives the nodes that it shows (`assignedNodes({ flatten: true })`), not its fallback text. The light children of a host are read through its slots only. The player's own root is closed and is not entered; a closed root of a page cannot be read and is left. `skippedDeep()` applies the same skip list as before, also through the host chain, so a shadow root inside a nav of the page stays out. The filter of the walker collects the nodes itself, because only the filter is asked in tree order at the place of a host.
+- Lines 166-175: the shadow roots that were read are watched too, so a change in them makes the kept Sentences again.
+- Lines 39-55 and 304: when a Sentence in a shadow root is read, the same `::highlight()` rules go into that root as one adopted style sheet (no element is added to the page, so no page observer sees a change, and a style rule of the page's CSP does not block it). The sheet is added once for each root. It is removed when the reading ends (`idle()`, line 367) and when the add-on is gone (line 265). The page's own sheets in that root stay.
+- Line 484: the token block now also holds `--color-word`, `--color-on-word` and `--color-sentence`, because the rules of the adopted sheet are made from it (line 39) and content.js may hold colour values in that block only. The test of ticket 24 checks these values against tokens.css; the new test checks that the sheet text equals content.css.
+- Line 443: the caret under a click is asked with the open shadow roots of the reading (`caretPositionFromPoint(x, y, { shadowRoots })`), so a click on a word in a shadow root starts the reading at that word.
+- Line 842: the click uses the first element of `composedPath()`, so a click on a link or a button in a shadow root does not move the reading.
+- Range creation and Follow needed no change: a Range can hold text in a shadow root, and `scrollers()` already goes up through `getRootNode().host`.
+
+Point 3 of the check (each Next moved 3 Sentences, seen once in the first nested-box run): no cause was found in the code. `next()` skips only pieces of the same Sentence (`same()` needs the same `of`), and a short title has no `of`. A new test reads a page with a title, a Sentence in pieces and nested boxes, and presses Next four times: the count goes 1, 2, 3, 4, 5 of 5. The earlier FAIL 3 of the first Chrome run (Next moved 2 or 3 Sentences) came from late events of the sound page and was repaired before this ticket; the one run may have been the same kind of event. A second check must watch for it.
+
+Tests added (tests/node/web-player-leftovers.test.mjs). The fake page now has a lazy tree walker with the DOM filter rules, `shadowRoot`, `assignedNodes()`, adopted style sheets, the caret with shadow roots, and a count of observed nodes.
+- Listen reads the text in an open shadow root, in page order, and leaves out its nav and script
+- in an open shadow root: the count, the shade and the Word highlight are on the shadow text
+- in an open shadow root: Follow scrolls the box in the shadow root
+- a shadow root inside a nav of the page is left out, as the nav is
+- a slot in an open shadow root reads the nodes it shows, at the place of the slot, and not its fallback text
+- the Word highlight style is added to each shadow root that is read, once, and removed when the reading stops
+- the style of the page in the shadow root stays when ours is removed
+- a click on a word in a shadow root jumps there: the caret is asked with the shadow roots of the reading
+- a click on a link in a shadow root does not move the reading
+- a change in a shadow root that was read is watched, so the kept Sentences are made again
+- the Chrome check: with a title, pieces and nested boxes, each Next moves one Sentence
+
+Before the repair 8 of these 11 failed. The nav test, the link test and the Next test passed already, and they guard the behaviour now. The existing slot test now gives `assignedNodes()`, as Chrome does. After the repair: all node tests pass, 505 of 505.
+
+Open points.
+- The "Listen from here" button that shows next to a paragraph under the pointer does not show for a paragraph in a shadow root (the pointer event gives the host). Listen, a selection, the context menu and a click on a word work.
+- A closed shadow root of a page cannot be read.
+
+What a second Chrome check must confirm.
+1. The page with the text in a scrolling box inside an open shadow root: Listen reads it, the count shows, the Word highlight is orange and the Sentence has a light orange shade (the style in the shadow root), and the box moves with the voice.
+2. Stop the reading: in DevTools, the shadow root's `adoptedStyleSheets` has no Read Aloud sheet left.
+3. A click on a word in the shadow root during the reading starts the reading at that word. A click on a link there opens the link and does not move the reading.
+4. The `<slot>` page and the nested-box page still pass. On the nested-box page press Next 5 times and count: one Sentence for each press.
+5. A normal article page still reads in the same order as before.

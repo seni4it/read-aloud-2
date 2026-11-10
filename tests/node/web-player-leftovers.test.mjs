@@ -49,15 +49,22 @@ function listeners() {
     fire(type, e = {}) { for (const f of on[type] || []) f({ type, detail: 1, ...e }); },
   };
 }
-function text(data) { return { nodeType: 3, nodeName: '#text', data, parentElement: null, parentNode: null, previousSibling: null }; }
+function text(data) {
+  return { nodeType: 3, nodeName: '#text', data, parentElement: null, parentNode: null, previousSibling: null, assignedSlot: null,
+    getRootNode() { let x = this; while (x.parentNode) x = x.parentNode; return x; } };
+}
 // A shadow root of the page (not the closed root of the player): its children have no parentElement, and
 // getRootNode() of each node inside gives this root, whose `host` is the element that holds it.
-function shadowOf(host) { return { nodeType: 11, host, childNodes: [], appendChild(c) { c.parentNode = this; c.parentElement = null; this.childNodes.push(c); return c; } }; }
+function shadowOf(host) {
+  return { nodeType: 11, host, childNodes: [], adoptedStyleSheets: [], getRootNode() { return this; },
+    contains(n) { for (let x = n; x; x = x.parentNode) if (x === this) return true; return false; },
+    appendChild(c) { c.parentNode = this; c.parentElement = null; this.childNodes.push(c); return c; } };
+}
 function el(tag, attrs = {}, kids = []) {
   const ev = listeners(), cls = new Set();
   const e = {
-    nodeType: 1, tagName: tag.toUpperCase(), nodeName: tag.toUpperCase(), attrs: { ...attrs }, childNodes: [],
-    parentElement: null, parentNode: null, dataset: {}, style: {}, hidden: false, rect: null, assignedSlot: null,
+    nodeType: 1, tagName: tag.toUpperCase(), nodeName: tag.toUpperCase(), localName: tag.toLowerCase(), attrs: { ...attrs }, childNodes: [],
+    parentElement: null, parentNode: null, dataset: {}, style: {}, hidden: false, rect: null, assignedSlot: null, shadowRoot: null,
     scrollHeight: 0, clientHeight: 0, scrolls: [], isContentEditable: false, previousSibling: null,
     get id() { return this.attrs.id || ''; },
     get className() { return this.attrs.class || ''; },
@@ -98,7 +105,7 @@ const onPage = (html, n) => { for (let x = n; x; x = x.parentNode || x.host) if 
 function loadPage(body, opts = {}) {
   const html = el('html', {}, [body]);
   const spoken = [], sent = [], scrolls = [], onMessage = [];
-  const calls = { style: 0 };
+  const calls = { style: 0, walker: 0, observed: [] };
   let host = null;
   const win = listeners(), doc = listeners();
   const document = {
@@ -106,11 +113,24 @@ function loadPage(body, opts = {}) {
     querySelector: () => null,
     createElement: (t) => { const e = el(t); if (e.tagName === 'RA2-ROOT') host = e; return e; },
     addEventListener: doc.addEventListener,
-    createTreeWalker(top, _what, filter) {
-      const list = textNodes(top).filter((n) => filter.acceptNode(n) === 1);
-      let i = 0;
-      return { nextNode: () => list[i++] || null };
+    // As in Chrome: the filter is asked in tree order, one node after the other, while nextNode() looks for the next
+    // node; REJECT leaves out the children, SKIP goes into them. The walk does not go into a shadow root.
+    createTreeWalker(top, what, filter) {
+      calls.walker++;
+      function* gen(n) {
+        for (const c of n.childNodes) {
+          const isEl = c.nodeType === 1;
+          if (!isEl && c.nodeType !== 3) continue;
+          const shown = isEl ? what & 1 : what & 4;
+          const r = shown ? filter.acceptNode(c) : 3;
+          if (r === 1 && shown) yield c;
+          if (isEl && r !== 2) yield* gen(c);
+        }
+      }
+      const it = gen(top);
+      return { nextNode: () => it.next().value || null };
     },
+    caretPositionFromPoint: (x, y, o) => (opts.caret ? opts.caret(x, y, o) : null),
     createRange: () => ({
       setStart(n, o) { this.start = [n, o]; }, setEnd(n, o) { this.end = [n, o]; },
       getBoundingClientRect() { const n = this.start && this.start[0]; return n && onPage(html, n) ? n.parentElement.getBoundingClientRect() : ZERO; },
@@ -126,8 +146,9 @@ function loadPage(body, opts = {}) {
   };
   const ctx = vm.createContext({
     document, chrome, console, location: { protocol: 'https:', hostname: 'example.org' },
-    NodeFilter: { SHOW_TEXT: 4, FILTER_ACCEPT: 1, FILTER_REJECT: 2 },
-    MutationObserver: class { observe() {} disconnect() {} },
+    NodeFilter: { SHOW_ELEMENT: 1, SHOW_TEXT: 4, FILTER_ACCEPT: 1, FILTER_REJECT: 2, FILTER_SKIP: 3 },
+    MutationObserver: class { observe(t) { calls.observed.push(t); } disconnect() {} },
+    CSSStyleSheet: class { replaceSync(t) { this.text = t; } },
     Highlight: class { constructor() { this.ranges = []; } clear() { this.ranges = []; } add(r) { this.ranges.push(r); } },
     CSS: { highlights: new Map() },
     getComputedStyle: (e) => (calls.style++, { display: INLINE.has(e.tagName) ? 'inline' : 'block', overflowY: e.style.overflowY || 'visible' }),
@@ -152,7 +173,13 @@ function loadPage(body, opts = {}) {
     const all = textNodes(body);
     return a.data.slice(ao) + all.slice(all.indexOf(a) + 1, all.indexOf(b)).map((n) => n.data).join('') + b.data.slice(0, bo);
   };
-  return { ctx, html, host, button, spoken, sent, scrolls, tell, last, shade, calls };
+  // ask for a reading, then end each Sentence until no new one comes; the text of each Sentence
+  const readAll = (cmd) => {
+    tell({ cmd });
+    for (let n = 0; n < 200 && spoken.length; n++) { const k = spoken.length; end({ last, tell }); if (spoken.length === k) break; }
+    return spoken.map((x) => x.text);
+  };
+  return { ctx, html, host, button, spoken, sent, scrolls, tell, last, shade, calls, doc, readAll };
 }
 const page = (...kids) => el('body', {}, kids);
 const para = (words, top) => { const p = el('p', {}, [words]); p.rect = box(top); return p; };
@@ -327,6 +354,7 @@ test('a scrolling box in a shadow root that holds the page text in a <slot>: Fol
   const first = para('A first short line here.', 100), far = para('A far line in the box.', 1500);
   hostEl.appendChild(first); hostEl.appendChild(far);  // light DOM children of the host, shown in the slot
   first.assignedSlot = slot; far.assignedSlot = slot;
+  slot.assignedNodes = () => [first, far];
   const pg = loadPage(page(hostEl));
   pg.tell({ cmd: 'readPage' });
   end(pg);
@@ -444,6 +472,144 @@ test('the boxes are found once for a block: the second piece of a Sentence reads
   end(pg);  // a new block: its boxes are found again
   assert.equal(pg.last().text, SHORT3);
   assert.ok(pg.calls.style > n, 'the style of the new block is read');
+});
+
+// ---------- Chrome check of ticket 26: text in an open shadow root ----------
+// The check found: on a page whose text is in a scrolling box inside an open shadow root, Listen said "Finished." at
+// once. The scan of the page (a TreeWalker) did not go into shadow roots.
+function shadowPage() {
+  const hostEl = el('div', { class: 'card' });
+  const root = hostEl.shadowRoot = shadowOf(hostEl);
+  const sb = scrollBox(box(0, 800, 0, 1200));
+  root.appendChild(sb);
+  const s1 = para('A first line in the shadow root.', 140), s2 = para('A second line in the shadow root.', 1500);
+  sb.appendChild(s1);
+  sb.appendChild(el('nav', {}, ['Menu words in the shadow root.']));
+  sb.appendChild(el('script', {}, ['var x = 1;']));
+  sb.appendChild(s2);
+  const body = page(para('A light line before it.', 100), hostEl, para('A light line after it.', 220));
+  return { body, hostEl, root, sb, s1, s2 };
+}
+
+test('Listen reads the text in an open shadow root, in page order, and leaves out its nav and script', () => {
+  const { body } = shadowPage();
+  const pg = loadPage(body);
+  assert.deepEqual(pg.readAll('readPage'),
+    ['A light line before it.', 'A first line in the shadow root.', 'A second line in the shadow root.', 'A light line after it.']);
+});
+
+test('in an open shadow root: the count, the shade and the Word highlight are on the shadow text', () => {
+  const { body, s1 } = shadowPage();
+  const pg = loadPage(body);
+  pg.tell({ cmd: 'readPage' });
+  end(pg);
+  assert.equal(pg.last().text, 'A first line in the shadow root.');
+  assert.equal(pg.button('count').textContent, '2 / 4');
+  assert.equal(pg.shade(), 'A first line in the shadow root.');
+  const w = pg.ctx.CSS.highlights.get('ra2-word').ranges[0];
+  assert.equal(w.start[0], s1.childNodes[0], 'the Word highlight is on the text in the shadow root');
+});
+
+test('in an open shadow root: Follow scrolls the box in the shadow root', () => {
+  const { body, sb } = shadowPage();
+  const pg = loadPage(body);
+  pg.tell({ cmd: 'readPage' });
+  end(pg); end(pg);
+  assert.equal(pg.last().text, 'A second line in the shadow root.');
+  assert.equal(sb.scrolls.length, 1, 'the box in the shadow root scrolled');
+  assert.equal(pg.scrolls.length, 0, 'the window did not scroll');
+});
+
+test('a shadow root inside a nav of the page is left out, as the nav is', () => {
+  const hostEl = el('div');
+  const root = hostEl.shadowRoot = shadowOf(hostEl);
+  root.appendChild(para('Menu words in a shadow root.', 140));
+  const pg = loadPage(page(para('Main text here.', 100), el('nav', {}, [hostEl])));
+  assert.deepEqual(pg.readAll('readPage'), ['Main text here.']);
+});
+
+test('a slot in an open shadow root reads the nodes it shows, at the place of the slot, and not its fallback text', () => {
+  const hostEl = el('div');
+  const root = hostEl.shadowRoot = shadowOf(hostEl);
+  const slot = el('slot', {}, ['Fallback words not shown.']);
+  root.appendChild(para('Shadow words first.', 100));
+  root.appendChild(slot);
+  root.appendChild(para('Shadow words last.', 180));
+  const light = para('Light words in the slot.', 140);
+  hostEl.appendChild(light);
+  light.assignedSlot = slot;
+  slot.assignedNodes = () => [light];
+  const pg = loadPage(page(hostEl));
+  assert.deepEqual(pg.readAll('readPage'), ['Shadow words first.', 'Light words in the slot.', 'Shadow words last.']);
+});
+
+test('the Word highlight style is added to each shadow root that is read, once, and removed when the reading stops', () => {
+  const { body, root } = shadowPage();
+  const pg = loadPage(body);
+  pg.tell({ cmd: 'readPage' });
+  assert.equal(root.adoptedStyleSheets.length, 0, 'a light-DOM Sentence adds nothing');
+  end(pg); end(pg);
+  assert.equal(root.adoptedStyleSheets.length, 1, 'one style sheet, also after two Sentences in the root');
+  const css = readFileSync(CONTENT_CSS, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.equal(norm(root.adoptedStyleSheets[0].text), norm(css), 'the same rules as content.css');
+  press(pg, 'close');
+  assert.equal(root.adoptedStyleSheets.length, 0, 'removed when the reading stops');
+});
+
+test('the style of the page in the shadow root stays when ours is removed', () => {
+  const { body, root } = shadowPage();
+  const own = { text: 'the page style' };
+  root.adoptedStyleSheets = [own];
+  const pg = loadPage(body);
+  pg.tell({ cmd: 'readPage' });
+  end(pg);
+  assert.equal(root.adoptedStyleSheets.length, 2);
+  assert.equal(root.adoptedStyleSheets[0], own);
+  pg.tell({ evt: 'stopped' });
+  assert.equal(root.adoptedStyleSheets.length, 1);
+  assert.equal(root.adoptedStyleSheets[0], own, 'only the style of the page is left');
+});
+
+test('a click on a word in a shadow root jumps there: the caret is asked with the shadow roots of the reading', () => {
+  const { body, hostEl, root, s2 } = shadowPage();
+  const t2 = s2.childNodes[0];
+  const caret = (x, y, o) => (o && o.shadowRoots && o.shadowRoots.includes(root) ? { offsetNode: t2, offset: 3 } : { offsetNode: hostEl, offset: 0 });
+  const pg = loadPage(body, { caret });
+  pg.tell({ cmd: 'readPage' });
+  pg.doc.fire('click', { target: hostEl, composedPath: () => [s2, root, hostEl, body], clientX: 10, clientY: 1505 });
+  assert.equal(pg.last().text, 'second line in the shadow root.', 'the reading jumps to the clicked word');
+});
+
+test('a click on a link in a shadow root does not move the reading', () => {
+  const { body, hostEl, root, sb } = shadowPage();
+  const a = el('a', { href: '#' }, ['a link']);
+  sb.appendChild(a);
+  const pg = loadPage(body, { caret: () => ({ offsetNode: a.childNodes[0], offset: 0 }) });
+  pg.tell({ cmd: 'readPage' });
+  const n = pg.spoken.length;
+  pg.doc.fire('click', { target: hostEl, composedPath: () => [a, sb, root, hostEl, body], clientX: 10, clientY: 10 });
+  assert.equal(pg.spoken.length, n);
+});
+
+test('a change in a shadow root that was read is watched, so the kept Sentences are made again', () => {
+  const { body, root } = shadowPage();
+  const pg = loadPage(body);
+  pg.tell({ cmd: 'readPage' });
+  assert.ok(pg.calls.observed.includes(root), 'the shadow root is watched');
+});
+
+test('the Chrome check: with a title, pieces and nested boxes, each Next moves one Sentence', () => {
+  const outer = scrollBox(box(0, 800, 0, 1200));
+  const inner = scrollBox(box(100, 600, 0, 1200), 3000);
+  outer.appendChild(inner);
+  const t = el('h1', {}, ['Made title']); t.rect = box(110);
+  for (const x of [t, para(LONG1, 150), para(LONG2, 200), para(SHORT3, 250), para('A fifth short one.', 300)]) inner.appendChild(x);
+  const pg = loadPage(page(outer));
+  pg.tell({ cmd: 'readPage' });
+  const seen = [pg.button('count').textContent];
+  for (let k = 0; k < 4; k++) { press(pg, 'fwd'); seen.push(pg.button('count').textContent); }
+  assert.deepEqual(seen, ['1 / 5', '2 / 5', '3 / 5', '4 / 5', '5 / 5']);
+  assert.equal(pg.last().text, 'A fifth short one.');
 });
 
 // ---------- fault 3: the colours of the Word highlight and its Sentence shade ----------

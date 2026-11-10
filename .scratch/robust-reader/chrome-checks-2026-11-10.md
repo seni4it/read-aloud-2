@@ -19,7 +19,7 @@ The agent cannot hear the sound. "The voice goes on" means that the add-on or th
 
 The test made one Highlight on the sample Book in the group "Important". The owner's setting "Key points to Claude" sends each new Highlight of that group at once to the folder of a chosen conversation. So the voice server made this new file:
 
-`/Users/semion/tooth-3d-atlas/key-points/Sample paper - Trace-based JIT.md` (559 bytes, 10 Nov 01:36)
+`<folder of another project>/key-points/Sample paper - Trace-based JIT.md` (559 bytes, 10 Nov 01:36)
 
 It holds one test key point from the sample paper. The file was not removed, because it is in the atlas project. Remove it, or ask the atlas main chat to remove it, before that project commits. The Highlight itself was removed from the sample Book (the list on the server is `[]` again). For later runs: mark Highlights in a group that is not sent, or turn "Key points to Claude" off first.
 
@@ -188,3 +188,62 @@ The voice in the first run, when FAIL 3 was seen, was the same natural voice `af
 ### Cleanup
 
 Only the test Chrome PID that this run started, and the static server on port 8823, were stopped. The voice server still answers. No Highlight was made, so no key point file was written. The file from the first run in the atlas project is a separate matter (see "A side effect to clean up").
+
+## Third run: tickets 26 to 29
+
+Date: 10 Nov 2026, later. The test browser was started only with `tools/test-window.sh` (ticket 29). It found Chrome for Testing 156 in `~/Library/Caches/ms-playwright/chromium-1248`, with its own profile folder in the temporary folder of the user, port 9333 and the mock keychain. No keychain question came. The script had to run outside the tool sandbox of Claude Code, as in the first run. Before the first command to port 9333, `lsof` showed that the process that listens on 9333 is the PID in the script's PID file, and its command line has the test profile folder. (`/json/version` does not name the profile folder.) A Node script drove the browser over the DevTools protocol. The web checks used made pages from a static server on 127.0.0.1:8847. The reader and library checks used the live voice server on port 8793 with the sample Book only (id `0d281938d3ff`). No Highlight was made: the Highlights list of the sample Book is `[]` at the end. The voice server was not stopped or restarted.
+
+### Counts
+
+- PASS: 20
+- FAIL: 2
+- NOT RUN: 3
+
+### FAIL
+
+1. Ticket 26, Follow in a shadow root. FAIL. Page: a scrolling box (`overflow: auto`, 180 px high) inside an open shadow root, with 30 sentences in it, and only a short heading outside it. Steps: press the round Listen button. Seen: the bar shows "Finished." at once, the count is empty, and no Word highlight or Sentence shade comes. So the text in the shadow root is never read, and Follow cannot be checked there. Cause, from the code: `collect()` (`extension/content.js:72`) walks the page with a `TreeWalker`, which does not go into shadow roots. The "Listen from here" button also cannot show: the `mouseover` target is the shadow host, and `closest('p,li,…')` finds no paragraph. The Node tests of ticket 26 give the text to Follow directly, so they do not see this. Text from the page shown in a `<slot>` of a scrolling box in a shadow root works (see PASS). Console: none.
+
+2. Reader opened from `http://localhost:8793` (the library at `http://localhost:8793/app/` opens the reader on that origin). FAIL. Steps: open the reader of the sample Book at `http://localhost:8793/reader/index.html?lib=0d281938d3ff…`. Seen: the console has, on every load and again on Play, "Access to fetch at 'http://127.0.0.1:8793/voices' from origin 'http://localhost:8793' has been blocked by CORS policy" and "Failed to load resource: net::ERR_FAILED". The status line says "The natural voice does not answer. The Mac voice reads for now.", the voice type changes to the Mac voice (Daniel), and in 5 s of Play the place did not move and no Word box showed. The same Book at `http://127.0.0.1:8793/reader/…` says "Natural voice ready", and `/speak` and `/times` answer 200. Likely file: `extension/pdf/tts.js:534` (`static SERVER = 'http://127.0.0.1:8793'`, used also from an http page; `app.js:504`, `ask.js`, `notes.js` and `restart.js` use the page's own origin when they are on http), or the CORS rule of `voice-server.py`. This is not code of ticket 27, but the ticket 27 check uses the localhost library. The Reading position itself works on both origins.
+
+### PASS
+
+Ticket 29 (test window script):
+
+- Start: `tools/test-window.sh about:blank` started PID 11247 with `--user-data-dir=<test profile> --remote-debugging-port=9333 --use-mock-keychain --password-store=basic --load-extension=/Volumes/claude/read-aloud/tts-module/extension`. `/json/version` answered (Chrome/156.0.8078.4). PASS
+- The add-on is loaded: its service worker `chrome-extension://mnedlghmdlfdffmboebpnjmopbdhgbkd/background.js` answers with the name "Read Aloud 2", version 2.9.10. PASS
+- `stop`: "the test browser (PID 11247) is stopped"; the PID is gone and nothing listens on 9333. A second `stop` says "no test browser of this script runs" (exit 0). The own Chrome still ran (115 processes before the start, 119 after the stop; the number moves as the own Chrome opens and closes its helper processes). PASS
+- A second start works (PID 11682). A start while it runs stops only that PID and starts a new one (PID 11829). The final `stop` stopped PID 11829; the own Chrome still ran (110 processes). PASS
+
+Ticket 26 (web player):
+
+- Short title, then a long first Sentence (168 characters). One shade covers the whole Sentence for all of its 10 s, while the Word highlight moves word by word through both pieces. The count stays the same during the whole Sentence. Note: the count was "2 / 13", not "1 / 13", because the reading started below the title: `onScreen` skips a Sentence whose bottom is in the top 60 px of the window, and the title was there. That is the start rule, not a fault of the pieces. PASS
+- Previous during the second Sentence goes to the first word of the first Sentence ("first", count 2 / 13, the whole 168 characters shaded), not to its last piece. Next then goes +1 each time (3 / 13, then 4 / 13), and Previous goes back one (3 / 13). Repeated in a second run in a later part of the page: the same. PASS
+- Nested boxes (an outer box of 260 px, an inner box of 150 px that starts 600 px down in the outer box). In three runs, the outer box moved (scrollTop 516) so that the inner box showed, then the inner box moved (scrollTop 87.5) when the voice went past its bottom. In 14 and 26 probes after Next, the word was inside the inner box, inside the outer box and inside the window each time. The window did not scroll. Note: in the very first run, the outer box did not move for the first 5 probes, and each Next moved 3 Sentences (3, 6, 9, 12, 15) before it went back to +1 and the box moved. This was not seen again in 3 more runs, so the cause is not known. PASS
+- Text from the page in a `<slot>` of a scrolling box in a shadow root: the box moved (scrollTop 94) when the voice went past its bottom; in 26 probes the word was always inside the box and the window; the window did not scroll. PASS
+- Colours. On a plain page, in light and in dark mode, and on a page that sets its own `--color-word: #00ff00`, `--color-on-word: #ff00ff` and `--color-sentence: rgba(0, 0, 255, 0.5)`: the computed style of `::highlight(ra2-word)` is background `rgb(255, 140, 0)` with text `rgb(15, 23, 42)`, and `::highlight(ra2-sentence)` is `rgba(255, 140, 0, 0.18)`. These are the token values. The screenshots show orange on the word and a light orange shade on the Sentence on all four pages, and no green or blue. PASS
+
+Ticket 27 (Reading position):
+
+- Before the run, `GET /library/0d281938d3ff/position` gave `null`. The reader played, Next went 4 times, and Pause sent one `POST /library/0d281938d3ff/position` with status 200 and the record `{"i":11,"total":277,"page":1,"pages":14,…}`. The GET then gave `i` 11, the place shown as "12 / 277". PASS
+- The library page at `http://localhost:8793/app/` shows the sample Book in "Continue listening" ("Where you stopped"), with the status "Page 1 of 14, 4% done, 1 h 06 min left". PASS
+- Close the reader and open the Book again: it opens at "12 / 277", the saved place. The reader at `127.0.0.1:8793` (another origin) also opened at the voice server's place. PASS
+- Two tabs A and B of the Book, both at "14 / 277". In A: Play, Next 5 times, Pause: A is at "19 / 277", and the voice server has `i` 18. Then B to the front (A hidden), then A to the front (B hidden, `visibilityState` "hidden"), then B closed: the voice server keeps `i` 18 with the same time each time. Only A sent a POST. A new tab of the Book opens at "19 / 277". PASS
+- No error in the console of the reader at 127.0.0.1 during these steps (the localhost errors are FAIL 2). PASS
+
+Ticket 28 (sound memory), reader at `127.0.0.1:8793`, speed 2×:
+
+- 75 s of play with no input: 16 sounds played (Sentences 19 to 26). The silence between the end of one sound and the start of the next (measured on `AudioBufferSourceNode` start and `ended`) was 7 to 28 ms between the two pieces of a Sentence, and 159 to 162 ms between Sentences. That is the planned pause of 300 ms at speed 2. No longer silence. PASS
+- Next pressed 85 times, 1.1 s apart: the reading went from "26 / 277" to "145 / 277" (119 Sentences, as the short Sentences also ended on their own). Each Sentence played. PASS
+- Back 20 Sentences (Previous 20 times, "145" to "125"), then Play: the Sentence played for 9 s with the Word box, and the reading went on to "126 / 277". It was still in the sound memory, so no `/speak` request was needed. PASS
+- Memory of the reader page (`Runtime.getHeapUsage` and `performance.memory`): ArrayBuffer backing store 8.7 MB at the start, 26 MB after the 75 s, 63 MB after 20 Next, then 69, 73, 70 and 72 MB after 40, 60, 80 and 85 Next, and 67 MB at the end. `performance.memory` used heap: 37, 49, 86, 92, 95, 93, 95 and 90 MB. The JS heap stayed at about 23 MB. So the memory stops growing at about the 64 MB limit plus the page. PASS
+- Console of the reader during the whole ticket 28 run: 0 errors and 0 warnings. PASS
+
+### NOT RUN
+
+- Ticket 28: a Sentence that went out of the sound memory and is made again. Going back 20 Sentences at speed 2 stayed inside the 64 MB, so this path was not reached. Also not run: 15 minutes of reading, and a paragraph of a minute or more (the sample Book has none).
+- Ticket 27, step 5 (voice server down): the voice server must not be stopped in this run.
+- Ticket 26: a box around a shadow host, and the Mac voice. Not done in this time.
+
+### Cleanup
+
+The test browser was stopped with `tools/test-window.sh stop` (PID 11829 gone, nothing on 9333). The static server on 8847 was stopped. The own Chrome still runs (110 processes at the end). The voice server still answers. Screenshots of the colour check are in the scratch folder of this session (`shots/b3-*.png`).
