@@ -306,6 +306,20 @@
     if (e > 2 * i) return 'en';
     return '';
   }
+  // The natural voices in language groups for the voice list of the settings: English, Italian, then other accents.
+  // A copy of the one in pdf/language.js (a test keeps them equal).
+  function voiceGroups(voices) {
+    const named = { american: 'English', british: 'English', english: 'English', italian: 'Italian' };
+    const byId = { a: 'English', b: 'English', i: 'Italian' };
+    const groups = new Map([['English', []], ['Italian', []]]);
+    for (const v of voices || []) {
+      const accent = String((v && v.accent) || '').trim();
+      const name = accent ? named[accent.toLowerCase()] || accent : byId[String((v && v.id) || '').charAt(0)] || 'Other';
+      if (!groups.has(name)) groups.set(name, []);
+      groups.get(name).push(v);
+    }
+    return [...groups].filter(([, list]) => list.length).map(([name, list]) => ({ name, voices: list }));
+  }
   const PAGE_LANG = (document.documentElement.lang || '').toLowerCase();
   let langOf = { segs: null, lang: '' };  // the language of the last reading's Sentences: counted once for each reading
   function pageLang(segs) {
@@ -810,7 +824,7 @@
       }
     };
     if (!v) { box.textContent = 'The voices did not load. Close and open the settings again.'; return; }
-    add('', v.natural, 'kokoro:');
+    for (const g of voiceGroups(v.natural)) add(g.name, g.voices, 'kokoro:');  // English, then Italian (h4 headings)
     if (!v.server) box.append(Object.assign(document.createElement('p'), { textContent: 'Natural voices are off: the voice server is not running.' }));
     add('Russian', v.system, 'system:');
   }

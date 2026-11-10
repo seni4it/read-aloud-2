@@ -11,7 +11,7 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 18px/1.6 -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; }
   main { max-width: 860px; margin: 0 auto; padding: 24px 16px 80px; }
-  h1 { font-size: 28px; margin: 0 0 6px; } h2 { font-size: 20px; margin: 32px 0 4px; }
+  h1 { font-size: 28px; margin: 0 0 6px; } h2 { font-size: 20px; margin: 32px 0 4px; } h3 { font-size: 17px; margin: 18px 0 8px; }
   p.lead, .hint { color: var(--muted); margin: 0 0 14px; }
   textarea { width: 100%; min-height: 90px; font: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); }
   .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin: 10px 0 0; color: var(--muted); font-size: 15px; }
@@ -42,14 +42,14 @@
 
   <h2>Natural voices (Kokoro)</h2>
   <p class="hint">The first voice may take 10 seconds while the engine wakes up. After that each one starts in about 1 second.</p>
-  <div class="grid" id="natural"></div>
+  <div id="natural"></div>
 
   <h2>Voices built into your Mac and Chrome</h2>
   <p class="hint">This is the kind of voice Read Aloud version 1 uses now, for comparison.</p>
   <div class="grid" id="system"></div>
 </main>
-<script>
-(() => {
+<script type="module">
+{
   const $ = (id) => document.getElementById(id);
   const audio = new Audio(); audio.preservesPitch = true;
   let current = null;
@@ -81,8 +81,14 @@
     }
     if (current === b) { stopAll(); status('Finished.'); }
   }
-  fetch('/voices').then((r) => r.json()).then(({ voices }) => {
-    for (const v of voices) $('natural').append(card(v.label, v.accent + ' · ' + v.id, (b) => playNatural(b, v.id)));
+  // one heading for each language (English, then Italian), the voices of that language under it
+  // the group function is the reader's; it loads here, so that the Mac voice list below shows also when it fails
+  Promise.all([fetch('/voices').then((r) => r.json()), import('/reader/language.js')]).then(([{ voices }, { voiceGroups }]) => {
+    for (const g of voiceGroups(voices)) {
+      const grid = Object.assign(document.createElement('div'), { className: 'grid' });
+      for (const v of g.voices) grid.append(card(v.label, v.accent + ' · ' + v.id, (b) => playNatural(b, v.id)));
+      $('natural').append(Object.assign(document.createElement('h3'), { textContent: g.name }), grid);
+    }
   }).catch(() => { $('natural').textContent = 'The voice server is not running.'; });
 
   // system voices
@@ -95,7 +101,7 @@
     })));
   }
   listSystem(); speechSynthesis.onvoiceschanged = listSystem;
-})();
+}
 </script>
 </body>
 </html>

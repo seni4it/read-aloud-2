@@ -4,6 +4,21 @@ const $ = (id) => document.getElementById(id);
 let cfg = { ...DEFAULTS }, tab = null, host = '';
 const save = () => chrome.storage.sync.set({ ra2: cfg });
 
+// The natural voices in language groups (one optgroup each): English, Italian, then other accents.
+// A copy of the one in pdf/language.js (this page is no module); a test keeps them equal.
+function voiceGroups(voices) {
+  const named = { american: 'English', british: 'English', english: 'English', italian: 'Italian' };
+  const byId = { a: 'English', b: 'English', i: 'Italian' };
+  const groups = new Map([['English', []], ['Italian', []]]);
+  for (const v of voices || []) {
+    const accent = String((v && v.accent) || '').trim();
+    const name = accent ? named[accent.toLowerCase()] || accent : byId[String((v && v.id) || '').charAt(0)] || 'Other';
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name).push(v);
+  }
+  return [...groups].filter(([, list]) => list.length).map(([name, list]) => ({ name, voices: list }));
+}
+
 (async () => {
   [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   try { host = new URL(tab.url).hostname; } catch { host = ''; }
@@ -29,7 +44,7 @@ const save = () => chrome.storage.sync.set({ ra2: cfg });
     for (const x of list) g.append(new Option(x.label, prefix + x.id));
     $('voice').append(g);
   };
-  group('Voices', v.natural, 'kokoro:');
+  for (const g of voiceGroups(v.natural)) group(g.name, g.voices, 'kokoro:');  // English, then Italian
   group('Russian', v.system, 'system:');
   if (v.server) $('method').querySelector('option[value="C"]').disabled = !(v.methods || []).includes('C');  // ticket 06: no ffmpeg on this Mac
   $('voice').value = cfg.voice;

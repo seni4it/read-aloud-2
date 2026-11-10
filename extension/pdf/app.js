@@ -8,6 +8,7 @@ import { setupNotes } from './notes.js';
 import { setupAsk } from './ask.js';
 import { newerPosition } from './position.js';
 import { textLanguage, voiceForLanguage } from './language.js';
+import { voiceGroups } from './language.js';
 
 // Hand pdf.js an explicit module worker. Left to its own auto-setup it was
 // silently falling back to a main-thread "fake worker", where render() never
@@ -127,11 +128,16 @@ function fillVoiceSelect() {
   const list = engine.listVoices();
   const saved = localStorage.getItem('pr.voice.' + engine.id);
   els.voiceSel.innerHTML = '';
-  for (const v of list) {
-    const opt = document.createElement('option');
-    opt.value = v.id;
-    opt.textContent = v.label;
-    els.voiceSel.appendChild(opt);
+  // The natural voices go in one optgroup for each language (English, then Italian); the Mac voices stay flat.
+  const groups = engine.id === 'system' ? [{ voices: list }] : voiceGroups(list);
+  for (const g of groups) {
+    const box = g.name ? els.voiceSel.appendChild(Object.assign(document.createElement('optgroup'), { label: g.name })) : els.voiceSel;
+    for (const v of g.voices) {
+      const opt = document.createElement('option');
+      opt.value = v.id;
+      opt.textContent = v.label;
+      box.appendChild(opt);
+    }
   }
   if (saved && list.some(v => v.id === saved)) els.voiceSel.value = saved;
   els.voiceSel.disabled = !list.length;

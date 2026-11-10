@@ -39,3 +39,29 @@ export function voiceForLanguage(voice, lang) {
   if (lang === 'en' && isItalianVoice(voice)) return 'af_heart';
   return voice;
 }
+
+/**
+ * Spec "Italian voices", ticket 01: the natural voices of a voice list in language groups, for the voice lists of
+ * the Player bar, the add-on popup, the reader and the voice sampler. voices: the /voices list of the voice server
+ * ({ id, accent, label }). Returns [{ name, voices }]: "English" (American and British) first, then "Italian",
+ * then each other accent as its own group with the accent as its name, in the order of the voice server.
+ * Inside a group the voices keep the order of the voice server. An empty group is not given.
+ * A voice with no accent (an old voice server, or the reader's fixed list before the voice server answers) takes
+ * its group from the first letter of its id (Kokoro's names): a and b are English, i is Italian, else "Other".
+ * content.js and popup.js have a copy (they cannot import); a test keeps the copies equal.
+ */
+export function voiceGroups(voices) {
+  const named = { american: 'English', british: 'English', english: 'English', italian: 'Italian' };
+  const byId = { a: 'English', b: 'English', i: 'Italian' };
+  const groups = new Map([['English', []], ['Italian', []]]);
+  for (const v of voices || []) {
+    const accent = String((v && v.accent) || '').trim();
+    const name = accent ? named[accent.toLowerCase()] || accent : byId[String((v && v.id) || '').charAt(0)] || 'Other';
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name).push(v);
+  }
+  return [...groups].filter(([, list]) => list.length).map(([name, list]) => ({ name, voices: list }));
+}
+
+/** The language group of one voice ({ id, accent }): "English", "Italian", or the name of its accent. */
+export const voiceGroup = (voice) => (voiceGroups([voice])[0] || {}).name || '';

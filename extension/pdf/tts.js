@@ -652,7 +652,7 @@ export class ServerEngine extends KokoroEngine {
   init() {
     if (this.ready) return Promise.resolve(true);
     return ServerEngine.#ask(ServerEngine.SERVER + '/voices', new AbortController(), ServerEngine.INIT_MS).then(r => r.json()).then(({ voices, speed }) => {
-      this.voices = voices.map(v => ({ id: v.id, label: `${v.label} · ${v.accent}` }));
+      this.voices = voices.map(v => ({ id: v.id, label: `${v.label} · ${v.accent}`, accent: v.accent }));  // accent: the language group
       this.methods = Array.isArray(speed?.methods) ? speed.methods : ['B'];  // ticket 06
       this.ready = true;
       return true;
