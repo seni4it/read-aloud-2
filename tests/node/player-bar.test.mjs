@@ -5,7 +5,7 @@
 // Run: ./run-tests.sh
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HTML, RULES, LIGHT, DARK, declsFor, innerOf, idsIn, idsUsedBy, tagOf, px, read, loadApp, appWithBook, until } from './reader-css.mjs';
+import { HTML, RULES, LIGHT, DARK, declsFor, innerOf, idsIn, idsUsedBy, tagOf, px, read, loadApp, appWithBook, until, specificity, cmp } from './reader-css.mjs';
 
 const barHtml = innerOf('playerControls');
 // The direct children of the row: the start tags at depth 0 of the row.
@@ -288,4 +288,65 @@ test('below 480 px the bar shows the voice status only for a fault, so the slide
   assert.equal(r.els.engineStatus.classList.contains('fault'), false, '"Natural voice ready" is normal');
   r.made.kokoro.current.onError(new Error('x'));
   assert.equal(r.els.engineStatus.classList.contains('fault'), true, 'a message about a fault shows');
+});
+
+// ---------- after the Chrome check of 10 Nov 2026 (FAIL 2) ----------
+// In Chrome the reader page scrolled sideways by 32 px at 800 px and by 48 px at 400 px. The label box (::after) of
+// "Follow" stays in the layout with opacity 0; centred on a button near the right edge, it went past the window.
+// This test lays out the row at each width from the tokens and puts each label where the CSS anchors it. A 12 px
+// label is about 6.5 px a letter (Chrome measured about 5.8 px).
+test('no label of the player bar goes past the window edges at 320, 400, 800 and 1280 px', () => {
+  const kids = rowChildren(barHtml).map((c) => ({ id: (/\sid="([^"]+)"/.exec(c.attrs) || /class="([^" ]+)/.exec(c.attrs))[1], tip: (/data-tip="([^"]+)"/.exec(c.attrs) || [])[1] }));
+  const scrubAt = kids.findIndex((k) => k.id === 'scrub');
+  // the anchor rules of the labels in the row, in cascade order (specificity, then source order)
+  const applies = (sel, i) => {
+    if (sel === '[data-tip]::after') return true;
+    if (!sel.startsWith('.controls')) return false;
+    if (sel.includes(':first-child') && i !== 0) return false;
+    if (sel.includes(':last-child') && i !== kids.length - 1) return false;
+    if (sel.includes(':has(~ .scrub)') && !(i < scrubAt)) return false;
+    if (sel.includes('.scrub ~') && !(i > scrubAt)) return false;
+    return true;
+  };
+  const anchor = (i) => {
+    const hits = [];
+    RULES.forEach((r, n) => { if (r.media === '') for (const s of r.selectors) if (s.endsWith('::after') && s.includes('[data-tip]') && applies(s, i)) hits.push({ spec: specificity(s), n, d: r.decls }); });
+    hits.sort((a, b) => cmp(a.spec, b.spec) || a.n - b.n);
+    const d = Object.assign({}, ...hits.map((h) => h.d));
+    if (d.right === '0' && d.left === 'auto') return 'right';
+    if (d.left === '0') return 'left';
+    return 'centre';
+  };
+  const bad = [];
+  for (const W of [320, 400, 800, 1280]) {
+    const at = (m) => m === '' || (/max-width:\s*(\d+)px/.exec(m) && W <= +/max-width:\s*(\d+)px/.exec(m)[1]);
+    const d = (s) => declsFor(s, at);
+    const pad = px(LIGHT, d('.player')['padding-left']);
+    const gap = px(LIGHT, d('.controls').gap);
+    const icon = px(LIGHT, d('.player .icon-btn').width);
+    const play = px(LIGHT, d('.play-btn').width);
+    const speed = px(LIGHT, d('.speed select')['max-width']);
+    const settings = px(LIGHT, d('.player .settings-btn').width === 'auto' ? d('.player .settings-btn')['min-width'] : d('.player .settings-btn').width);
+    const width = { playBtn: play, speed, settingsBtn: settings };
+    const w = kids.map((k) => width[k.id] ?? icon);
+    const fixed = w.reduce((s, x, i) => (i === scrubAt ? s : s + x), 0);
+    w[scrubAt] = W - 2 * pad - fixed - gap * (kids.length - 1);
+    let x = pad;
+    kids.forEach((k, i) => {
+      const left = x, right = x + w[i];
+      x = right + gap;
+      if (!k.tip) return;
+      const tw = k.tip.length * 6.5 + 2 * px(LIGHT, 'var(--space-2)');
+      const a = anchor(i);
+      const [l, r] = a === 'left' ? [left, left + tw] : a === 'right' ? [right - tw, right] : [(left + right - tw) / 2, (left + right + tw) / 2];
+      if (l < 0 || r > W) bad.push(`${W} px: #${k.id} (${a}) label from ${Math.round(l)} to ${Math.round(r)}`);
+    });
+  }
+  assert.deepEqual(bad, [], bad.join('\n'));
+});
+
+test('the labels of the last top bar buttons end at their right edge (they show at 600 px and less)', () => {
+  const d = declsFor('.topbar-actions [data-tip]::after');
+  assert.deepEqual([d.left, d.right, d.transform], ['auto', '0', 'none']);
+  assert.ok(cmp(specificity('.topbar-actions [data-tip]::after'), specificity('.topbar [data-tip]::after')) >= 0);
 });

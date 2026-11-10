@@ -10,6 +10,7 @@ Start:  ~/.local/share/uv/tools/mlx-audio/bin/python "voice-server.py"   (port 8
 
 Desktop reader (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
   /app/...                  the library page (app/)          /reader/...  the PDF reader (extension/pdf, the same code)
+  /icons/...                the add-on icons (extension/icons), for the page icon of the reader
   GET  /library.json        the books in ~/Documents/Read Aloud Library (PDFs dropped there in Finder are picked up)
   GET  /library/file/<id>   one book        GET /library/cover/<id>   its cover (made by macOS Quick Look)
   POST /library/add?name=   add a PDF (body)    POST /library/<id>/opened    POST /library/<id>/remove (to the Trash)
@@ -252,7 +253,9 @@ def warm_up():
 
 LIB = os.environ.get('READ_ALOUD_LIBRARY', os.path.expanduser('~/Documents/Read Aloud Library'))
 COVERS = os.path.join(LIB, '.covers')
-STATIC = {'/app/': os.path.join(HERE, 'app'), '/reader/': os.path.join(HERE, 'extension', 'pdf')}
+# /icons/: the add-on icons, for the reader page icon (../icons/48.png from /reader/, as in the add-on folder)
+STATIC = {'/app/': os.path.join(HERE, 'app'), '/reader/': os.path.join(HERE, 'extension', 'pdf'),
+          '/icons/': os.path.join(HERE, 'extension', 'icons')}
 mimetypes.add_type('text/javascript', '.mjs')
 _lib = threading.Lock()
 _notes = threading.Lock()

@@ -4,6 +4,11 @@
 
 * { box-sizing: border-box; }
 
+/* The hidden attribute always wins. A class rule with a display (for example .btn { display: inline-flex }) beats the
+   browser rule [hidden] { display: none }, so "Try sample", Library and Export showed while hidden (Chrome check
+   10 Nov 2026). The scripts show and hide parts of the page only with the attribute. */
+[hidden] { display: none !important; }
+
 html, body {
   height: 100%;
   margin: 0;
@@ -528,14 +533,18 @@ body {
   transition-delay: var(--delay-tip);
 }
 
-/* the first control: the tooltip starts at its left edge; the last: it ends at its right edge (never off the window) */
-.controls > [data-tip]:first-child::after { left: 0; transform: none; }
-.controls > [data-tip]:last-child::after, .settings-head [data-tip]::after { left: auto; right: 0; transform: none; }
+/* A label box stays in the layout while it does not show, so a box past the window edge makes the page scroll
+   sideways (Chrome check 10 Nov 2026: "Follow" at 400 and 800 px). The controls before the position slider: the label
+   starts at the left edge of its button; the controls after it: the label ends at the right edge of its button. */
+.controls > [data-tip]:first-child::after, .controls > :has(~ .scrub)[data-tip]::after { left: 0; transform: none; }
+.controls > [data-tip]:last-child::after, .controls > .scrub ~ [data-tip]::after, .settings-head [data-tip]::after { left: auto; right: 0; transform: none; }
 /* a top bar button with its words in sight needs no label; below 600 px (icon only) it gets one */
 .topbar .btn[data-tip]::after { display: none; }
 .topbar .btn { white-space: nowrap; flex: none; }
 /* tooltips of the top bar open below it */
 .topbar [data-tip]::after { bottom: auto; top: calc(100% + var(--space-2)); }
+/* the buttons at the right end of the top bar: the label ends at the right edge of its button */
+.topbar-actions [data-tip]::after { left: auto; right: 0; transform: none; }
 
 /* ---------- the settings panel (ticket 21): voice; what to read (ticket 22) ---------- */
 

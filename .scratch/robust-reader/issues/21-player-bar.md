@@ -172,3 +172,34 @@ Manual check (coordinator):
 - With VoiceOver on, play three sentences: VoiceOver says the voice state once, not for each sentence.
 
 `./run-tests.sh`: Node 357 tests, 357 pass; `RESULT: PASS`.
+
+## Repairs after the Chrome check (10 Nov 2026)
+
+These repairs are for the FAIL entries 1, 2 and 4 in `.scratch/robust-reader/chrome-checks-2026-11-10.md`. Each repair has a test that failed first.
+
+### FAIL 1, ticket 22: "Try sample" shows although it is hidden
+
+- Cause: `.btn { display: inline-flex }` wins over the browser rule `[hidden] { display: none }`. The same fault showed Library (add-on, no library Book) and "Export audio (MP3)" (no library Book) while they had the `hidden` attribute.
+- Repair: one general rule `[hidden] { display: none !important; }` at the top of `extension/pdf/styles.css` (line 10).
+- When the sample button shows: never. `app.js` (line 759) has only its click handler. No code sets `sampleBtn.hidden = false`. So the button stays hidden at every width, and the top bar has its 5 controls. The rule `.topbar #sampleBtn { display: none; }` for 600 px and less stays, for a later change that shows the button.
+- Check that no code needs a hidden element to show: every `[hidden]` rule in `styles.css` and `ra2-theme.css` sets `display: none`. The scripts (`app.js`, `notes.js`, `ask.js`) show and hide with `.hidden` only. `extension/pdf/styles.css` is used only by `extension/pdf/index.html`.
+- Tests: `tests/node/reader-frame.test.mjs`, "no element with the hidden attribute shows ..." (failed before the repair) and "the sample button stays hidden ..." (a guard).
+
+### FAIL 2, ticket 21: the reader page scrolls sideways at 800 and 400 px
+
+- Cause: the label (`[data-tip]::after`) of "Follow: go to the word being read" (`#findBtn`, the control before the settings button) was centred on its button. The box stays in the layout with opacity 0, and it went past the right edge of the window. The label of the settings button was already anchored right. The model of the row also showed the label of "Previous sentence" cut by about 20 px at the left edge at 480 px and less.
+- Repair in `extension/pdf/styles.css`: the labels of the controls before the position slider start at the left edge of their button (line 539, `.controls > :has(~ .scrub)[data-tip]::after`). The labels of the controls after the slider (highlight, follow, settings) end at the right edge of their button (line 540, `.controls > .scrub ~ [data-tip]::after`). The labels of the top bar buttons at the right end (Library, Open PDF; they show at 600 px and less) end at the right edge of their button (line 547). No `overflow-x: hidden` was added.
+- Tests: `tests/node/player-bar.test.mjs`, "no label of the player bar goes past the window edges at 320, 400, 800 and 1280 px" (it lays out the row from the tokens of each width and puts each label where the CSS anchors it, at about 6.5 px a letter; before the repair it found 9 labels out of the window) and "the labels of the last top bar buttons end at their right edge".
+- Not checked in a real browser in this repair: `document.documentElement.scrollWidth` at 320, 400, 800 and 1280 px.
+
+### FAIL 4: 404 for /icons/48.png on each reader load over the voice server
+
+- Cause: the reader links `../icons/48.png`. In the add-on that is `extension/icons/48.png`. The voice server served only `extension/pdf` at `/reader/`, so `/icons/48.png` was not there.
+- Why not on the page side: no one relative link reaches the folder `extension/icons` both from `pdf/index.html` in the add-on and from `/reader/index.html`, except a second copy of the icon in `extension/pdf/`. A copy of the icon was not wanted.
+- Repair: `voice-server.py` (line 256 to 258) serves `extension/icons` at `/icons/`, through the same `STATIC` code as `/app/` and `/reader/` (the same check that a path cannot leave its folder). The help text at the top names the route.
+- Test: `tests/test_server.py`, `test_reader_page_icon_is_served` (200, `image/png`, the same bytes; `..` gives 404).
+- The live voice server on port 8793 was not restarted. The 404 goes away after its next restart.
+
+### Result
+
+`./run-tests.sh`: Python tests PASS, Node tests PASS, RESULT: PASS.

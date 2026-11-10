@@ -109,6 +109,17 @@ class Http(unittest.TestCase):
         self.assertEqual((code, body), (304, b''))
         self.assertEqual(get('/voices')[1]['Cache-Control'], 'no-store')
 
+    def test_reader_page_icon_is_served(self):
+        # Chrome check 10 Nov 2026 (FAIL 4): the reader links its icon as ../icons/48.png (the add-on folder icons/).
+        # Under /reader/ that is /icons/48.png, which gave 404 on every load.
+        code, h, body = get('/icons/48.png')
+        self.assertEqual(code, 200)
+        self.assertEqual(h['Content-Type'], 'image/png')
+        with open(os.path.join(HERE, 'extension', 'icons', '48.png'), 'rb') as f:
+            self.assertEqual(body, f.read())
+        self.assertEqual(get('/icons/../../voice-server.py')[0], 404)
+        self.assertEqual(get('/icons/%2e%2e/manifest.json')[0], 404)
+
     def test_static_cannot_leave_its_folder(self):
         self.assertEqual(get('/reader/../../voice-server.py')[0], 404)
         self.assertEqual(get('/reader/%2e%2e/%2e%2e/voice-server.py')[0], 404)

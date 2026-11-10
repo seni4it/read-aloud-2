@@ -200,3 +200,22 @@ test('on a small window the top bar buttons show their icon only, and their name
   const small = RULES.find((r) => /max-width:\s*600px/.test(r.media) && r.selectors.includes('.topbar .btn-text'));
   assert.ok(small, 'below 600 px the words are for a screen reader only');
 });
+
+// ---------- after the Chrome check of 10 Nov 2026 (FAIL 1) ----------
+// In Chrome, "Try sample" showed in the top bar at 601 px and wider although it has the `hidden` attribute: the
+// display rule of `.btn` wins over the browser rule `[hidden] { display: none }`. The same was true for each element
+// whose class gives it a display (Library, Export audio). One rule makes the attribute always win.
+test('no element with the hidden attribute shows: one [hidden] rule with display none !important', () => {
+  const hide = RULES.filter((r) => r.media === '' && r.selectors.includes('[hidden]'));
+  assert.equal(hide.length, 1, 'the reader has one general [hidden] rule');
+  assert.equal(hide[0].decls.display, 'none !important', 'it wins over every class or id display rule');
+  // No rule may show an element while it has the attribute (that would now be overruled in silence).
+  const shows = RULES.filter((r) => r.selectors.some((s) => /\[hidden\](?![^(]*\))/.test(s)) && r.decls.display && !/^none\b/.test(r.decls.display));
+  assert.deepEqual(shows.map((r) => r.selectors.join(', ')), []);
+});
+
+test('the sample button stays hidden: app.js never shows it, so the top bar has its 5 controls at every width', () => {
+  assert.match(tagOf('sampleBtn').text, /\shidden[\s>]/, 'the button has the hidden attribute in index.html');
+  const app = read('extension/pdf/app.js');
+  assert.doesNotMatch(app, /sampleBtn\.hidden\s*=\s*false|sampleBtn\.removeAttribute\(\s*'hidden'/, 'no code shows it');
+});
