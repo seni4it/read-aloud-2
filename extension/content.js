@@ -525,6 +525,7 @@
     find: '<circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="2"/>',
     set: '<path d="M4 7h10M18 7h2M4 17h2M10 17h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="7" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="8" cy="17" r="2" fill="none" stroke="currentColor" stroke-width="2"/>',
     close: '<path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>',
+    grip: '<circle cx="9" cy="6" r="1.6" fill="currentColor"/><circle cx="15" cy="6" r="1.6" fill="currentColor"/><circle cx="9" cy="12" r="1.6" fill="currentColor"/><circle cx="15" cy="12" r="1.6" fill="currentColor"/><circle cx="9" cy="18" r="1.6" fill="currentColor"/><circle cx="15" cy="18" r="1.6" fill="currentColor"/>',
     ear: '<path d="M4 14v-2a8 8 0 0 1 16 0v2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3" y="13" width="5" height="7" rx="2" fill="currentColor"/><rect x="16" y="13" width="5" height="7" rx="2" fill="currentColor"/>',
   };
   const svg = (n) => `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">${ICON[n]}</svg>`;
@@ -558,6 +559,11 @@
     .bar .pp.waiting::before { opacity: 1; transition: opacity var(--dur-hover) linear var(--delay-wait); animation: ra2-spin var(--dur-spin) linear infinite; }
     @media (prefers-reduced-motion: reduce) { .bar .pp.waiting::before { animation: none; } }
     .bar .find.away { box-shadow: inset 0 0 0 2px var(--color-text); }
+    .grip { position: relative; flex: 0 0 auto; display: grid; place-items: center; width: var(--space-4); height: var(--control-m); color: var(--color-text-muted); cursor: grab; }
+    .grip svg { width: var(--space-4); height: var(--space-4); }
+    .bar[data-place=left] .grip, .bar[data-place=right] .grip { width: var(--control-m); height: var(--space-4); }
+    .bar[data-place=left] .grip svg, .bar[data-place=right] .grip svg { transform: rotate(90deg); }
+    .bar.dragging .grip { cursor: grabbing; }
     .bar .speed { width: auto; min-width: 56px; padding: 0 var(--space-2); border: 1px solid var(--color-control-border); border-radius: var(--radius-1); font-size: var(--text-14); font-variant-numeric: tabular-nums; }
     .bar .speed[aria-expanded=true], .bar .set[aria-expanded=true] { background: var(--color-surface-raised); }
     .pos { display: flex; flex-direction: column; justify-content: center; gap: var(--space-1); width: 128px; flex: 0 1 auto; min-width: 0; padding: 0 var(--space-1); }
@@ -593,7 +599,10 @@
     .places { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-1); }
     .places button { text-align: center; }
     .rates button { min-height: 40px; width: 64px; height: auto; border-radius: var(--radius-1); font-size: var(--text-14); font-variant-numeric: tabular-nums; }
-    .launch { position: fixed; right: var(--space-3); top: 50%; z-index: 2147483646; width: var(--control-l); height: var(--control-l); background: var(--color-chrome); color: var(--color-on-chrome); box-shadow: var(--shadow-3); }
+    .launch { position: fixed; right: var(--space-3); top: 50%; z-index: 2147483646; width: var(--control-l); height: var(--control-l); background: var(--color-chrome); color: var(--color-on-chrome); box-shadow: var(--shadow-3);
+              touch-action: none; user-select: none; -webkit-user-select: none; }
+    .launch[data-side=left] { right: auto; left: var(--space-3); }
+    .launch.dragging { right: auto; cursor: grabbing; }
     .launch:hover { background: var(--color-play); color: var(--color-on-play); }
     .hover { position: fixed; z-index: 2147483646; width: 32px; height: 32px; background: var(--color-play); color: var(--color-on-play); box-shadow: var(--shadow-3); }
     .hover svg { width: 16px; height: 16px; }
@@ -611,6 +620,7 @@
   </style>
   <div class="bar" id="bar" role="toolbar" aria-label="Read Aloud 2 player" data-place="bottom" hidden>
     <span class="msg" id="msg" role="status"></span>
+    <span class="grip" id="grip" data-tip="Move" aria-hidden="true">${svg('grip')}</span>
     <button id="back" aria-label="Previous sentence" data-tip="Previous sentence">${svg('back')}</button>
     <button class="pp" id="pp" aria-label="Pause" data-tip="Play or pause">${svg('pause')}</button>
     <button id="fwd" aria-label="Next sentence" data-tip="Next sentence">${svg('fwd')}</button>
@@ -627,7 +637,7 @@
       <div class="places" role="group" aria-labelledby="placeHead">${['left', 'right', 'top', 'bottom'].map((p) => `<button id="place-${p}" aria-pressed="false">${p[0].toUpperCase() + p.slice(1)}</button>`).join('')}</div>
     </div>
   </div>
-  <button class="launch" id="launch" title="Listen to this page (Read Aloud 2)" aria-label="Listen to this page" hidden>${svg('ear')}</button>
+  <button class="launch" id="launch" title="Listen to this page (Read Aloud 2). Drag to move it." aria-label="Listen to this page" hidden>${svg('ear')}</button>
   <button class="hover" id="hover" title="Listen from here" aria-label="Listen from here" hidden>${svg('play')}</button>
   <button class="bubble" id="bubble" hidden>${svg('play')}Listen</button>`;
   const $ = (id) => sh.getElementById(id);
@@ -654,6 +664,7 @@
     $('left').textContent = n ? timeLeft(Math.max(0, S.i)) : '';
     $('msg').textContent = note;
     $('launch').hidden = active || !cfg.launcher || hiddenHere();
+    if (!$('launch').hidden) launchShown();
   }
   // Ticket 06: the speed that the ear hears. Method A (the voice speaks faster) reaches less than asked: about 1.84 at 2
   // and 2.18 at 3. The same curve as heardSpeed() in pdf/tts.js (a test keeps them equal).
@@ -748,71 +759,112 @@
     add('Russian', v.system, 'system:');
   }
 
-  // ---------- moving the player (ticket 25): platform pointer events, no library ----------
-  let place = 'bottom', drag = null, dragged = false, showing = false;
-  const bar = $('bar');
+  // ---------- moving the player (ticket 25) and the Listen button (ticket 31): platform pointer events, no library ----------
+  let place = 'bottom', dragged = false, showing = false;
+  const bar = $('bar'), launch = $('launch');
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  // One drag helper for the bar and the Listen button. The pressed element takes the pointer capture at the press, not
+  // after 6 px (ticket 31): a quick hand move gives its first move event already outside the bar (the bar is 58 px
+  // high), or over an iframe, and the bar then never saw the move, so it did not follow. The capture is on the pressed
+  // element (a button or the box itself), so a short press still clicks that button. h.skip(e): a press that is no drag;
+  // h.drop(e, from): the end of a drag (e is null for a cancel), from is the box where it was let go.
+  function draggable(el, h) {
+    let d = null;
+    const release = (x) => { try { if (x.by.hasPointerCapture?.(x.id)) x.by.releasePointerCapture(x.id); } catch { /* already released */ } };
+    function end(e, keep) {
+      if (!d || (e && e.pointerId !== undefined && e.pointerId !== d.id)) return;
+      const x = d; d = null;
+      release(x);
+      if (!x.on) return;
+      dragged = true; later(() => { dragged = false; }, 0);  // the click that follows the pointerup presses nothing
+      const from = el.getBoundingClientRect();
+      el.classList.remove('dragging'); el.style.left = ''; el.style.top = '';
+      h.drop(keep ? e : null, from);
+    }
+    el.addEventListener('pointerdown', (e) => {
+      dragged = false; d = null;
+      if (dead || e.button !== 0 || e.isPrimary === false || h.skip?.(e)) return;
+      const by = e.target?.closest?.('button') || el;
+      d = { id: e.pointerId, x: e.clientX, y: e.clientY, on: false, by };
+      try { by.setPointerCapture(e.pointerId); } catch { /* the pointer is already up */ }
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!d || e.pointerId !== d.id) return;
+      if (!(e.buttons & 1)) { end(); return; }  // the button went up and the bar saw no pointerup: a hover, not a drag
+      if (!d.on) {
+        if (Math.hypot(e.clientX - d.x, e.clientY - d.y) < DRAG_START) return;
+        const r = el.getBoundingClientRect();
+        Object.assign(d, { on: true, dx: d.x - r.left, dy: d.y - r.top, w: r.width, h: r.height });
+        el.classList.add('dragging'); h.start?.();
+      }
+      el.style.left = clamp(e.clientX - d.dx, 0, innerWidth - d.w) + 'px';
+      el.style.top = clamp(e.clientY - d.dy, 0, innerHeight - d.h) + 'px';
+    });
+    el.addEventListener('pointerup', (e) => end(e, true));
+    el.addEventListener('pointercancel', (e) => end(e, false));
+    el.addEventListener('lostpointercapture', (e) => end(e, false));  // also when the box hides during a drag
+    return { busy: () => !!d, cancel: () => end() };
+  }
+  function glide(el, from) {  // the box slides from where it was let go to its place; no motion when the system asks for none
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches || !el.animate) return;
+    const to = el.getBoundingClientRect();
+    el.animate([{ translate: `${from.left - to.left}px ${from.top - to.top}px` }, { translate: '0px 0px' }],
+      { duration: parseInt(TOKENS.root['--dur-move'], 10), easing: TOKENS.root['--ease-out'] });
+  }
+  // chrome.storage of an old tab after a reload of the add-on: no runtime id, and each call throws. Nothing reaches the page.
+  const live = () => { try { return !!chrome.runtime?.id; } catch { return false; } };
+  const keepLocal = (o) => { if (live()) try { chrome.storage.local.set(o).catch(() => {}); } catch { /* the add-on is gone */ } };
+  const readLocal = (k, f) => { if (live()) try { chrome.storage.local.get(k).then((r) => f(r && r[k]), () => {}); } catch { /* the add-on is gone */ } };
+
+  // the Player bar: a drop snaps to the nearest of the four edges
+  const barDrag = draggable(bar, {
+    skip: (e) => $('menu').contains(e.target) || $('rates').contains(e.target) || !!e.target?.closest?.('input,select,textarea'),  // a slider or a field keeps its own drag
+    start: () => closePops(),
+    drop: (e, from) => { if (e) { setPlace(snapPlace(e.clientX, e.clientY, innerWidth, innerHeight), true); glide(bar, from); } else showPlace(); },
+  });
   function showPlace() {  // the saved place, or the bottom when the window has no room for it
     bar.dataset.place = fitPlace(place, innerWidth, innerHeight);
     for (const p of PLACES) $('place-' + p).setAttribute('aria-pressed', String(p === place));
   }
-  // chrome.storage of an old tab after a reload of the add-on: no runtime id, and each call throws. Nothing reaches the page.
-  const live = () => { try { return !!chrome.runtime?.id; } catch { return false; } };
   function setPlace(p, keep) {
     place = PLACES.includes(p) ? p : 'bottom';
     showPlace();
-    if (keep && live()) try { chrome.storage.local.set({ [PLACE_KEY]: place }).catch(() => {}); } catch { /* the add-on is gone */ }
+    if (keep) keepLocal({ [PLACE_KEY]: place });
   }
-  function readPlace() {
-    if (!live()) return;
-    try { chrome.storage.local.get(PLACE_KEY).then((r) => { if (!drag && showing) setPlace(r && r[PLACE_KEY], false); }, () => {}); } catch { /* the add-on is gone */ }
-  }
+  const readPlace = () => readLocal(PLACE_KEY, (v) => { if (!barDrag.busy() && showing) setPlace(v, false); });
   // The place is read and the window is watched only while the bar shows: a page where nobody listens does neither.
-  const onResize = () => { if (!dead && !drag) showPlace(); };
+  const onResize = () => { if (!dead && !barDrag.busy()) showPlace(); };
   function shown(on) {
     if (on === showing) return;
     showing = on;
     if (on) { showPlace(); readPlace(); addEventListener('resize', onResize, { passive: true }); }
-    else { endDrag(); globalThis.removeEventListener?.('resize', onResize); }
+    else { barDrag.cancel(); globalThis.removeEventListener?.('resize', onResize); }
   }
-  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-  bar.addEventListener('pointerdown', (e) => {
-    dragged = false; drag = null;
-    if (dead || e.button !== 0 || e.isPrimary === false || $('menu').contains(e.target) || $('rates').contains(e.target)
-      || e.target?.closest?.('input,select,textarea')) return;  // a slider or a field keeps its own drag
-    drag = { id: e.pointerId, x: e.clientX, y: e.clientY, on: false };
-  });
-  bar.addEventListener('pointermove', (e) => {
-    if (!drag || e.pointerId !== drag.id) return;
-    if (!(e.buttons & 1)) { endDrag(); return; }  // the button went up outside the bar: this is a hover, not a drag
-    if (!drag.on) {
-      if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < DRAG_START) return;
-      const r = bar.getBoundingClientRect();
-      Object.assign(drag, { on: true, dx: drag.x - r.left, dy: drag.y - r.top, w: r.width, h: r.height });
-      try { bar.setPointerCapture(e.pointerId); } catch { /* the pointer is already up */ }
-      bar.classList.add('dragging'); closePops();
-    }
-    bar.style.left = clamp(e.clientX - drag.dx, 0, innerWidth - drag.w) + 'px';
-    bar.style.top = clamp(e.clientY - drag.dy, 0, innerHeight - drag.h) + 'px';
-  });
-  // The end of a press: a drop snaps to an edge and saves the place once; any other end leaves the bar at its old place.
-  function endDrag(e, keep) {
-    if (!drag || (e && e.pointerId !== undefined && e.pointerId !== drag.id)) return;
-    const d = drag; drag = null;
-    if (!d.on) return;
-    dragged = true; later(() => { dragged = false; }, 0);  // the click that follows the pointerup presses nothing
-    const from = bar.getBoundingClientRect();
-    bar.classList.remove('dragging'); bar.style.left = ''; bar.style.top = '';
-    try { if (bar.hasPointerCapture?.(d.id)) bar.releasePointerCapture(d.id); } catch { /* already released */ }
-    if (keep) { setPlace(snapPlace(e.clientX, e.clientY, innerWidth, innerHeight), true); glide(from); } else showPlace();
+
+  // The Listen button (ticket 31): a drop goes to the nearest side edge at the height where it was let go. The height is
+  // kept as a part of the window height, and CSS clamp() keeps the button inside the window at any size, so no resize
+  // listener is needed. One place for all sites, in chrome.storage.local, read once when the button first shows.
+  const LAUNCH_KEY = 'ra2Launch';
+  let launchAt = null, launchRead = false;
+  function showLaunch() {
+    const ok = launchAt && (launchAt.side === 'left' || launchAt.side === 'right') && Number.isFinite(launchAt.y);
+    launch.dataset.side = ok ? launchAt.side : 'right';
+    launch.style.top = ok ? `clamp(var(--space-2), calc(${(clamp(launchAt.y, 0, 1) * 100).toFixed(2)}vh - var(--control-l) / 2), calc(100vh - var(--control-l) - var(--space-2)))` : '';
   }
-  bar.addEventListener('pointerup', (e) => endDrag(e, true));
-  bar.addEventListener('pointercancel', (e) => endDrag(e, false));
-  bar.addEventListener('lostpointercapture', (e) => endDrag(e, false));  // also when the bar hides during a drag
-  function glide(from) {  // the bar slides from where it was let go to its edge; no motion when the system asks for none
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches || !bar.animate) return;
-    const to = bar.getBoundingClientRect();
-    bar.animate([{ translate: `${from.left - to.left}px ${from.top - to.top}px` }, { translate: '0px 0px' }],
-      { duration: parseInt(TOKENS.root['--dur-move'], 10), easing: TOKENS.root['--ease-out'] });
+  const launchDrag = draggable(launch, {
+    drop: (e, from) => {
+      if (e) {
+        launchAt = { side: e.clientX < innerWidth / 2 ? 'left' : 'right', y: clamp((from.top + from.height / 2) / innerHeight, 0, 1) };
+        keepLocal({ [LAUNCH_KEY]: launchAt });
+      }
+      showLaunch();
+      if (e) glide(launch, from);
+    },
+  });
+  function launchShown() {  // called by ui() when the button shows
+    if (launchRead) return;
+    launchRead = true;
+    readLocal(LAUNCH_KEY, (v) => { if (v && !launchDrag.busy()) { launchAt = v; showLaunch(); } });
   }
 
   // play button beside the paragraph under the mouse
@@ -876,6 +928,7 @@
   chrome.storage.onChanged.addListener((c) => {
     if (dead) return;
     if (c.ra2) { cfg = { ...DEFAULTS, ...c.ra2.newValue }; ui(); }
-    if (c[PLACE_KEY] && showing && !drag) setPlace(c[PLACE_KEY].newValue, false);  // moved in another tab; a hidden bar reads it at its next show
+    if (c[PLACE_KEY] && showing && !barDrag.busy()) setPlace(c[PLACE_KEY].newValue, false);  // moved in another tab; a hidden bar reads it at its next show
+    if (c[LAUNCH_KEY] && !launchDrag.busy()) { launchAt = c[LAUNCH_KEY].newValue; showLaunch(); }  // the Listen button moved in another tab
   });
 })();

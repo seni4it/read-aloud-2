@@ -271,16 +271,16 @@ test('a place saved in another tab moves the bar here too; a bad saved value giv
 test('the load reads and saves nothing; the place is read and the resize listener added when the bar shows', async () => {
   const pg = loadPage({ store: { ra2Place: 'left' } });
   await flush();
-  assert.deepEqual(pg.reads, [], 'no storage read at page load');
+  assert.deepEqual(pg.reads, ['ra2Launch'], 'at page load only the place of the Listen button is read (ticket 31)');
   assert.deepEqual(pg.writes, []);
   assert.equal(pg.win.has('resize'), false, 'no resize listener on a page where the owner does not listen');
   pg.tell({ cmd: 'readPage' });
   await flush();
-  assert.deepEqual(pg.reads, ['ra2Place'], 'one read when the bar shows');
+  assert.deepEqual(pg.reads, ['ra2Launch', 'ra2Place'], 'one read when the bar shows');
   assert.equal(pg.bar.dataset.place, 'left');
   assert.equal(pg.win.has('resize'), true);
   pg.tell({ cmd: 'forward' }); await flush();
-  assert.equal(pg.reads.length, 1, 'no new read while the bar stays');
+  assert.equal(pg.reads.length, 2, 'no new read while the bar stays');
 });
 
 test('after close the resize listener is gone and a resize does no work; it comes back on the next show', async () => {
@@ -446,4 +446,105 @@ test('the snap glides in 200 ms, and not at all when the system asks for reduced
   still.drag(still.bar, [500, 760], [20, 400]);
   assert.equal(still.bar.dataset.place, 'left');
   assert.equal(still.bar.animations.length, 0);
+});
+
+// ---------- ticket 31: the drag follows a quick hand; the Listen button moves too; the grip ----------
+test('the pressed element takes the pointer capture at the press, so a quick first move outside the bar still drags', async () => {
+  const pg = await listening();
+  pg.bar.fire('pointerdown', { target: pg.bar, clientX: 410, clientY: 760 });
+  assert.equal(pg.bar.captured, 1, 'captured at the press, before any move (a real first move can land outside the bar)');
+  pg.bar.fire('pointermove', { target: pg.bar, clientX: 450, clientY: 300 });
+  assert.ok(pg.bar.classList.contains('dragging'), 'one big first move starts the drag');
+  pg.bar.fire('pointerup', { target: pg.bar, clientX: 600, clientY: 20 });
+  assert.equal(pg.bar.dataset.place, 'top');
+  assert.equal(pg.bar.captured, null, 'the capture is let go at the end');
+});
+
+test('a press on a button captures on that button, so a short press still clicks it', async () => {
+  const pg = await listening();
+  const btn = Object.assign(pg.$('fwd'), { tagName: 'BUTTON', nodeName: 'BUTTON' });
+  pg.bar.appendChild(btn);
+  pg.bar.fire('pointerdown', { target: btn, clientX: 500, clientY: 760 });
+  assert.equal(btn.captured, 1, 'the button holds the capture: its click goes to it');
+  assert.equal(pg.bar.captured, null);
+  pg.bar.fire('pointerup', { target: btn, clientX: 501, clientY: 760 });
+  assert.equal(btn.captured, null, 'let go at the pointerup');
+  const n = pg.spoken.length;
+  btn.fire('click', { target: btn });
+  assert.equal(pg.spoken.length, n + 1, 'next sentence pressed');
+});
+
+const launchPage = async (opts) => {
+  const pg = loadPage(opts);
+  await flush();
+  const l = pg.$('launch');
+  l.rect = { left: 1140, top: 376, right: 1188, bottom: 424, width: 48, height: 48 };
+  return { pg, l };
+};
+test('the Listen button shows on load and can be dragged to the left edge; it keeps the height where it was let go', async () => {
+  const { pg, l } = await launchPage();
+  assert.equal(l.hidden, false);
+  l.fire('pointerdown', { target: l, clientX: 1164, clientY: 400 });
+  assert.equal(l.captured, 1, 'captured at the press');
+  l.fire('pointermove', { target: l, clientX: 600, clientY: 300 });
+  assert.ok(l.classList.contains('dragging'));
+  assert.equal(l.style.left, '576px', 'it follows the pointer');
+  assert.equal(l.style.top, '276px');
+  l.fire('pointermove', { target: l, clientX: 40, clientY: 200 });
+  l.rect = { left: 16, top: 176, right: 64, bottom: 224, width: 48, height: 48 };  // where it is when let go
+  l.fire('pointerup', { target: l, clientX: 40, clientY: 200 });
+  assert.ok(!l.classList.contains('dragging'));
+  assert.equal(l.dataset.side, 'left', 'snapped to the nearest side edge');
+  assert.equal(l.style.left, '', 'the side comes from the style');
+  assert.match(l.style.top, /^clamp\(var\(--space-2\), calc\(25\.00vh - var\(--control-l\) \/ 2\), calc\(100vh - var\(--control-l\) - var\(--space-2\)\)\)$/,
+    'the height is kept as a part of the window and stays inside it at any size');
+  assert.deepEqual(pg.writes, [{ ra2Launch: { side: 'left', y: 0.25 } }], 'saved once in chrome.storage.local');
+  l.fire('click', { target: l });
+  assert.equal(pg.spoken.length, 0, 'the click that follows the drag does not start the reading');
+  assert.equal(pg.bar.hidden, true);
+});
+
+test('a short press on the Listen button (a move under 6 px) starts the reading and moves nothing', async () => {
+  const { pg, l } = await launchPage();
+  l.fire('pointerdown', { target: l, clientX: 1164, clientY: 400 });
+  l.fire('pointermove', { target: l, clientX: 1167, clientY: 403 });
+  l.fire('pointerup', { target: l, clientX: 1167, clientY: 403 });
+  l.fire('click', { target: l });
+  assert.equal(pg.spoken.length, 1, 'the reading starts');
+  assert.deepEqual(pg.writes, []);
+  assert.equal(l.style.left, undefined);
+});
+
+test('the place of the Listen button comes back on each page and after a reload, also from another tab', async () => {
+  const store = { ra2Launch: { side: 'left', y: 0.8 } };
+  const { pg, l } = await launchPage({ store });
+  assert.equal(l.dataset.side, 'left');
+  assert.match(l.style.top, /calc\(80\.00vh /);
+  pg.changed.forEach((f) => f({ ra2Launch: { newValue: { side: 'right', y: 0.1 } } }, 'local'));
+  assert.equal(l.dataset.side, 'right');
+  assert.match(l.style.top, /calc\(10\.00vh /);
+  const bad = await launchPage({ store: { ra2Launch: { side: 'middle', y: 'x' } } });
+  assert.equal(bad.l.dataset.side, 'right', 'a bad saved value gives the first place');
+  assert.equal(bad.l.style.top, '');
+  const other = await launchPage({ store, hostname: 'another-site.example' });
+  assert.equal(other.l.dataset.side, 'left', 'another site');
+});
+
+test('a cancelled drag of the Listen button leaves it at its old place and saves nothing', async () => {
+  const { pg, l } = await launchPage();
+  l.fire('pointerdown', { target: l, clientX: 1164, clientY: 400 });
+  l.fire('pointermove', { target: l, clientX: 300, clientY: 100 });
+  l.fire('pointercancel', { target: l });
+  assert.equal(l.dataset.side, 'right');
+  assert.equal(l.style.left, '');
+  assert.deepEqual(pg.writes, []);
+});
+
+test('text check: the bar starts with a grip with a Move tooltip and a grab cursor; the Listen button has no drag text copy', () => {
+  const src = readFileSync(CONTENT_JS, 'utf8');
+  assert.match(src, /<div class="bar" id="bar"[^>]*>\s*<span class="msg"[^>]*><\/span>\s*<span class="grip" id="grip" data-tip="Move"/);
+  assert.match(src, /\n\s*\.grip \{[^}]*cursor: grab;/);
+  assert.match(src, /\n\s*\.launch \{[^}]*touch-action: none;/);
+  assert.equal((src.match(/setPointerCapture\(/g) || []).length, 1, 'one drag helper for both');
+  assert.equal((src.match(/= draggable\(/g) || []).length, 2, 'the bar and the Listen button use it');
 });
