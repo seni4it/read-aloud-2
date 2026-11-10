@@ -320,6 +320,21 @@
     }
     return [...groups].filter(([, list]) => list.length).map(([name, list]) => ({ name, voices: list }));
   }
+  // The line with the version of the add-on and the count of the natural voices, at the end of the settings (spec
+  // "Italian voices", ticket 03). A copy of the one in pdf/language.js (a test keeps them equal).
+  function versionLine(version, voices) {
+    const head = version ? `Read Aloud 2, version ${version}.` : '';
+    if (!Array.isArray(voices)) return head;
+    const italian = (voiceGroups(voices).find((g) => g.name === 'Italian') || { voices: [] }).voices.length;
+    const n = voices.length;
+    const tail = italian ? `${n} natural voice${n === 1 ? '' : 's'}, ${italian} Italian.`
+      : 'The voice server is old and has no Italian voice. Restart it.';
+    return head ? `${head} ${tail}` : tail;
+  }
+  // The version of the add-on from its manifest. An old tab has no add-on connection: then no version, and no throw.
+  function addonVersion() {
+    try { return chrome.runtime.getManifest().version || ''; } catch { return ''; }
+  }
   const PAGE_LANG = (document.documentElement.lang || '').toLowerCase();
   let langOf = { segs: null, lang: '' };  // the language of the last reading's Sentences: counted once for each reading
   function pageLang(segs) {
@@ -661,6 +676,8 @@
     .menu h3 { margin: 0 0 var(--space-2); font-size: var(--text-16); line-height: var(--leading-16); }
     .menu h4 { margin: var(--space-3) 0 var(--space-1); font-size: var(--text-12); line-height: var(--leading-12); font-weight: 600; color: var(--color-text-muted); }
     .menu p { margin: 0; color: var(--color-text-muted); }
+    .menu .ver { margin-top: var(--space-3); font-size: var(--text-12); line-height: var(--leading-12); }  /* the version and the voice count */
+    .menu .ver:empty { display: none; }
     .menu button { display: block; width: 100%; height: auto; min-height: var(--control-m); padding: 0 var(--space-3); text-align: left; line-height: var(--control-m); border-radius: var(--radius-1); }
     .menu button.on, .menu button[aria-pressed=true], .rates button[aria-pressed=true] { background: var(--color-surface-raised); font-weight: 700; }
     .places { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-1); }
@@ -704,6 +721,7 @@
       <h4>Voice</h4><div id="voices"></div>
       <h4 id="placeHead">Move player</h4>
       <div class="places" role="group" aria-labelledby="placeHead">${['left', 'right', 'top', 'bottom'].map((p) => `<button id="place-${p}" aria-pressed="false">${p[0].toUpperCase() + p.slice(1)}</button>`).join('')}</div>
+      <p class="ver" id="verLine" role="status"></p>
     </div>
   </div>
   <button class="launch" id="launch" title="Listen to this page (Read Aloud 2). Drag to move it." aria-label="Listen to this page" hidden>${svg('ear')}</button>
@@ -823,6 +841,7 @@
         box.append(b);
       }
     };
+    $('verLine').textContent = versionLine(addonVersion(), v && v.server ? v.natural : null);  // ticket 03
     if (!v) { box.textContent = 'The voices did not load. Close and open the settings again.'; return; }
     for (const g of voiceGroups(v.natural)) add(g.name, g.voices, 'kokoro:');  // English, then Italian (h4 headings)
     if (!v.server) box.append(Object.assign(document.createElement('p'), { textContent: 'Natural voices are off: the voice server is not running.' }));

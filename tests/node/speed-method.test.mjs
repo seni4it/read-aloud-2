@@ -510,7 +510,7 @@ test('review 8: the popup reads the stored setting fresh and writes only the met
   const chrome = {
     tabs: { query: async () => [{ id: 1, url: 'https://example.org/' }], sendMessage: async () => {}, create() {} },
     storage: { sync: { get: async () => ({ ra2: { ...stored } }), set: async (o) => { writes.push(o); stored = o.ra2; } } },
-    runtime: { sendMessage: async () => ({ natural: [], system: [], server: true, methods: ['A', 'B', 'C'] }) },
+    runtime: { sendMessage: async () => ({ natural: [], system: [], server: true, methods: ['A', 'B', 'C'] }), getManifest: () => ({ version: '1' }) },
   };
   const document = { getElementById: el, createElement: () => ({ append() {} }) };
   vm.runInNewContext(readFileSync(EXT + 'popup.js', 'utf8'), { chrome, document, Option: class {}, URL, window: {}, Number, console });

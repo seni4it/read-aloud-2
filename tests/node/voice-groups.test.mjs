@@ -118,8 +118,10 @@ test('Player bar settings: headings English, Italian, then the Mac voice; Sara a
   assert.ok(menu && groups);
   const box = el('div');
   const answer = { server: true, natural: SERVER, system: [{ id: 'Milena', label: 'Milena, Russian' }] };
-  const ctx = { document, Object, String, Map, $: () => box, ask: async () => answer, dead: false, cfg: { voice: 'kokoro:if_sara' }, save() {}, S: {}, play() {} };
-  vm.runInNewContext(`${groups[0]}\n${menu[0]}\nthis.menu = menu;`, ctx);
+  const fns = src.match(/\n  function versionLine\(version, voices\) \{[\s\S]*?\n  \}\n  [\s\S]*?\n  function addonVersion\(\) \{[\s\S]*?\n  \}\n/);  // ticket 03: menu() also writes the version line
+  const line = el('p');
+  const ctx = { document, Object, String, Map, chrome: { runtime: { getManifest: () => ({ version: '1' }) } }, $: (id) => (id === 'verLine' ? line : box), ask: async () => answer, dead: false, cfg: { voice: 'kokoro:if_sara' }, save() {}, S: {}, play() {} };
+  vm.runInNewContext(`${groups[0]}\n${fns[0]}\n${menu[0]}\nthis.menu = menu;`, ctx);
   await ctx.menu();
   assert.deepEqual(headed(box, 'H4', 'BUTTON'), [
     ['English', ['Heart, warm female', 'Michael, deep male', 'Emma, female']],
@@ -138,7 +140,7 @@ async function popupSelect(answer) {
   const chrome = {
     tabs: { query: async () => [{ id: 1, url: 'https://example.org/' }], sendMessage: async () => {}, create() {} },
     storage: { sync: { get: async () => ({ ra2: {} }), set: async () => {} } },
-    runtime: { sendMessage: async () => answer },
+    runtime: { sendMessage: async () => answer, getManifest: () => ({ version: '1' }) },
   };
   class Option { constructor(text, value) { this.tagName = 'OPTION'; this.textContent = text; this.value = value; } }
   vm.runInNewContext(read('extension/popup.js'), { chrome, document: { getElementById: node, createElement: el }, Option, URL, window: {}, Number, String, Map, console });

@@ -65,3 +65,21 @@ export function voiceGroups(voices) {
 
 /** The language group of one voice ({ id, accent }): "English", "Italian", or the name of its accent. */
 export const voiceGroup = (voice) => (voiceGroups([voice])[0] || {}).name || '';
+
+/**
+ * Spec "Italian voices", ticket 03: one line with the version of the add-on and the count of the natural voices, for
+ * the add-on popup, the end of the Player bar settings and the settings panel of the reader.
+ * version: from the add-on manifest at run time ('' for the reader opened from the voice server, which has no add-on).
+ * voices: the /voices list of the voice server; null or undefined when the voice server gives no answer (the "off"
+ * message is a separate line). A list with no Italian voice is an old voice server: it must restart.
+ * content.js and popup.js have a copy (they cannot import); a test keeps the copies equal.
+ */
+export function versionLine(version, voices) {
+  const head = version ? `Read Aloud 2, version ${version}.` : '';
+  if (!Array.isArray(voices)) return head;
+  const italian = (voiceGroups(voices).find((g) => g.name === 'Italian') || { voices: [] }).voices.length;
+  const n = voices.length;
+  const tail = italian ? `${n} natural voice${n === 1 ? '' : 's'}, ${italian} Italian.`
+    : 'The voice server is old and has no Italian voice. Restart it.';
+  return head ? `${head} ${tail}` : tail;
+}

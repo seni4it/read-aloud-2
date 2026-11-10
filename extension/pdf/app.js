@@ -8,7 +8,7 @@ import { setupNotes } from './notes.js';
 import { setupAsk } from './ask.js';
 import { newerPosition } from './position.js';
 import { textLanguage, voiceForLanguage } from './language.js';
-import { voiceGroups } from './language.js';
+import { voiceGroups, versionLine } from './language.js';
 
 // Hand pdf.js an explicit module worker. Left to its own auto-setup it was
 // silently falling back to a main-thread "fake worker", where render() never
@@ -1041,11 +1041,28 @@ if (typeof MutationObserver === 'function') {
 }
 
 // Ticket 21: the settings panel. The settings button opens and closes it; Escape, × or a press outside closes it.
+// Spec "Italian voices", ticket 03: the version of the add-on from its manifest. The reader opened from the voice
+// server is a plain page with no add-on (no chrome.runtime): then no version.
+function addonVersion() {
+  try { return globalThis.chrome?.runtime?.getManifest?.()?.version || ''; } catch { return ''; }
+}
+// The line at the end of the settings panel: the version and the count of the natural voices. The voices of the
+// started natural voice; else (the Mac voice reads) one question to the voice server. No answer: the version only.
+async function showVersionLine() {
+  const line = $('versionLine');
+  if (!line) return;
+  const voices = engines.kokoro.ready && !engines.kokoro.down ? engines.kokoro.listVoices()
+    : await fetch(ServerEngine.SERVER + '/voices', { signal: AbortSignal.timeout(3000) }).then(r => r.json()).then(j => j.voices)
+      .catch(() => null);
+  line.textContent = versionLine(addonVersion(), voices);
+}
+
 // The focus goes into the panel when it opens and back to the settings button when it closes.
 const settingsBtn = $('settingsBtn'), settingsPanel = $('settingsPanel');
 function openSettings() {
   settingsPanel.hidden = false;
   settingsBtn.setAttribute('aria-expanded', 'true');
+  showVersionLine();  // ticket 03 (Italian voices): the version and the voice count at the end of the panel
   els.engineSel.focus?.();
 }
 function closeSettings({ focusBack = true } = {}) {

@@ -19,6 +19,18 @@ function voiceGroups(voices) {
   return [...groups].filter(([, list]) => list.length).map(([name, list]) => ({ name, voices: list }));
 }
 
+// The line with the version of the add-on and the count of the natural voices (spec "Italian voices", ticket 03).
+// A copy of the one in pdf/language.js; a test keeps them equal.
+function versionLine(version, voices) {
+  const head = version ? `Read Aloud 2, version ${version}.` : '';
+  if (!Array.isArray(voices)) return head;
+  const italian = (voiceGroups(voices).find((g) => g.name === 'Italian') || { voices: [] }).voices.length;
+  const n = voices.length;
+  const tail = italian ? `${n} natural voice${n === 1 ? '' : 's'}, ${italian} Italian.`
+    : 'The voice server is old and has no Italian voice. Restart it.';
+  return head ? `${head} ${tail}` : tail;
+}
+
 (async () => {
   [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   try { host = new URL(tab.url).hostname; } catch { host = ''; }
@@ -49,6 +61,7 @@ function voiceGroups(voices) {
   if (v.server) $('method').querySelector('option[value="C"]').disabled = !(v.methods || []).includes('C');  // ticket 06: no ffmpeg on this Mac
   $('voice').value = cfg.voice;
   $('voice').onchange = () => { cfg.voice = $('voice').value; save(); };
+  $('version').textContent = versionLine(chrome.runtime.getManifest().version, v.server ? v.natural : null);
   $('server').innerHTML = v.server ? 'Natural voices: <b>ready</b>.' : 'Natural voices: <b>off</b>. Start the voice server on your Mac (see README).';
 })();
 
