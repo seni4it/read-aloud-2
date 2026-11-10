@@ -101,7 +101,9 @@ the cover as album art, chapter titles as track names). Files go to `Documents/R
 
 ## Test window
 
-`tools/test-window.sh` opens a separate Chrome window with the add-on loaded, without touching your own Chrome.
+`tools/test-window.sh` opens a separate test browser (Chrome for Testing, or the program in `RA2_TEST_CHROME`) with
+the add-on loaded and its own profile, without touching your own Chrome. `tools/test-window.sh stop` stops it. See
+`docs/testing.md`.
 
 ## Tests
 

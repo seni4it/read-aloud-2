@@ -33,9 +33,25 @@ Some of the tests:
 
 The file name of each test says what it covers. Each file starts with a comment that says more.
 
-## Audio cache size
+## Sound memory size
 
-`node tests/pdf-text/audio-cache-size.mjs` prints how much memory the audio cache of the reader (`tts.js`, 60 sentences) holds for the sample PDFs. Add `--private` to include the private books. It prints numbers only, and needs no voice server.
+The reader keeps the sound of the Sentences it made, up to 64 MB (`SOUND_MEMORY_MB` in `extension/pdf/tts.js`). The Sentence that was used least recently goes out first. The Sentence that plays now and the Read-ahead Sentences never go out. The tests are in `tests/node/sound-memory.test.mjs`.
+
+`node tests/pdf-text/audio-cache-size.mjs` prints the limit, how many Sentences of the sample PDFs fit in it, and the most that the memory can hold. That last number is an estimate: the limit plus the three longest Sentences (the one that plays and the Read-ahead). The true number can differ a little, because the voice server engine splits a long Sentence in two pieces. Add `--private` to include the private books. It prints numbers only, and needs no voice server.
+
+## Test window
+
+`tools/test-window.sh` starts a separate test browser with the add-on loaded from `extension/`. Use it for a check by hand, or for a script that uses the DevTools protocol on port 9333.
+
+```sh
+tools/test-window.sh [url]   # start the test browser
+tools/test-window.sh stop    # stop it
+```
+
+- The test browser is the program in the variable `RA2_TEST_CHROME`. When that variable is not set, the script uses the newest Chrome for Testing (or Chromium) in the folders of Puppeteer (`~/.cache/puppeteer`) or Playwright (`~/Library/Caches/ms-playwright`). When it finds none, it stops with a message. It never uses your own Chrome: it refuses a program in `Google Chrome.app`, also through a symbolic link, and any program in an app with the bundle id `com.google.Chrome`.
+- The browser gets its own profile folder in the temporary folder of your user (`$TMPDIR`, or `~/.cache/read-aloud-2-test-window` when `TMPDIR` is not set), or the folder in `RA2_TEST_PROFILE`. It starts with `--use-mock-keychain`, so no keychain question comes. The script refuses a profile folder that is a symbolic link or that belongs to another user.
+- The script starts the program directly and writes its process number (PID) to a file. `stop` stops only that process, and only when it still runs with the test profile folder. The script never uses `pkill`, `killall`, `open -a` or `osascript`, so it cannot touch your own Chrome.
+- A start stops the test browser that the script started before. When another program listens on port 9333, the script stops with a message and changes nothing. It checks the port with `lsof`, or `nc` when there is no `lsof`; with neither, it stops with a message.
 
 ## PDF text comparison check
 
