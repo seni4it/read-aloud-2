@@ -75,3 +75,13 @@ node tests/pdf-text/compare.mjs --update
 The public samples are small PDFs that we made ourselves, so they can be public. They show two columns, lines that start with a number, ligature words and hyphens at line ends. To change them, edit `tests/pdf-text/make_samples.py` and run it with `python3`. Then update the references.
 
 Do not put a book of the owner, its title or its path in the repository.
+
+## Add-on copy on the disk inside the Mac
+
+Chrome loads the add-on unpacked from a folder. When the project is on an external disk and that disk is not ready when Chrome starts, Chrome removes the add-on from its list. So Chrome loads the add-on from a copy in the home folder, not from `extension/`.
+
+```sh
+tools/sync-addon.sh
+```
+
+The script makes `~/read-aloud-2/extension` equal to `extension/` with `rsync`. Set `RA2_ADDON_COPY` for another folder. A git `post-commit` hook that calls the script keeps the copy up to date after each commit; the hook is local and is not in the repository. After a change, reload the add-on in `chrome://extensions`, then reload each open page.
