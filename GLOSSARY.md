@@ -25,6 +25,10 @@ _Avoid_: launcher, Mac app
 **Voice sampler**:
 The page where the owner hears each voice and chooses one.
 
+**Report**:
+The file where the add-on writes each Sentence that it read and each fault, one line for each, with no text of a page.
+_Avoid_: log, error log, events
+
 ### Voices and speech
 
 **Natural voice**:

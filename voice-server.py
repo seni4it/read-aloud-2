@@ -39,8 +39,12 @@ Desktop reader (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
                             {"starts": [...]}, one per space-separated word; null where Kokoro gave none
                             &ahead=1|2|3 marks read-ahead (3 next sentences, 2 under the mouse, 1 on screen, with &batch=):
                             it waits while someone waits to hear a sentence; higher and newer go first
+  POST /log                 the report of the add-on (13 Nov 2026): a JSON list of events, each {t, evt, ...plain
+                            values}; each becomes one line, with the time, of ~/Library/Logs/read-aloud-2-events.log
+                            (READ_ALOUD_EVENTS to change; at 2 MB the file becomes <name>.1). No text of a page is in it.
 
-Version 1 (~/.claude/read-aloud, port 8791) is not touched.
+The chat reader (version 1, ~/.claude/read-aloud, a page on port 8791) reads with the natural voice since
+13 Nov 2026: its page may read /speak, /times and /voices of this server (READER_ORIGINS), and nothing else.
 """
 import collections, functools, math, hashlib, html, logging, select, shlex, socket, itertools, http.server, io, json, mimetypes, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.parse, urllib.request
 
@@ -60,6 +64,16 @@ def own_origins(port):
 
 
 OWN_ORIGINS = own_origins(PORT)
+# The chat reader (Read Aloud for Claude, a page on port 8791) reads with the natural voice (owner's yes of
+# 13 Nov 2026). Its page may read the sound, the word timing and the voice list of this server, and nothing else.
+READER_PORT = os.environ.get('READ_ALOUD_CHAT_READER_PORT', '8791')
+READER_ORIGINS = {f'http://localhost:{READER_PORT}', f'http://127.0.0.1:{READER_PORT}'}
+READER_PATHS = ('/speak', '/times', '/voices')
+# The report of the add-on (owner's yes of 13 Nov 2026): the add-on sends what it did and what went wrong
+# (POST /log). Each event is one line of this file, with the time. No text of a page is in it.
+EVENTS = os.environ.get('READ_ALOUD_EVENTS', os.path.expanduser('~/Library/Logs/read-aloud-2-events.log'))
+EVENTS_MAX = 2 * 1024 * 1024  # then the file is kept as <name>.1 and a new one starts
+_events_lock = threading.Lock()
 MAX_CHARS = 1500  # a sentence, or a paragraph from the PDF viewer
 CACHE_BYTES = 96 * 1024 * 1024  # recent sentences kept as WAV; a count alone let long paragraphs fill 1 GB
 # Ticket 06, the speed method (owner's decision of 10 Nov 2026). A: the voice model speaks at the asked speed (Kokoro's
@@ -396,6 +410,36 @@ def notes_rev_save(bid, rev):
 
 
 POSITION_NUMBERS = ('i', 'total', 'page', 'pages', 'minLeft', 't', 'ct')  # the keys of a reading position; 'at' is text
+
+
+def write_events(events):
+    """Append events of the add-on to the report. Only plain values are kept, and each line stays short."""
+    lines = []
+    for e in events[:300]:
+        if not isinstance(e, dict) or not isinstance(e.get('evt'), str):
+            continue
+        t = e.get('t')
+        at = time.localtime(t / 1000) if isinstance(t, (int, float)) and not isinstance(t, bool) and 1e12 < t < 1e13 else time.localtime()
+        row = {'at': time.strftime('%Y-%m-%d %H:%M:%S', at), 'evt': e['evt'][:40]}
+        for k, v in e.items():
+            if k in ('t', 'evt', 'at') or not isinstance(k, str) or len(row) >= 26:
+                continue
+            if v is None or isinstance(v, (bool, int, float)):
+                row[k[:20]] = v
+            elif isinstance(v, str):
+                row[k[:20]] = v[:200]
+        lines.append(json.dumps(row, ensure_ascii=False, separators=(',', ':')))
+    if not lines:
+        return
+    with _events_lock:
+        try:
+            if os.path.getsize(EVENTS) > EVENTS_MAX:
+                os.replace(EVENTS, EVENTS + '.1')
+        except OSError:
+            pass  # no report yet
+        os.makedirs(os.path.dirname(EVENTS), exist_ok=True)
+        with open(EVENTS, 'a', encoding='utf-8') as f:
+            f.write('\n'.join(lines) + '\n')
 
 
 def content_length(value):
@@ -1371,6 +1415,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     os.execv(sys.executable, [sys.executable] + sys.argv)
                 threading.Thread(target=again, daemon=True).start()
                 return
+            if url.path == '/log':  # the report of the add-on: one line for each event
+                if not 0 < size <= 64 * 1024:
+                    self.send_error(413, 'Too many events')
+                    return
+                try:
+                    events = json.loads(self.rfile.read(size))
+                    if not isinstance(events, list):
+                        raise ValueError('The events must be a list')
+                except ValueError as e:  # json.JSONDecodeError and UnicodeDecodeError are ValueErrors
+                    self.send_error(400, str(e)[:200])
+                    return
+                try:
+                    write_events(events)
+                except OSError:
+                    pass  # a full disk never stops the reading
+                self.copyfile(self.reply(b'{}', 'application/json'), self.wfile)
+                return
             if url.path == '/ocr':  # the text in a picture (a page of a scanned book), by Apple's Vision
                 if not 0 < size <= 40_000_000:
                     self.send_error(413, 'Picture too large')
@@ -1595,7 +1656,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Cache-Control', 'no-store')
         self._cc = False
         origin = self.headers.get('Origin') or ''
-        if origin in OWN_ORIGINS:  # ticket 06, part 1: a page of localhost may read the answers of 127.0.0.1, and back
+        # ticket 06, part 1: a page of localhost may read the answers of 127.0.0.1, and back.
+        # 13 Nov 2026: the chat reader may read the sound, the word timing and the voice list.
+        if origin in OWN_ORIGINS or (origin in READER_ORIGINS and urllib.parse.urlsplit(self.path).path in READER_PATHS):
             self.send_header('Access-Control-Allow-Origin', origin)
         self.send_header('Vary', 'Origin')  # always: the answer depends on the Origin
         super().end_headers()

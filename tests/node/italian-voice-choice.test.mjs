@@ -422,8 +422,10 @@ test('reader: a change in the popup or the web player reaches the open reader', 
 });
 
 // ---------- the version ----------
-test('the add-on version is 2.12.0 (one bump for the spec "Italian voices")', () => {
-  assert.equal(JSON.parse(read('extension/manifest.json')).version, '2.12.0');
+test('the add-on version is 2.12.0 or later (one bump for the spec "Italian voices")', () => {
+  // 13 Nov 2026: version 2.13.0 (the report and the second try of the Natural voice); a later bump must not break this test
+  const [major, minor] = JSON.parse(read('extension/manifest.json')).version.split('.').map(Number);
+  assert.ok(major > 2 || (major === 2 && minor >= 12), 'version ' + JSON.parse(read('extension/manifest.json')).version);
 });
 
 // keep the imports used

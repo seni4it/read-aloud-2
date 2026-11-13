@@ -599,5 +599,80 @@ class OwnOrigins(unittest.TestCase):
         self.assertEqual(self.ask('/ocr', {'Origin': 'https://example.com', 'Access-Control-Request-Method': 'POST'}, 'OPTIONS')[0], 403)
 
 
+class ChatReaderAndReport(unittest.TestCase):
+    """13 Nov 2026. (1) The chat reader (Read Aloud for Claude, port 8791) reads with the natural voice: its page may
+    read the sound, the word timing and the voice list of this server, and nothing else. (2) The report of the
+    add-on: it sends what it did and what went wrong (POST /log), and each event becomes one line of a file."""
+    @classmethod
+    def setUpClass(cls):
+        with socket.socket() as s:
+            s.bind(('127.0.0.1', 0))
+            cls.port = s.getsockname()[1]
+        cls.old = vs.ALLOWED, vs.OWN_ORIGINS, vs.EVENTS, vs.EVENTS_MAX
+        vs.ALLOWED = {f'localhost:{cls.port}', f'127.0.0.1:{cls.port}', f'[::1]:{cls.port}'}
+        vs.OWN_ORIGINS = vs.own_origins(cls.port)
+        vs.EVENTS = os.path.join(TMP, 'events-test.log')
+        cls.srv = vs.Server(('127.0.0.1', cls.port), functools.partial(vs.Handler, directory=HERE))
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        vs.ALLOWED, vs.OWN_ORIGINS, vs.EVENTS, vs.EVENTS_MAX = cls.old
+
+    def ask(self, path, headers=None, method='GET', data=None):
+        req = urllib.request.Request(f'http://127.0.0.1:{self.port}{path}', headers=headers or {}, method=method, data=data)
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, r.headers
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers
+
+    def lines(self):
+        try:
+            with open(vs.EVENTS, encoding='utf-8') as f:
+                return [json.loads(x) for x in f if x.strip()]
+        except OSError:
+            return []
+
+    def test_the_chat_reader_may_read_the_voice_and_nothing_else(self):
+        for origin in ('http://localhost:8791', 'http://127.0.0.1:8791'):
+            for path in ('/voices', '/speak?text=&voice=af_heart', '/times?text=&voice=af_heart'):
+                self.assertEqual(self.ask(path, {'Origin': origin})[1]['Access-Control-Allow-Origin'], origin, path)
+            for path in ('/library.json', '/', '/voices.html'):
+                self.assertIsNone(self.ask(path, {'Origin': origin})[1]['Access-Control-Allow-Origin'], path)
+        self.assertIsNone(self.ask('/voices', {'Origin': 'http://localhost:8792'})[1]['Access-Control-Allow-Origin'])
+
+    def test_the_add_on_writes_its_events_to_the_report(self):
+        before = len(self.lines())
+        events = [{'t': 1763060000000, 'evt': 'say', 'chars': 80, 'wait': 240, 'ms': 4100, 'voice': 'af_heart', 'play': 1.2},
+                  {'t': 1763060004000, 'evt': 'problem', 'deep': {'not': 'kept'}, 'why': 'x' * 900}]
+        code = self.ask('/log', {'Origin': 'chrome-extension://abc'}, 'POST', json.dumps(events).encode())[0]
+        self.assertEqual(code, 200)
+        got = self.lines()[before:]
+        self.assertEqual([x['evt'] for x in got], ['say', 'problem'])
+        self.assertEqual(got[0]['wait'], 240)
+        self.assertRegex(got[0]['at'], r'^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$')  # a time that a person can read
+        self.assertNotIn('deep', got[1])             # only plain values are kept
+        self.assertLessEqual(len(got[1]['why']), 200)  # and each line stays short
+
+    def test_only_the_add_on_and_the_own_pages_may_write_the_report(self):
+        before = len(self.lines())
+        body = json.dumps([{'evt': 'say'}]).encode()
+        self.assertEqual(self.ask('/log', {'Origin': 'https://example.com'}, 'POST', body)[0], 403)
+        self.assertEqual(self.ask('/log', {'Origin': 'http://localhost:8791'}, 'POST', body)[0], 403)  # the chat reader has its own report
+        self.assertEqual(self.ask('/log', {'Origin': 'chrome-extension://abc'}, 'POST', b'not json')[0], 400)
+        self.assertEqual(self.ask('/log', {'Origin': 'chrome-extension://abc'}, 'POST', b'{"evt": "say"}')[0], 400)  # not a list
+        self.assertEqual(len(self.lines()), before)
+
+    def test_the_report_does_not_grow_without_end(self):
+        vs.EVENTS_MAX = 20000
+        body = json.dumps([{'evt': 'say', 'why': 'x' * 150}] * 50).encode()
+        for _ in range(8):
+            self.assertEqual(self.ask('/log', {'Origin': 'chrome-extension://abc'}, 'POST', body)[0], 200)
+        self.assertLess(os.path.getsize(vs.EVENTS), 20000 + len(body) * 2)
+        self.assertTrue(os.path.exists(vs.EVENTS + '.1'))  # the older part is kept in one more file
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -587,6 +587,21 @@ export class KokoroEngine {
 
 /* ------------------------------------------- Read Aloud 2: voices from this Mac */
 
+/**
+ * One line for the report of the add-on (13 Nov 2026): the reader says when the Mac voice takes the place of the
+ * Natural voice, and when the Natural voice is back. In the add-on the background takes the line; in the desktop
+ * app (a page of the voice server) the voice server takes it. No text of a book is in it.
+ */
+function note(evt, data = {}) {
+  try {
+    if (typeof chrome !== 'undefined' && chrome.runtime?.id) {
+      chrome.runtime.sendMessage({ to: 'bg', cmd: 'note', evt, data: { ...data, where: 'reader' }, now: true }).catch(() => {});
+    } else if (typeof location !== 'undefined' && /^https?:$/.test(location.protocol)) {
+      fetch(ServerEngine.SERVER + '/log', { method: 'POST', body: JSON.stringify([{ t: Date.now(), evt, ...data, where: 'reader' }]) }).catch(() => {});
+    }
+  } catch { /* the report is extra: it never stops the reading */ }
+}
+
 /** An error that means: the voice server does not answer (connection refused, or no answer in the time limit). */
 function notAnswering(message) {
   const err = new Error('the voice server does not answer: ' + message);
@@ -732,6 +747,7 @@ export class ServerEngine extends KokoroEngine {
     if (this.down) return;
     this.down = true;
     this.device = ServerEngine.MAC_LABEL;
+    note('mac-voice');
     this.#wait();
   }
 
@@ -745,7 +761,7 @@ export class ServerEngine extends KokoroEngine {
     if (this.asking) return;
     this.asking = true;
     ServerEngine.#ask(ServerEngine.SERVER + '/voices', new AbortController(), ServerEngine.INIT_MS)
-      .then(r => { if (!r.ok) throw new Error('voice server: ' + r.status); this.down = false; this.device = null; this.asking = false; })
+      .then(r => { if (!r.ok) throw new Error('voice server: ' + r.status); this.down = false; this.device = null; this.asking = false; note('natural-voice-back'); })
       .catch(() => this.#wait());
   }
 

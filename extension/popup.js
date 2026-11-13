@@ -87,3 +87,12 @@ $('read').onclick = () => {
     .catch(() => { $('server').textContent = 'This page cannot be read (Chrome pages, the Web Store and PDFs are closed to add-ons). Reload the page if you just installed the add-on.'; });
 };
 $('keys').onclick = (e) => { e.preventDefault(); chrome.tabs.create({ url: 'chrome://extensions/shortcuts' }); };
+// "Report a problem" (13 Nov 2026): a mark in the report of the add-on, with what it does at this moment. The line
+// of the version says that it was saved. Claude reads ~/Library/Logs/read-aloud-2-events.log.
+$('problem').onclick = (e) => {
+  e.preventDefault();
+  chrome.runtime.sendMessage({ to: 'bg', cmd: 'problem', where: 'popup' }).then((r) => {
+    $('version').textContent = r && r.sent ? 'The problem is saved in the report. Tell Claude: read the Read Aloud 2 report.'
+      : 'The problem is saved. It goes into the report when the voice server answers again.';
+  }, () => { $('version').textContent = 'The problem could not be saved. Reload the add-on.'; });
+};

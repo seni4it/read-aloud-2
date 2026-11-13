@@ -95,6 +95,23 @@ In the reader of a library book, **Export audio (MP3)** in the side bar makes on
 the cover as album art, chapter titles as track names). Files go to `Documents/Read Aloud Library/Audio/<book>/`
 (`READ_ALOUD_AUDIO` changes the folder). The reader shows the time left to read at the current speed. The MP3 files are always at speed 1; the speed method does not change them.
 
+## The report, and the second try of the natural voice (version 2.13.0, 13 Nov 2026)
+
+- **The report.** The add-on writes what it did and what went wrong to `~/Library/Logs/read-aloud-2-events.log`
+  (2 MB, then `.1`; `READ_ALOUD_EVENTS` changes the file). One line for each event, with the time, and no text of a
+  page: `say` (a Sentence that was read: `chars`, `wait` in ms before it sounded, `ms` it took, `d` seconds of sound,
+  `heard` the speed that sounded, `rate` the speed that was asked, `play`, `speed`, `method`, `tries`), `speed-off`
+  (heard more than 15 % from the asked speed), `voice-error` (with `try`), `mac-voice` (the Mac voice reads because
+  the Natural voice did not answer), `natural-voice-back`, `sound-lost`, `sound-page-made`, `add-on-start`, `problem`.
+  The background keeps the last 300 lines while the voice server does not answer and sends them later (POST `/log`).
+- **Report a problem.** A link in the popup and a line in the right-click menu write a `problem` line with the
+  state of the add-on. When the owner says that the add-on stopped, waited or read at a wrong speed, read the lines
+  before the last `problem` line.
+- **The second try.** A Sentence of the Natural voice that does not sound is asked 2 more times (after 0.4 s and
+  1.2 s) before the page hears of it. Before, one failed Sentence made the page read with the Mac voice for 5 s or more.
+- The chat reader (`~/.claude/read-aloud`, port 8791) reads with the Natural voice: its page may read `/speak`,
+  `/times` and `/voices` of the voice server.
+
 ## Start the voices at login
 
 `tools/autostart.sh` makes the voice server start when you log in and restart if it stops (a LaunchAgent,

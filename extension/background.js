@@ -37,6 +37,45 @@ async function planFor(rate) {
   const method = (await setting()).method || 'B';
   return soundPlan(method, rate, rate === 1 || method === 'B' ? METHODS : await serverMethods());
 }
+// ---------- the report (owner's yes of 13 Nov 2026) ----------
+// What the add-on did and what went wrong, one line for each event: a Sentence that was read (its length, the wait
+// before it, how long it sounded, its speed), a Natural voice that failed, a second try, a change to the Mac voice,
+// a lost sound page. No text of a page is in it. The lines go to the voice server (POST /log), which writes
+// ~/Library/Logs/read-aloud-2-events.log. While the voice server does not answer, the last 300 lines wait here,
+// also across a restart of this background. "Report a problem" (the popup and the right-click menu) adds a mark.
+const LOG_KEEP = 300;
+let logLine = [], logTimer = null, logBusy = false;
+const kept = () => { try { return chrome.storage.session.get('ra2log').then((r) => (r && Array.isArray(r.ra2log) ? r.ra2log : []), () => []); } catch { return Promise.resolve([]); } };
+const keep = (lines) => { try { Promise.resolve(chrome.storage.session.set({ ra2log: lines })).catch(() => {}); } catch { /* no session storage */ } };
+function note(evt, data = {}, now = false) {
+  logLine.push({ t: Date.now(), evt, ...data });
+  if (logLine.length > LOG_KEEP) logLine.splice(0, logLine.length - LOG_KEEP);
+  if (now) sendLog(); else if (!logTimer) logTimer = setTimeout(sendLog, 4000);
+}
+async function sendLog() {
+  clearTimeout(logTimer); logTimer = null;
+  if (logBusy || !logLine.length) return;
+  logBusy = true;
+  const batch = logLine.splice(0, 200);
+  try {
+    const r = await fetch(SERVER + '/log', { method: 'POST', body: JSON.stringify(batch), signal: AbortSignal.timeout(3000) });
+    if (!r.ok) throw new Error('The voice server refused the report');
+    keep(logLine);
+  } catch {  // the voice server does not answer: the lines wait, and go with the next event
+    logLine = batch.concat(logLine).slice(-LOG_KEEP);
+    keep(logLine);
+  }
+  logBusy = false;
+}
+// One "add-on-start" line for each start of the browser or of the add-on. Chrome stops this background when it is idle
+// and starts it again for each alarm (one a minute): those starts get no line.
+kept().then(async (old) => {
+  if (old.length) logLine = old.concat(logLine).slice(-LOG_KEEP);
+  let first = true;
+  try { first = !(await chrome.storage.session.get('ra2up')).ra2up; if (first) await chrome.storage.session.set({ ra2up: 1 }); } catch { /* no session storage: say it each time */ }
+  if (first) note('add-on-start', { version: chrome.runtime.getManifest().version });
+});
+
 // An add-on page has no content script: it hears events only by a runtime broadcast. A web tab hears them
 // by tabs.sendMessage alone, so its 14 ticks a second are not copied to every add-on page.
 const isAddonPage = (sender) => !sender.tab || String(sender.url || '').startsWith(chrome.runtime.getURL(''));
@@ -48,6 +87,7 @@ const hasOffscreen = () => chrome.runtime.getContexts({ contextTypes: ['OFFSCREE
 async function offscreen() {
   if (await hasOffscreen()) return;
   making = making || chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: ['AUDIO_PLAYBACK'], justification: 'Play the natural voice' })
+    .then(() => note('sound-page-made'))
     .catch((e) => { if (!/single offscreen/i.test(String(e && e.message))) throw e; })
     .finally(() => { making = null; });
   await making;
@@ -56,9 +96,14 @@ async function offscreen() {
 // Resume after a pause: when the audio is gone (the offscreen page was closed, or this background was restarted
 // and forgot who was speaking), the page says the sentence again from the word it reached.
 async function resume(tab, id, ext) {
-  const ok = owner && owner.tab === tab && owner.engine === 'kokoro' && await hasOffscreen()
+  const o = owner;
+  if (o && o.tab === tab && o.engine === 'kokoro') {
+    if (o.pausedAt) { o.pausedMs += Date.now() - o.pausedAt; o.pausedAt = 0; }
+    if (o.again) { toSoundPage(o); return; }  // the pause came in the wait before a new try: the try goes now
+  }
+  const ok = o && o.tab === tab && o.engine === 'kokoro' && await hasOffscreen()
     && await chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'resume' }).catch(() => false);
-  if (!ok) tell(tab, { evt: 'lost', id }, ext);
+  if (!ok) { note('sound-lost', { engine: o ? o.engine : '' }); tell(tab, { evt: 'lost', id }, ext); }
 }
 
 async function tell(tab, msg, ext) {
@@ -75,10 +120,59 @@ function stopOwner(except) {
   owner = null;
 }
 
+// One line of the report for a Sentence that was read to its end. heard: the speed that sounded (the length of the
+// sound divided by the time it took); a Sentence far from the asked speed is marked "speed-off".
+function said(o) {
+  const ms = Date.now() - o.startAt - o.pausedMs;
+  const line = { engine: o.engine === 'kokoro' ? 'natural' : 'mac', voice: o.m.voice || '', chars: String(o.m.text || '').length,
+    wait: o.startAt - o.asked, ms, rate: o.m.rate, tries: o.tries + 1 };
+  if (o.m.fb) line.fb = 1;  // the Mac voice reads because the Natural voice did not answer
+  let evt = 'say';
+  if (o.engine === 'kokoro' && o.plan) {
+    Object.assign(line, { play: +o.plan.rate.toFixed(3), speed: o.plan.speed, method: o.plan.method || 'B' });
+    if (o.d > 0 && ms > 0) {
+      line.d = +o.d.toFixed(2); line.heard = +(o.d * 1000 / ms).toFixed(2);
+      if (!o.touched && o.d >= 2 && Math.abs(line.heard / o.plan.rate - 1) > 0.15) evt = 'speed-off';
+    }
+  }
+  note(evt, line, evt !== 'say');
+}
+
+// Owner's yes of 13 Nov 2026: a Sentence of the Natural voice that does not sound is tried again 2 times (after
+// 0.4 s and 1.2 s) before the page hears of it. Before that, one failed Sentence made the page read with the Mac
+// voice for 5 s or more: another voice and another speed.
+const TRIES = [400, 1200];
+function failed(o, why) {
+  if (owner !== o) return;
+  note('voice-error', { why: String(why).slice(0, 160), try: o.tries + 1, started: o.startAt ? 1 : 0 }, true);
+  if (o.engine === 'kokoro' && !o.startAt && o.tries < TRIES.length) {  // nothing of it was heard: the same Sentence again
+    o.again = true;
+    setTimeout(() => { if (owner === o && !o.pausedAt) toSoundPage(o); }, TRIES[o.tries++]);
+    return;
+  }
+  tell(o.tab, { evt: 'error', id: o.id, why }, o.ext);
+}
+async function toSoundPage(o) {
+  const mine = () => owner === o;
+  o.again = false;
+  const plan = await planFor(o.m.rate);
+  if (!mine()) return;  // a newer sentence came while the setting was read
+  o.plan = plan;
+  try { await offscreen(); } catch (e) { if (mine()) failed(o, 'Audio player did not open: ' + (e && e.message)); return; }
+  if (!mine()) return;  // a newer sentence came while the sound page opened
+  // The sound page answers true when it took the sentence. No answer (it was closing, or not listening yet):
+  // the Sentence is tried again, and after the last try the page gets an error, so it does not stay in 'playing' with no sound.
+  chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'speak', tab: o.tab, id: o.id, text: o.m.text, voice: o.m.voice, next: o.m.next || [], ...plan })
+    .then((took) => { if (took !== true && mine()) failed(o, 'Audio player did not take the sentence.'); },
+      (e) => { if (mine()) failed(o, 'Audio player: ' + (e && e.message)); });
+}
+
 async function speak(tab, m, ext) {
   if (owner && (owner.tab !== tab || owner.engine !== m.engine)) stopOwner(tab);
-  owner = { tab, id: m.id, engine: m.engine, ext };
-  const mine = () => owner && owner.tab === tab && owner.id === m.id;
+  const was = owner;
+  const o = owner = { tab, id: m.id, engine: m.engine, ext, m, asked: Date.now(), startAt: 0, d: 0, tries: 0, pausedAt: 0, pausedMs: 0, touched: false, again: false };
+  const mine = () => owner === o;
+  if (m.fb && !(was && was.m && was.m.fb)) note('mac-voice', { voice: m.voice || '' }, true);  // the Natural voice did not answer: the Mac voice reads from here
   if (m.engine === 'system') {
     chrome.tts.stop();
     chrome.tts.speak(m.text, {
@@ -86,23 +180,14 @@ async function speak(tab, m, ext) {
       onEvent: (e) => {
         if (!mine()) return;  // a late event of a tab that lost the voice (ids are counted per tab and can be equal)
         if (e.type === 'word') tell(tab, { evt: 'word', id: m.id, char: e.charIndex }, ext);
-        else if (e.type === 'start') tell(tab, { evt: 'start', id: m.id }, ext);
-        else if (e.type === 'end') tell(tab, { evt: 'end', id: m.id }, ext);
-        else if (e.type === 'error') tell(tab, { evt: 'error', id: m.id, why: e.errorMessage || 'voice error' }, ext);
+        else if (e.type === 'start') { o.startAt = Date.now(); tell(tab, { evt: 'start', id: m.id }, ext); }
+        else if (e.type === 'end') { if (o.startAt) said(o); tell(tab, { evt: 'end', id: m.id }, ext); }
+        else if (e.type === 'error') { note('voice-error', { why: String(e.errorMessage || 'voice error').slice(0, 160), engine: 'mac' }, true); tell(tab, { evt: 'error', id: m.id, why: e.errorMessage || 'voice error' }, ext); }
       },
     });
     return;
   }
-  const plan = await planFor(m.rate);
-  if (!mine()) return;  // a newer sentence came while the setting was read
-  owner.plan = plan;
-  try { await offscreen(); } catch (e) { if (mine()) tell(tab, { evt: 'error', id: m.id, why: 'Audio player did not open: ' + (e && e.message) }, ext); return; }
-  if (!mine()) return;  // a newer sentence came while the sound page opened
-  // The sound page answers true when it took the sentence. No answer (it was closing, or not listening yet):
-  // the page gets an error, so it does not stay in 'playing' with no sound.
-  chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'speak', tab, id: m.id, text: m.text, voice: m.voice, next: m.next || [], ...plan })
-    .then((took) => { if (took !== true && mine()) tell(tab, { evt: 'error', id: m.id, why: 'Audio player did not take the sentence.' }, ext); },
-      (e) => { if (mine()) tell(tab, { evt: 'error', id: m.id, why: 'Audio player: ' + (e && e.message) }, ext); });
+  toSoundPage(o);
 }
 
 chrome.runtime.onMessage.addListener((m, sender, reply) => {
@@ -118,6 +203,7 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     }
     else if (m.cmd === 'resume') resume(tab, m.id, ext);
     else if (m.cmd === 'pause' && owner && owner.tab === tab && owner.engine === 'kokoro') {
+      if (!owner.pausedAt) owner.pausedAt = Date.now();
       chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'pause' }).catch(() => {});
     } else if (m.cmd === 'rate' && owner && owner.tab === tab && owner.engine === 'kokoro') {
       // Ticket 06: a sound of the same speed (B, or speed 1) only changes its rate. A sound made at another speed
@@ -125,6 +211,7 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
       const was = owner;
       planFor(m.rate).then((plan) => {
         if (owner !== was) return;
+        was.touched = true;  // the speed changed in this Sentence: its heard speed says nothing
         if (was.plan && plan.speed === was.plan.speed && plan.method === was.plan.method) {
           was.plan = plan;
           chrome.runtime.sendMessage({ to: 'offscreen', cmd: 'rate', rate: plan.rate, keepPitch: plan.keepPitch }).catch(() => {});
@@ -132,11 +219,36 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
       });
     } else if (m.cmd === 'voices') { voices().then(reply); return true; }
     else if (m.cmd === 'myTab') reply(tab);
+    else if (m.cmd === 'note' && typeof m.evt === 'string') note(m.evt, { ...(m.data || {}), tab }, !!m.now);  // a line from a page of the add-on
+    else if (m.cmd === 'problem') { problem(m.where || 'page', tab).then(reply); return true; }
   } else if (m.to === 'bg-evt') {  // from the offscreen page
     // the tab as well as the id: ids are counted per tab, so tab A's late 'end' can carry tab B's id
-    if (owner && owner.id === m.id && owner.tab === m.tab) tell(m.tab, { evt: m.evt, id: m.id, t: m.t, d: m.d, why: m.why, starts: m.starts }, owner.ext);
+    const o = owner;
+    if (!o || o.id !== m.id || o.tab !== m.tab) return;
+    if (m.evt === 'start') { o.startAt = Date.now(); o.pausedMs = 0; if (o.pausedAt) o.pausedAt = o.startAt; if (m.d > 0) o.d = m.d; }
+    else if (m.evt === 'tick' && m.d > 0) o.d = m.d;
+    else if (m.evt === 'end') { if (o.startAt) said(o); }
+    else if (m.evt === 'error') { failed(o, m.why || 'The voice did not play.'); return; }  // tried again first
+    tell(m.tab, { evt: m.evt, id: m.id, t: m.t, d: m.d, why: m.why, starts: m.starts }, o.ext);
   }
 });
+
+// "Report a problem": a mark in the report with the state of the add-on at that moment, sent at once.
+async function problem(where, tab) {
+  const o = owner;
+  let server = 0;
+  try { server = (await fetch(SERVER + '/voices', { signal: AbortSignal.timeout(2000) })).ok ? 1 : 0; } catch { server = 0; }
+  let page = null;
+  try { const [t] = await chrome.tabs.query({ active: true, currentWindow: true }); if (t) page = await chrome.tabs.sendMessage(t.id, { to: 'page', cmd: 'state' }); } catch { page = null; }
+  const st = await setting();
+  note('problem', { where, version: chrome.runtime.getManifest().version, server, soundPage: (await hasOffscreen()) ? 1 : 0,
+    reading: o ? 1 : 0, engine: o ? o.engine : '', voice: o && o.m ? o.m.voice || '' : '', asked: o && o.m ? o.m.rate : 0,
+    play: o && o.plan ? o.plan.rate : 0, speed: o && o.plan ? o.plan.speed : 0, method: st.method || 'B', setRate: Number(st.rate) || 0,
+    tries: o ? o.tries + 1 : 0, started: o && o.startAt ? 1 : 0, waiting: logLine.length,
+    ...(page && typeof page === 'object' ? { playing: page.playing ? 1 : 0, paused: page.paused ? 1 : 0, macNow: page.natOff ? 1 : 0, sentence: page.i, sentences: page.n, pageVoice: String(page.voice || '').slice(0, 40) } : {}) });
+  await sendLog();
+  return { saved: true, sent: logLine.length === 0 };
+}
 
 async function voices() {
   const out = { natural: [], system: [], server: false };
@@ -209,9 +321,11 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({ id: 'sel', title: 'Listen to the selected text', contexts: ['selection'] });
   chrome.contextMenus.create({ id: 'here', title: 'Listen from here', contexts: ['page', 'link'] });
   chrome.contextMenus.create({ id: 'img', title: 'Read the text in this picture', contexts: ['image'] });
+  chrome.contextMenus.create({ id: 'problem', title: 'Report a problem with the reading', contexts: ['page', 'selection', 'link'] });
 });
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === 'img') { pictureText(info.srcUrl, tab); return; }
+  if (info.menuItemId === 'problem') { problem('menu', tab && tab.id); return; }
   chrome.tabs.sendMessage(tab.id, { to: 'page', cmd: info.menuItemId === 'sel' ? 'readSelection' : 'readHere' }).catch(() => {});
 });
 chrome.commands.onCommand.addListener(async (cmd) => {

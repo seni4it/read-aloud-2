@@ -396,7 +396,7 @@
   }
   function retryNatural() {  // ask the server every 5 s; the next sentence after it answers is natural again
     cancel(natTimer);
-    natTimer = later(() => ask({ cmd: 'voices' }).then((v) => { knowVoices(v); if (v && v.server) natOff = false; else if (!dead) retryNatural(); }), 5000);
+    natTimer = later(() => ask({ cmd: 'voices' }).then((v) => { knowVoices(v); if (v && v.server) { natOff = false; send({ cmd: 'note', evt: 'natural-voice-back' }); } else if (!dead) retryNatural(); }), 5000);
   }
   let cur = cfg.voice;  // the voice of the sentence being read (set by play)
   const engine = () => (cur.startsWith('kokoro:') ? 'kokoro' : 'system');
@@ -420,7 +420,8 @@
     dress(seg.b.parts[0].node);  // text in a shadow root: the highlight style goes into that root
     hlSent && (hlSent.clear(), hlSent.add(rangeOf(seg.b, whole.start, whole.end)));
     mark(w);
-    send({ cmd: 'speak', id: S.id, engine: engine(), voice: voiceId(), rate: cfg.rate, text,
+    // fb: the Mac voice reads because the Natural voice did not answer (a line of the report, 13 Nov 2026)
+    send({ cmd: 'speak', id: S.id, engine: engine(), voice: voiceId(), rate: cfg.rate, text, fb: natOff && cfg.voice.startsWith('kokoro:') ? 1 : 0,
       next: S.segs.slice(i + 1, i + 3).map((s) => s.say) });
     ui();
   }
@@ -509,8 +510,10 @@
       else { stop(); ui(m.why || 'The voice stopped.'); }
     }
   }
-  chrome.runtime.onMessage.addListener((m) => {
+  chrome.runtime.onMessage.addListener((m, sender, reply) => {
     if (dead || m.to !== 'page' || (m.tab !== undefined && S.tab !== null && m.tab !== S.tab)) return;
+    // "Report a problem" asks what this page does now (no text of the page goes into the report)
+    if (m.cmd === 'state') { reply({ playing: !!S.playing, paused: !!S.paused, natOff: !!natOff, i: S.i, n: S.segs ? S.segs.length : 0, voice: cur || cfg.voice }); return; }
     if (m.evt) onEvent(m);
     else if (m.cmd === 'readSelection') readSelection();
     else if (m.cmd === 'readHere') readAt(lastMenu.x, lastMenu.y);
