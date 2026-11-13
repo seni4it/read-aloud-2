@@ -259,7 +259,7 @@ async function voices() {
     out.natural = j.voices; out.server = true;
     offered = Array.isArray(j.speed && j.speed.methods) ? j.speed.methods : ['B']; offeredAt = Date.now();  // ticket 06
     out.methods = offered;
-  } catch { /* voice server off: system voices only */ }
+  } catch { /* voice server off: Mac voices only */ }
   // built-in voices: only Russian (Kokoro has none); Milena, the Mac's own, first
   out.system = (await chrome.tts.getVoices()).filter((v) => /^ru/i.test(v.lang || '') && !v.remote)
     .sort((a, b) => (b.voiceName === 'Milena') - (a.voiceName === 'Milena')).slice(0, 1)

@@ -103,7 +103,7 @@ test('tab B reads after tab A: a late end event of tab A is not passed on', asyn
   assert.equal(b.sentToTabs.filter(([t, m]) => t === 2 && m.evt === 'tick').length, 1, 'tab B gets its tick');
 });
 
-test('system voice: a late voice event of tab A is not passed on after tab B reads', async () => {
+test('Mac voice: a late voice event of tab A is not passed on after tab B reads', async () => {
   const b = loadBackground();
   const handlers = [];
   b.chrome.tts.speak = (text, o) => handlers.push(o.onEvent);

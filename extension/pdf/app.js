@@ -208,7 +208,7 @@ async function selectEngine(id) {
 
 
   // Switch identity first: the voice list must show this engine's voices
-  // right away, otherwise you sit looking at system voices while the model
+  // right away, otherwise you sit looking at Mac voices while the model
   // downloads and pressing play gets you the wrong voice entirely.
   engine = next;
   els.engineSel.value = id;
@@ -527,7 +527,7 @@ function renderToc() {
   });
 }
 
-/* ---------------------------------------------------------------- progress */
+/* ------------------------------------------------------- reading position */
 
 /**
  * Remember the place by what it SAYS, not by its number.
@@ -535,7 +535,7 @@ function renderToc() {
  * The position used to be stored as an index into state.sentences. Every
  * improvement to extraction changes how the text divides into blocks — one
  * change moved a 506-page book from 830 blocks to 828 — and every saved
- * bookmark then pointed at different text, silently. The reader comes back to
+ * reading position then pointed at different text, silently. The reader comes back to
  * the wrong paragraph and has no idea why.
  *
  * Store a fingerprint of the block's opening words alongside the index. On

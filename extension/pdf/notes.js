@@ -196,7 +196,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
     if (!segs.length || !canChange()) return;
     const text = segs.map((g) => state.sentences[g.si].text.slice(g.a, g.b)).join(' ').replace(/\s+/g, ' ').trim();
     if (!text) return;
-    // the same text saved twice (the marker pressed twice on one sentence) is kept once
+    // the same text saved twice (the highlight button pressed twice on one sentence) is kept once
     if (notes.some((n) => n.segs.length === segs.length && n.segs.every((g, i) => g.si === segs[i].si && g.a === segs[i].a && g.b === segs[i].b))) return;
     const first = state.sentences[segs[0].si];
     const own = first.charOwners && first.charOwners[segs[0].a];
@@ -209,7 +209,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
     if (made && kp.ok && kp.setting.auto && kp.setting.cwd && color === kp.setting.group) kpSend([made]).then(list);
   }
 
-  // ---------- 1. the sentence being read: the marker button in the player bar ----------
+  // ---------- 1. the sentence being read: the highlight button in the player bar ----------
   function markReading() {
     const s = state.sentences[state.index];
     if (!s || !canChange()) return;
@@ -390,7 +390,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
     if (unchecked && lib) box.insertAdjacentHTML('beforeend', `<p class="notes-empty" role="alert">${esc(OLD_SERVER)}</p>`);
     if (!shown.length) {
       box.insertAdjacentHTML('beforeend', `<p class="notes-empty">${!ready ? esc(unread) : notes.length ? 'No highlights in this group.'
-        : 'No highlights yet. Select text on the page and choose a group, or press the marker button while it reads.'}</p>`);
+        : 'No highlights yet. Select text on the page and choose a group, or press the highlight button while it reads.'}</p>`);
     }
     rowButtons = [];
     for (const n of shown) {

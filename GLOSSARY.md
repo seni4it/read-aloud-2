@@ -90,7 +90,7 @@ _Avoid_: filter
 ### Documents
 
 **Library**:
-The collection of books that the desktop app shows.
+The books that the desktop app shows.
 _Avoid_: bookshelf, collection
 
 **Book**:

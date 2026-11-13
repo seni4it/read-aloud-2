@@ -40,7 +40,7 @@
     <span id="status" role="status"></span>
   </div>
 
-  <h2>Natural voices (Kokoro)</h2>
+  <h2>Natural voices</h2>
   <p class="hint">The first voice may take 10 seconds while the engine wakes up. After that each one starts in about 1 second.</p>
   <div id="natural"></div>
 
@@ -91,7 +91,7 @@
     }
   }).catch(() => { $('natural').textContent = 'The voice server is not running.'; });
 
-  // system voices
+  // Mac voices
   function listSystem() {
     const vs = speechSynthesis.getVoices().filter((v) => /^en|^it/.test(v.lang) && !/Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Wobble|Good News|Jester|Organ|Superstar|Whisper|Zarvox|Trinoids|Albert|Fred|Junior|Ralph|Kathy|Grandma|Grandpa|Rocko|Eddy|Flo|Reed|Sandy|Shelley/.test(v.name));
     $('system').replaceChildren(...vs.slice(0, 24).map((v) => card(v.name, v.lang + (v.localService ? ' · on this Mac' : ' · Google, online'), (b) => {

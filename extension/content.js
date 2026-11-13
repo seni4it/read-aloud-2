@@ -500,7 +500,7 @@
       let goal = (m.t / m.d) * S.total, k = 0;
       while (k < S.weights.length - 1 && goal > S.weights[k]) goal -= S.weights[k++];
       if (S.base + k !== S.w) mark(S.base + k);
-    } else if (m.evt === 'word') {  // system voice: it says which character it reached
+    } else if (m.evt === 'word') {  // Mac voice: it says which character it reached
       let k = 0; while (k < S.words.length - 1 && S.words[k + 1] <= m.char) k++;
       mark(S.base + k);
     } else if (m.evt === 'end') play(S.i + 1);

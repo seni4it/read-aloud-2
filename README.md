@@ -69,7 +69,7 @@ server when needed and opens your library in its own window (Chrome, without tab
 - Each book shows its cover, how far you have read, and when. Search, sort, remove (the file goes to the Trash).
 - Click a book to read it in the same PDF reader as the add-on, with **← Library** to go back.
 - **Highlights:** select text on the page and choose a group (Important, Idea, Question, Review; rename them in the
-  list), or press the marker button in the player while it reads to keep the sentence being read. The
+  list), or press the highlight button in the player bar while it reads to keep the sentence being read. The
   **Highlights** tab beside Contents lists them by group; click one to go to it. Library books keep them in
   `Documents/Read Aloud Library/.notes/<id>.json`; PDFs opened in Chrome keep them in the browser.
 - **Ask Claude:** the **Ask** tab beside Highlights opens the conversation in a panel on the right side of the page (drag its left edge to make it wider) and a bar across the bottom of the page, above the player: the answer player (back, Play/Pause, Stop), the question box, Ask Claude, the model, the sources and the Hostile check switch. The bar is never redrawn, so dictation (Wispr Flow) is not cut off. Type a question about the book, or select words on the page

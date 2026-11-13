@@ -74,7 +74,7 @@ READER_PATHS = ('/speak', '/times', '/voices')
 EVENTS = os.environ.get('READ_ALOUD_EVENTS', os.path.expanduser('~/Library/Logs/read-aloud-2-events.log'))
 EVENTS_MAX = 2 * 1024 * 1024  # then the file is kept as <name>.1 and a new one starts
 _events_lock = threading.Lock()
-MAX_CHARS = 1500  # a sentence, or a paragraph from the PDF viewer
+MAX_CHARS = 1500  # a sentence, or a paragraph from the Reader
 CACHE_BYTES = 96 * 1024 * 1024  # recent sentences kept as WAV; a count alone let long paragraphs fill 1 GB
 # Ticket 06, the speed method (owner's decision of 10 Nov 2026). A: the voice model speaks at the asked speed (Kokoro's
 # speed parameter), played at rate 1: the pitch stays. C: the speed-1 sound stretched by ffmpeg (atempo), pitch kept.

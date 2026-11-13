@@ -61,7 +61,7 @@ function voicedSpan(buffer) {
 export class SystemEngine {
   constructor() {
     this.id = 'system';
-    this.label = 'System voices';
+    this.label = 'Mac voices';
     this.synth = window.speechSynthesis;
     this.voices = [];
     this.current = null;
@@ -95,7 +95,7 @@ export class SystemEngine {
   }
 
   listVoices() {
-    // Rank the good ones first: enhanced/premium system voices are a large
+    // Rank the good ones first: enhanced/premium Mac voices are a large
     // step up from the default compact ones and users rarely find them.
     const score = v => {
       let s = 0;
@@ -436,7 +436,7 @@ export class KokoroEngine {
 
   constructor() {
     this.id = 'kokoro';
-    this.label = 'Kokoro (natural, on-device)';
+    this.label = 'Natural voice (in the browser)';
     this.worker = null;
     this.ctx = null;
     this.handle = { source: null, raf: null, tickIsTimer: false };
