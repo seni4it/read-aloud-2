@@ -206,8 +206,57 @@ function cancelTick(handle) {
   handle.raf = null;
 }
 
-/** Plays an AudioBuffer, firing onWord as the estimated schedule advances. */
-function playBuffer(ctx, buffer, sentence, rate, handle, { onWord, onEnd }) {
+/*
+ * A sound at a speed other than 1, with its pitch kept. The owner, 14 Nov 2026: "Make the desktop application use
+ * the same voice that is used in Google Chrome in the extension". A source of the audio context plays faster with a
+ * higher pitch: at speed 1.2 the natural voice was 3 semitones higher and sounded like another voice. The sound
+ * element of the browser stretches the sound and keeps its pitch (preservesPitch); the web player of the add-on
+ * always played this way. So the reader plays a sound at another speed in a sound element.
+ */
+const canKeepPitch = () => typeof Audio === 'function' && typeof Blob === 'function' && typeof URL === 'function' && typeof URL.createObjectURL === 'function';
+
+/** The samples as a WAV file (16 bits, one channel): what a sound element can play. */
+function wavOf(data, sampleRate) {
+  const view = new DataView(new ArrayBuffer(44 + data.length * 2));
+  const text = (at, word) => { for (let i = 0; i < word.length; i++) view.setUint8(at + i, word.charCodeAt(i)); };
+  text(0, 'RIFF'); view.setUint32(4, 36 + data.length * 2, true); text(8, 'WAVEfmt ');
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  text(36, 'data'); view.setUint32(40, data.length * 2, true);
+  for (let i = 0; i < data.length; i++) {
+    const x = Math.max(-1, Math.min(1, data[i]));
+    view.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7FFF, true);
+  }
+  return new Blob([view.buffer], { type: 'audio/wav' });
+}
+
+/** A sound element that plays buffer at rate with the pitch kept. It has the stop() and the onended of a source. */
+function keptPitchSource(buffer, rate) {
+  const url = URL.createObjectURL(wavOf(buffer.getChannelData(0), buffer.sampleRate));
+  const el = new Audio();
+  el.preservesPitch = true;
+  el.src = url;
+  el.playbackRate = rate;  // after src: a new src puts the rate back to 1
+  const source = {
+    el, onended: null, freed: false,
+    free() {  // the browser lets go of the file of the sound
+      if (source.freed) return;
+      source.freed = true;
+      el.onended = null;
+      el.removeAttribute('src'); el.load?.();
+      URL.revokeObjectURL(url);
+    },
+    stop() { el.pause(); source.free(); },
+  };
+  el.onended = () => { source.free(); source.onended?.(); };
+  return source;
+}
+
+/**
+ * Plays an AudioBuffer, firing onWord as the estimated schedule advances. plain: play in the audio context also at
+ * another speed (the pitch goes up), for a browser that did not play the sound element.
+ */
+function playBuffer(ctx, buffer, sentence, rate, handle, { onWord, onEnd }, plain = false) {
   // If anything is still sounding, silence it before starting — two overlapping
   // sources is exactly what "it read the paragraph twice" sounds like.
   if (handle.source) {
@@ -218,10 +267,13 @@ function playBuffer(ctx, buffer, sentence, rate, handle, { onWord, onEnd }) {
   }
   cancelTick(handle);
 
-  const source = ctx.createBufferSource();
-  source.buffer = buffer;
-  source.playbackRate.value = rate;
-  source.connect(ctx.destination);
+  const kept = !plain && Math.abs(rate - 1) > 0.005 && canKeepPitch();  // methods A and C play at rate 1: no element
+  const source = kept ? keptPitchSource(buffer, rate) : ctx.createBufferSource();
+  if (!kept) {
+    source.buffer = buffer;
+    source.playbackRate.value = rate;
+    source.connect(ctx.destination);
+  }
 
   const voiced = voicedSpan(buffer);
   let schedule = scheduleWords(sentence.text, voiced.duration / rate)
@@ -232,12 +284,15 @@ function playBuffer(ctx, buffer, sentence, rate, handle, { onWord, onEnd }) {
     schedule = schedule.map((w, i) => (starts[i] === null ? null : { ...w, at: starts[i] / rate })).filter(Boolean);
   }
   const startedAt = ctx.currentTime;
+  // The time of this sound that passed, in seconds of the clock. A sound element has its own clock: it can start a
+  // moment after play().
+  const passed = kept ? () => source.el.currentTime / rate : () => ctx.currentTime - startedAt;
   // The ear hears the sound this much later than the clock says (Bluetooth headphones: about 0.2 s).
   const delay = ctx.outputLatency || ctx.baseLatency || 0;
   let cursor = 0;
 
   const tick = () => {
-    const elapsed = ctx.currentTime - startedAt - delay;
+    const elapsed = passed() - delay;
     while (cursor < schedule.length && schedule[cursor].at <= elapsed) {
       const s = schedule[cursor++];
       onWord?.(s.start, s.end - s.start);
@@ -261,7 +316,15 @@ function playBuffer(ctx, buffer, sentence, rate, handle, { onWord, onEnd }) {
   };
 
   handle.source = source;
-  source.start();
+  if (!kept) { source.start(); return; }
+  // The browser did not play the element: the sound plays in the audio context (faster, with a higher pitch). Never silence.
+  Promise.resolve().then(() => source.el.play()).catch(() => {
+    if (handle.source !== source) return;  // a stop came first (it ends a play() that waits), or a newer sound
+    source.onended = null;
+    source.stop();
+    handle.source = null;
+    playBuffer(ctx, buffer, sentence, rate, handle, { onWord, onEnd }, true);
+  });
 }
 
 /* ------------------------------------------------------------ sound memory */
@@ -371,7 +434,8 @@ const soundKey = (voiceId, text, plan) => voiceId + '\u0000' + text + (plan && p
 /**
  * The speed method, a setting (owner's decision of 10 Nov 2026). A, the default: the voice model makes the speech at
  * the asked speed and it plays at rate 1, so the pitch stays. C: the voice server stretches the speed-1 sound with
- * ffmpeg, pitch kept (added for comparison). B: the speed-1 sound plays faster, the pitch goes up (the method before).
+ * ffmpeg, pitch kept (added for comparison). B: the speed-1 sound plays faster and the browser keeps its pitch (a sound
+ * element, see keptPitchSource; until 14 Nov 2026 the reader raised the pitch, and the web player never did).
  * The same labels are in pdf/index.html (methodSel) and popup.html (method); a test keeps them equal.
  */
 export const SPEED_METHODS = [

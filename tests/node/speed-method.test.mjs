@@ -17,7 +17,7 @@ const flush = async (n = 20) => { for (let i = 0; i < n; i++) await new Promise(
 const RATE = 1000;  // the fake decode: 1000 samples a second, 4000 bytes a second
 
 // tts.js with a fake voice server and a fake clock. server.methods: what /voices says (null: an old server, no "speed").
-function loadTts({ location, methods = ['A', 'B', 'C'] } = {}) {
+function loadTts({ location, methods = ['A', 'B', 'C'], element = false, refusePlay = false } = {}) {
   const clock = { now: 0 };
   const timers = [];
   let frames = [];
@@ -61,6 +61,31 @@ function loadTts({ location, methods = ['A', 'B', 'C'] } = {}) {
       return { sampleRate: RATE, getChannelData: () => data };
     }
   }
+  // The sound element of the browser (14 Nov 2026): it plays a WAV file at a speed and keeps the pitch. `element: true`
+  // gives the reader such an element; without it the reader has only the audio context, as an old browser.
+  const elements = [], blobs = new Map(), freed = [];
+  class Blob { constructor(parts, opts) { this.parts = parts; this.type = opts && opts.type; } }
+  class FakeURL extends URL {
+    static createObjectURL(blob) { const u = 'blob:test/' + (blobs.size + 1); blobs.set(u, blob); return u; }
+    static revokeObjectURL(u) { freed.push(u); }
+  }
+  class Audio {
+    constructor() { this.playbackRate = 1; this.preservesPitch = undefined; this.onended = null; this.onerror = null; this.paused = true; this.address = ''; elements.push(this); }
+    set src(v) { this.address = v; this.blob = blobs.get(v); }
+    get src() { return this.address; }
+    get wav() { const part = this.blob.parts[0]; return new DataView(part.buffer || part); }
+    get duration() { return this.wav.getUint32(40, true) / 2 / this.wav.getUint32(24, true); }  // the data bytes and the sample rate of the WAV header
+    get currentTime() { return this.startedAt == null ? 0 : Math.min(this.duration, ((clock.now - this.startedAt) / 1000) * this.playbackRate); }
+    play() {
+      if (refusePlay) return Promise.reject(Object.assign(new Error('play() was refused'), { name: 'NotAllowedError' }));
+      this.paused = false; this.startedAt = clock.now;
+      this.timer = setTimeout(() => { this.paused = true; this.onended?.(); }, (this.duration / this.playbackRate) * 1000);
+      return Promise.resolve();
+    }
+    pause() { this.paused = true; clearTimeout(this.timer); }
+    removeAttribute() { this.address = ''; }
+    load() {}
+  }
   const said = [];
   const speechSynthesis = {
     speaking: false, paused: false, getVoices: () => [{ voiceURI: 'mac', name: 'Samantha', lang: 'en-US', localService: true }],
@@ -68,7 +93,8 @@ function loadTts({ location, methods = ['A', 'B', 'C'] } = {}) {
   };
   class SpeechSynthesisUtterance { constructor(text) { this.text = text; } }
   const context = vm.createContext({
-    window: { speechSynthesis, AudioContext }, document: { hidden: false }, console, URL, AbortController, Promise, Error, TypeError,
+    window: { speechSynthesis, AudioContext }, document: { hidden: false }, console, URL: element ? FakeURL : URL, AbortController, Promise, Error, TypeError,
+    ...(element ? { Audio, Blob } : {}),
     Set, Map, Math, Number, fetch, AudioContext, OfflineAudioContext, SpeechSynthesisUtterance, location,
     setTimeout, clearTimeout, setInterval: () => ({}), clearInterval() {},
     requestAnimationFrame: (fn) => { const f = { fn }; frames.push(f); return f; }, cancelAnimationFrame: (f) => { if (f) f.fn = null; },
@@ -86,7 +112,7 @@ function loadTts({ location, methods = ['A', 'B', 'C'] } = {}) {
       await flush(3);
     }
   }
-  return { ...api, clock, server, sounds, said, advance };
+  return { ...api, clock, server, sounds, said, advance, elements, freed };
 }
 
 const line = (i) => ({ text: `Made line number ${i} for the test.`, charOwners: [] });
@@ -179,6 +205,8 @@ test('method A: the server is asked for the speed, the sound plays at rate 1, an
   assert.deepEqual([...engine.cache.keys()], ['af_heart\u0000' + line(1).text + '\u0000A2']);
 });
 
+// Without a sound element (an old browser, and these fakes), B plays in the audio context: faster, and the pitch goes up.
+// With a sound element the pitch stays: see "the pitch stays in the reader" at the end of this file.
 test('method B: the speed-1 sound, played faster (as before)', async () => {
   const t = loadTts();
   const engine = await ready(t, 'B', 2);
@@ -581,4 +609,87 @@ test('review 1: with ffmpeg, the stored C is shown and the hint is hidden', asyn
   assert.equal(r.byId('methodSel').value, 'C');
   assert.equal(r.byId('methodSel').opts.C.disabled, false);
   assert.equal(r.byId('methodHint').hidden, true);
+});
+
+// ---------------------------------------------------------------- 14 Nov 2026: the pitch stays in the reader
+// The owner: "the readout loud is a desktop application has a different voice ... Make the desktop application use
+// the same voice that is used in Google Chrome in the extension". The cause: the reader played a sound at another
+// speed in the audio context, which raises the pitch with the speed (speed 1.2: 3 semitones higher). The web player
+// of the add-on plays in a sound element, which keeps the pitch. Now the reader does the same.
+const spoken = (t, engine, rate, sentence = line(1)) => {
+  const got = { words: [], ended: false, errors: [] };
+  engine.speak(sentence, { voiceId: 'af_heart', rate, onWord: (start) => got.words.push([t.clock.now, start]), onEnd: () => { got.ended = true; }, onError: (e) => got.errors.push(e) });
+  return got;
+};
+
+test('the pitch stays: method B at speed 1.5 plays in a sound element that keeps the pitch, and not in the audio context', async () => {
+  const t = loadTts({ element: true });
+  const engine = await ready(t, 'B', 1.5);
+  const got = spoken(t, engine, 1.5);
+  await t.advance(100);
+  assert.equal(speakReq(t)[0].speed, null, 'the voice server gives the speed-1 sound');
+  assert.equal(t.sounds.length, 0, 'no source of the audio context: it would raise the pitch');
+  assert.equal(t.elements.length, 1);
+  assert.equal(t.elements[0].playbackRate, 1.5);
+  assert.equal(t.elements[0].preservesPitch, true);
+  assert.equal(t.elements[0].wav.getUint32(24, true), RATE, 'the WAV file has the sample rate of the sound');
+  assert.equal(t.elements[0].duration, 1, 'and all of its samples');
+  assert.equal(got.ended, false);
+  await t.advance(700);  // 1 s of sound at speed 1.5 is about 0.67 s
+  assert.equal(got.ended, true);
+  assert.deepEqual(got.errors, []);
+});
+
+test('the pitch stays: speed 1, and the methods A and C, play in the audio context as before', async () => {
+  for (const [method, rate] of [['B', 1], ['A', 1.5], ['C', 1.5]]) {
+    const t = loadTts({ element: true });
+    const engine = await ready(t, method, rate);
+    spoken(t, engine, rate);
+    await t.advance(100);
+    assert.equal(t.elements.length, 0, `${method} at ${rate}: no sound element`);
+    assert.equal(t.sounds.length, 1);
+    assert.equal(t.sounds[0].playbackRate.value, 1);
+  }
+});
+
+test('the pitch stays: the words follow the clock of the sound element', async () => {
+  const t = loadTts({ element: true });
+  t.server.seconds = 2;
+  t.server.starts = [0, 0.4, 0.8, 1.0, 1.2, 1.4, 1.6];  // "Made line number 1 for the test.": 7 words
+  const engine = await ready(t, 'B', 2);
+  const got = spoken(t, engine, 2);
+  await t.advance(1100);  // 2 s of sound at speed 2
+  assert.equal(got.ended, true);
+  assert.equal(got.words.length, 7);
+  const at = got.words.map(([ms]) => ms - got.words[0][0]);
+  assert.ok(Math.abs(at[1] - 200) <= 40, 'the word at 0.4 s of the sound comes after about 0.2 s: ' + at[1]);
+  assert.ok(Math.abs(at[6] - 800) <= 40, 'the word at 1.6 s comes after about 0.8 s: ' + at[6]);
+});
+
+test('the pitch stays: stop silences the sound element and frees its file; the next Sentence gets a new element', async () => {
+  const t = loadTts({ element: true });
+  const engine = await ready(t, 'B', 1.5);
+  const got = spoken(t, engine, 1.5);
+  await t.advance(100);
+  engine.stop();
+  await t.advance(900);
+  assert.equal(t.elements[0].paused, true);
+  assert.equal(got.ended, false, 'a stopped Sentence does not end');
+  assert.equal(t.freed.length, 1, 'the file of the sound is freed');
+  const next = spoken(t, engine, 1.5, line(2));
+  await t.advance(800);
+  assert.equal(t.elements.length, 2);
+  assert.equal(next.ended, true);
+  assert.equal(t.freed.length, 2);
+});
+
+test('the pitch stays: when the browser refuses the sound element, the Sentence still sounds (as before, in the audio context)', async () => {
+  const t = loadTts({ element: true, refusePlay: true });
+  const engine = await ready(t, 'B', 1.5);
+  const got = spoken(t, engine, 1.5);
+  await t.advance(800);
+  assert.equal(t.sounds.length, 1, 'never silence');
+  assert.equal(t.sounds[0].playbackRate.value, 1.5);
+  assert.equal(got.ended, true);
+  assert.deepEqual(got.errors, []);
 });
