@@ -8,7 +8,7 @@ Start:  ~/.local/share/uv/tools/mlx-audio/bin/python "voice-server.py"   (port 8
   GET /voices               the voice list as JSON
   POST /ocr                 a picture (PNG) -> its text, word by word with places (Apple's Vision, ocr/ocr.swift)
 
-Desktop reader (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
+Desktop app (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
   /app/...                  the library page (app/)          /reader/...  the PDF reader (extension/pdf, the same code)
   /icons/...                the add-on icons (extension/icons), for the page icon of the reader
   GET  /library.json        the books in ~/Documents/Read Aloud Library (PDFs dropped there in Finder are picked up)
@@ -43,7 +43,7 @@ Desktop reader (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
                             values}; each becomes one line, with the time, of ~/Library/Logs/read-aloud-2-events.log
                             (READ_ALOUD_EVENTS to change; at 2 MB the file becomes <name>.1). No text of a page is in it.
 
-The chat reader (version 1, ~/.claude/read-aloud, a page on port 8791) reads with the natural voice since
+The chat reader (~/.claude/read-aloud, a page on port 8791) reads with the natural voice since
 13 Nov 2026: its page may read /speak, /times and /voices of this server (READER_ORIGINS), and nothing else.
 """
 import collections, functools, math, hashlib, html, logging, select, shlex, socket, itertools, http.server, io, json, mimetypes, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.parse, urllib.request

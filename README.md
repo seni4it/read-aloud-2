@@ -1,7 +1,7 @@
 # Read Aloud 2
 
 Version 2 of the read-aloud tools: natural voices and a Chrome add-on like Speechify.
-Version 1 (`~/.claude/read-aloud`, the Claude chat reader on port 8791) is separate and unchanged.
+The chat reader (`~/.claude/read-aloud`, a page on port 8791 that reads the Claude chats aloud) is a separate program. Since 13 Nov 2026 it reads with the natural voice of the voice server.
 
 ## Parts
 
@@ -60,7 +60,7 @@ Without the voice server the add-on still works, with the voices built into the 
   "Open PDF" in the reader.
 - Not covered: Google Docs (drawn on a canvas, closed to add-ons), Word and EPUB files (Chrome downloads them).
 
-## Desktop reader with a library
+## Desktop app with a library
 
 `tools/make-desktop-app.sh` builds **Read Aloud.app** in `/Applications`. Open it like any app: it starts the voice
 server when needed and opens your library in its own window (Chrome, without tabs).

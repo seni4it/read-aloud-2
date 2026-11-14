@@ -20,14 +20,18 @@ _Avoid_: viewer, PDF viewer, Paper Reader
 
 **Desktop app**:
 The Mac application "Read Aloud" that opens the library in its own window.
-_Avoid_: launcher, Mac app
+_Avoid_: launcher, Mac app, desktop reader
 
 **Voice sampler**:
 The page where the owner hears each voice and chooses one.
 
+**Chat reader**:
+The page that reads the Claude chats aloud. It is a separate program from the add-on.
+_Avoid_: version 1, Read Aloud 1
+
 **Report**:
-The file where the add-on writes each Sentence that it read and each fault, one line for each, with no text of a page.
-_Avoid_: log, error log, events
+The file where the add-on writes what it did: one line for each Sentence that it read and for each fault.
+_Avoid_: log, error log, error report
 
 ### Voices and speech
 
@@ -36,7 +40,7 @@ A voice that the voice server makes with the speech model.
 _Avoid_: Kokoro voice, neural voice, AI voice
 
 **Mac voice**:
-A voice that is built into the Mac. The add-on uses it when the voice server does not answer.
+A voice that is built into the Mac.
 _Avoid_: system voice, fallback voice
 
 **Sentence**:
@@ -52,19 +56,12 @@ The making of the next sentences while the present sentence plays, so that no si
 _Avoid_: prefetch, preload, buffer
 
 **Speed method**:
-The way a natural voice gets faster or slower: the voice speaks faster, the normal sound is stretched and keeps its pitch, or the sound plays faster and its pitch goes up.
+The way a natural voice gets faster or slower. The owner chooses it in the settings.
 _Avoid_: speed mode, time stretch, tempo
-
-**Sound memory**:
-The sound of the sentences that the reader keeps in the browser tab, up to a size limit, so that a step back plays at once.
-_Avoid_: audio cache, buffer
 
 **Speech rewrite**:
 The change of printed text into text that a voice says correctly, for example a year, a unit or a Roman numeral.
 _Avoid_: normalisation, expansion
-
-**Ligature repair**:
-The repair of a word that lost letters because the PDF drew two letters as one sign.
 
 ### Listening
 
@@ -80,11 +77,11 @@ The mark on the word that is read now. Its sentence has a light shade.
 _Avoid_: cursor, karaoke
 
 **Follow**:
-The page moves with the voice until the owner scrolls. The target button starts it again.
+The page moves with the voice, so that the word that is read stays in view.
 _Avoid_: auto-scroll, tracking
 
 **Skip setting**:
-A switch that leaves one kind of text out of the reading: citations, figure captions, the reference list, boxed quotes, tables, or text in parentheses.
+A switch that leaves one kind of text out of the reading, for example citations or tables.
 _Avoid_: filter
 
 ### Documents
@@ -102,11 +99,8 @@ The sentence where the owner stopped in a book.
 _Avoid_: progress, bookmark
 
 **Scanned page**:
-A PDF page that is a picture and has no text. The Mac reads its text from the picture.
+A PDF page that is only a picture and has no text.
 _Avoid_: image page, OCR page
-
-**Chapter**:
-One part of a book from its contents list. An audio export makes one file for each chapter.
 
 **Audio export**:
 The making of MP3 files from a book, one for each chapter.
@@ -115,29 +109,23 @@ _Avoid_: download, render
 ### Notes and questions
 
 **Highlight**:
-A piece of book text that the owner kept, in one group.
+A piece of text in the reader that the owner kept, in one group.
 _Avoid_: note, annotation, marker (see _Word highlight_ for the reading mark)
 
 **Group**:
-A named set of highlights, for example Important, Idea, Question or Review.
+A named set of highlights. Each group has its own colour.
 _Avoid_: category, tag, colour
 
 **Key point**:
-A highlight that is copied, when it is made, to the folder of a Claude conversation.
-
-**Book folder**:
-The folder of one book with its text, its highlights and its conversation.
+A highlight that is also copied to a folder outside the book, for other work with Claude.
 
 **Ask Claude**:
-The feature that answers a question about the book, from the book first, with page numbers.
+The feature that answers the owner's questions about a book.
 _Avoid_: chat, assistant
 
 **Conversation**:
 The questions and answers of one book.
 _Avoid_: thread, session, chat history
-
-**Sources**:
-The choice of where an answer can come from: only the book, other books, the internet, or published papers.
 
 **Hostile check**:
 A second, separate examination that tries to prove an answer wrong against the book.
