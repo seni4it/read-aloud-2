@@ -104,8 +104,13 @@ the cover as album art, chapter titles as track names). Files go to `Documents/R
   (heard more than 15 % from the asked speed), `voice-error` (with `try`), `mac-voice` (the Mac voice reads because
   the Natural voice did not answer), `natural-voice-back`, `sound-lost`, `sound-page-made`, `add-on-start`, `problem`.
   The background keeps the last 300 lines while the voice server does not answer and sends them later (POST `/log`).
-- **Report a problem.** A link in the popup and a line in the right-click menu write a `problem` line with the
-  state of the add-on. When the owner says that the add-on stopped, waited or read at a wrong speed, read the lines
+- **The reader writes to the Report too** (version 2.13.2, 14 Nov 2026): in the desktop app and for a PDF in Chrome,
+  one `say` line for each Sentence (`chars`, `wait` before its first word, `ms`, `rate`, `method`, `cps` = characters
+  a second at speed 1), `speed-off` (40 % from the usual speed of that voice), `voice-error`, `mac-voice`,
+  `natural-voice-back`. Each line of the reader has `where: reader` and `place: desktop app` or `place: add-on`.
+- **Report a problem.** A link in the popup, a line in the right-click menu, and the button "Report a problem" in
+  the settings panel of the reader ("Something wrong?") write a `problem` line with the state of the add-on or
+  of the reader. When the owner says that the add-on stopped, waited or read at a wrong speed, read the lines
   before the last `problem` line.
 - **The second try.** A Sentence of the Natural voice that does not sound is asked 2 more times (after 0.4 s and
   1.2 s) before the page hears of it. Before, one failed Sentence made the page read with the Mac voice for 5 s or more.

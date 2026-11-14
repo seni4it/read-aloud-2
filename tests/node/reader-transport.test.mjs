@@ -449,3 +449,73 @@ test('the old read-in fails after its document is released: no unhandled error',
   assert.equal(unhandled.length, n, 'the cancelled read-in ends quietly');
   assert.equal(r.state.doc, r.docs[1]);
 });
+
+// ---------- 14 Nov 2026: the Report of the reader (owner's yes on the answer page desktop-app-voice-round-1) ----------
+// The add-on wrote a line for each Sentence of a web page; the reader (the desktop app, and PDFs in Chrome) wrote
+// none, so its faults left no record. app.js gives its lines to tts.js through ServerEngine.note; here a fake takes them.
+function reportOf(r) {
+  const lines = [];
+  r.ctx.__modules.ServerEngine.note = (evt, data, now) => lines.push({ evt, now, ...data });
+  return lines;
+}
+const pause = (ms) => new Promise((res) => setTimeout(res, ms));
+
+test('report: a Sentence that was read to its end gives one line with its length, its wait, its time and its speed, and no text', async () => {
+  const { r, list } = await readerWithBook();
+  const lines = reportOf(r);
+  play(r);
+  const call = r.speaking();
+  await pause(6); call.onWord(0, 5);
+  await pause(9); call.onEnd();
+  const say = lines.filter((x) => x.evt === 'say');
+  assert.equal(say.length, 1);
+  assert.equal(say[0].engine, 'mac', 'this test reads with the Mac voice');
+  assert.equal(say[0].chars, list[0].text.length);
+  assert.ok(say[0].wait >= 5, 'the wait before the first word: ' + say[0].wait);
+  assert.ok(say[0].ms >= 8, 'the time from the first word to the end: ' + say[0].ms);
+  assert.ok(say[0].rate > 0 && say[0].cps > 0);
+  assert.ok(!JSON.stringify(lines).includes('Alpha'), 'no text of the book is in the report');
+});
+
+test('report: a Sentence that is stopped before its end gives no line', async () => {
+  const { r } = await readerWithBook();
+  const lines = reportOf(r);
+  play(r);
+  const call = r.speaking();
+  await pause(5); call.onWord(0, 5);
+  await pause(5);
+  play(r);  // Pause
+  call.onEnd();  // a late end of the stopped Sentence
+  assert.deepEqual(lines.filter((x) => x.evt === 'say'), []);
+});
+
+test('report: a voice that fails gives a line for the fault', async () => {
+  const { r } = await readerWithBook();
+  const lines = reportOf(r);
+  play(r);
+  r.speaking().onError('the voice server does not answer: no answer in 30 s');
+  const fault = lines.filter((x) => x.evt === 'voice-error');
+  assert.equal(fault.length, 1);
+  assert.equal(fault[0].try, 1);
+  assert.match(fault[0].why, /does not answer/);
+});
+
+test('report: "Report a problem" writes a mark with the state of the reader and says that it is saved', async () => {
+  const { r, list } = await readerWithBook();
+  const lines = reportOf(r);
+  play(r);
+  r.els.reportBtn.fire('click');
+  const mark = lines.find((x) => x.evt === 'problem');
+  assert.ok(mark, 'the mark is in the report');
+  assert.equal(mark.playing, 1);
+  assert.equal(mark.sentences, list.length);
+  assert.equal(mark.sentence, 0);
+  assert.match(r.els.reportStatus.textContent, /saved in the report/);
+  assert.ok(!JSON.stringify(mark).includes('Alpha'), 'no text of the book');
+});
+
+test('report: the button is in the settings panel, in its own group', () => {
+  const html = readFileSync(new URL('../../extension/pdf/index.html', import.meta.url), 'utf8');
+  const panel = html.slice(html.indexOf('id="settingsPanel"'));
+  assert.match(panel, /<section class="settings-group" id="problemGroup"[^>]*>\s*<h3 id="problemHead">Something wrong\?<\/h3>[\s\S]*?<button type="button" class="btn ghost" id="reportBtn">Report a problem<\/button>[\s\S]*?<p class="status" id="reportStatus" role="status"><\/p>/);
+});

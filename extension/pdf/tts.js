@@ -656,14 +656,25 @@ export class KokoroEngine {
  * Natural voice, and when the Natural voice is back. In the add-on the background takes the line; in the desktop
  * app (a page of the voice server) the voice server takes it. No text of a book is in it.
  */
-function note(evt, data = {}) {
+const notes = { waiting: [], timer: null };  // the lines of the desktop app that wait for the voice server
+function note(evt, data = {}, now = true) {
   try {
     if (typeof chrome !== 'undefined' && chrome.runtime?.id) {
-      chrome.runtime.sendMessage({ to: 'bg', cmd: 'note', evt, data: { ...data, where: 'reader' }, now: true }).catch(() => {});
+      chrome.runtime.sendMessage({ to: 'bg', cmd: 'note', evt, data: { ...data, where: 'reader', place: 'add-on' }, now }).catch(() => {});
     } else if (typeof location !== 'undefined' && /^https?:$/.test(location.protocol)) {
-      fetch(ServerEngine.SERVER + '/log', { method: 'POST', body: JSON.stringify([{ t: Date.now(), evt, ...data, where: 'reader' }]) }).catch(() => {});
+      notes.waiting.push({ t: Date.now(), evt, ...data, where: 'reader', place: 'desktop app' });
+      if (now || notes.waiting.length >= 40) sendNotes();
+      else if (!notes.timer) notes.timer = setTimeout(sendNotes, 4000);  // a line for each Sentence: a few go together
     }
   } catch { /* the report is extra: it never stops the reading */ }
+}
+function sendNotes() {
+  clearTimeout(notes.timer); notes.timer = null;
+  const batch = notes.waiting.splice(0);
+  if (!batch.length) return;
+  fetch(ServerEngine.SERVER + '/log', { method: 'POST', body: JSON.stringify(batch) })
+    .then((r) => { if (!r.ok) throw new Error('refused'); })
+    .catch(() => { notes.waiting = batch.concat(notes.waiting).slice(-100); });  // they go with the next line
 }
 
 /** An error that means: the voice server does not answer (connection refused, or no answer in the time limit). */
@@ -686,6 +697,8 @@ export class ServerEngine extends KokoroEngine {
   static INIT_MS = 3000;     // time limit for the voice list
   static RETRY_MS = 5000;    // while the server is down, ask it again at most this often, at a sentence start
   static MAC_LABEL = 'Mac voice (the natural voice does not answer)';
+  /** A line for the Report from the reader page (app.js): see note() above. now: false lets a few lines go together. */
+  static note(evt, data, now) { note(evt, data, now); }
 
   constructor() {
     super();

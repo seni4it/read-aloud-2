@@ -40,7 +40,7 @@ const els = {
   parseBar: $('parseBar'), parseFill: $('parseFill'), parseText: $('parseText'),
   optCitations: $('optCitations'), optCaptions: $('optCaptions'), optRefs: $('optRefs'),
   optFrontMatter: $('optFrontMatter'), optInsets: $('optInsets'), optTables: $('optTables'), optParens: $('optParens'), timeLeft: $('timeLeft'), exportBtn: $('exportBtn'), exportStatus: $('exportStatus'),
-  reparseBtn: $('reparseBtn'), dropVeil: $('dropVeil'),
+  reparseBtn: $('reparseBtn'), dropVeil: $('dropVeil'), reportBtn: $('reportBtn'), reportStatus: $('reportStatus'),
   engineSel: $('engineSel'), engineStatus: $('engineStatus'), previewBtn: $('previewBtn'),
   zoomIn: $('zoomIn'), zoomOut: $('zoomOut'), zoomLevel: $('zoomLevel')
 };
@@ -227,6 +227,7 @@ async function selectEngine(id) {
       // Read Aloud 2: the voice server is down for a moment. Use the Mac voices meanwhile, but do not remember
       // that as your choice, and switch back by itself when the natural voices answer again.
       setStatus('The natural voice does not answer. The Mac voice reads for now.');
+      report('mac-voice', { at: 'start' });
       engine = engines.system;
       els.engineSel.value = 'system';
       fillVoiceSelect();
@@ -234,7 +235,7 @@ async function selectEngine(id) {
       clearTimeout(state.retryNatural);
       state.retryNatural = setTimeout(function retry() {
         if (localStorage.getItem('pr.engine') !== 'kokoro' || engine.id === 'kokoro') return;
-        next.init().then(() => { if (!state.playing && engine.id === 'system') selectEngine('kokoro'); })
+        next.init().then(() => { report('natural-voice-back', { at: 'start' }); if (!state.playing && engine.id === 'system') selectEngine('kokoro'); })
           .catch(() => { state.retryNatural = setTimeout(retry, 5000); });
       }, 5000);
       return;
@@ -275,6 +276,30 @@ function engineLabel(eng) {
   return 'Natural voice ready';
 }
 
+/*
+ * The Report (owner's yes of 14 Nov 2026): the reader writes one line for each Sentence that it read, and a line for
+ * each fault, as the add-on does for a web page. The desktop app had no Report, so its faults left no record.
+ * No text of the book is in a line. tts.js sends the lines (to the background in the add-on, to the voice server
+ * in the desktop app).
+ */
+const report = (evt, data, now) => { try { ServerEngine.note?.(evt, data, now); } catch { /* the Report is extra */ } };
+const macReads = () => engine.id === 'system' || String(engine.device || '').startsWith('Mac voice');
+const paces = { key: '', list: [] };  // characters a second at speed 1, of the Sentences with this voice, speed and method
+function reportSentence(sentence, asked, first, rate) {
+  if (!first) return;
+  const ms = Date.now() - first, chars = sentence.text.length;
+  if (!(ms > 0) || !chars) return;
+  const mac = macReads(), method = mac ? '' : (engine.method || '');
+  const key = [mac, readingVoice(), rate, method].join('|');
+  if (paces.key !== key) { paces.key = key; paces.list = []; }
+  const cps = chars / (ms / 1000) / rate;
+  const usual = paces.list.length >= 6 ? [...paces.list].sort((a, b) => a - b)[paces.list.length >> 1] : 0;
+  const off = chars >= 60 && usual > 0 && (cps > usual * 1.4 || cps < usual / 1.4);  // far from the usual speed of this voice
+  report(off ? 'speed-off' : 'say', { engine: mac ? 'mac' : 'natural', voice: mac ? '' : readingVoice(), chars, wait: Math.round(first - asked),
+    ms: Math.round(ms), rate, method, cps: +cps.toFixed(1), ...(off ? { usual: +usual.toFixed(1) } : {}) }, off);
+  if (chars >= 60) { paces.list.push(cps); if (paces.list.length > 40) paces.list.shift(); }
+}
+
 function speakCurrent() {
   const full = state.sentences[state.index];
   if (!full) { stop(); return; }
@@ -285,6 +310,8 @@ function speakCurrent() {
 
   if (engine.id !== 'system') { setStatus('Making the voice…'); setWaiting(true); }
   let spoke = false;
+  const asked = Date.now(), rate = Number(els.rateSel.value) || 1;
+  let first = 0;  // when its first word sounded
 
   state.at = from;
   engine.speak(sentence, {
@@ -292,13 +319,14 @@ function speakCurrent() {
     rate: Number(els.rateSel.value),
     onWord: (charIndex, charLength) => {
       if (!state.playing) return;
-      if (!spoke) { spoke = true; setWaiting(false); setStatus(engineLabel(engine)); showMethods(); }  // ticket 06: the engine may have read the methods again  // now: the voice server may have fallen in this sentence
+      if (!spoke) { spoke = true; first = Date.now(); setWaiting(false); setStatus(engineLabel(engine)); showMethods(); }  // ticket 06: the engine may have read the methods again  // now: the voice server may have fallen in this sentence
       state.at = charIndex + from;  // Read Aloud 2: the word being read, so Pause then Play goes on from here
       const parts = wordPartsAt(full, charIndex + from, charLength);
       if (parts.length) viewer.highlightWord(parts);
     },
     onEnd: () => {
       if (!state.playing) return;
+      reportSentence(sentence, asked, first, rate);
       state.retried = false;  // this sentence played: a later failure gets its own new try
       if (state.index + 1 >= state.sentences.length) { stop(); return; }
       // Rest before the next block. Without this the whole document runs
@@ -317,6 +345,7 @@ function speakCurrent() {
     onError: err => {
       console.warn('speech error', err);
       if (!state.playing) return;
+      report('voice-error', { why: String(err).slice(0, 160), try: state.retried ? 2 : 1, engine: macReads() ? 'mac' : 'natural' });
       // Read Aloud 2: one failed sentence does not stop the book. Try it once more after 1 second, then stop and say so.
       if (!state.retried) {
         state.retried = true;
@@ -1076,6 +1105,13 @@ for (const el of [els.optCitations, els.optCaptions, els.optRefs, els.optFrontMa
   el.addEventListener('change', () => { if (state.doc) parseDocument(); });
 }
 els.reparseBtn.addEventListener('click', () => { if (state.doc) parseDocument(); });
+// "Report a problem": a mark in the Report with what the reader does at this moment. Claude reads the lines before it.
+els.reportBtn?.addEventListener('click', () => {
+  report('problem', { engine: macReads() ? 'mac' : 'natural', voice: readingVoice(), rate: Number(els.rateSel.value) || 1, method: engine.method || '',
+    chosen: els.engineSel.value, playing: state.playing ? 1 : 0, sentence: state.index, sentences: state.sentences.length,
+    status: String(els.engineStatus.textContent || '').slice(0, 80), library: LIB_ID ? 1 : 0 });
+  els.reportStatus.textContent = 'The problem is saved in the report. Tell Claude: read the Read Aloud 2 report.';
+});
 
 function showZoom() {
   els.zoomLevel.textContent = Math.round(viewer.zoom * 100) + '%';
