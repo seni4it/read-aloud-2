@@ -46,7 +46,7 @@ Desktop app (the "Read Aloud" app opens http://127.0.0.1:8793/app/):
 The chat reader (~/.claude/read-aloud, a page on port 8791) reads with the natural voice since
 13 Nov 2026: its page may read /speak, /times and /voices of this server (READER_ORIGINS), and nothing else.
 """
-import collections, functools, math, hashlib, html, logging, select, shlex, socket, itertools, http.server, io, json, mimetypes, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.parse, urllib.request
+import atexit, collections, functools, math, hashlib, html, logging, select, shlex, socket, itertools, http.server, io, json, mimetypes, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.parse, urllib.request
 
 import numpy as np
 import soundfile as sf
@@ -550,6 +550,24 @@ def lib_add(name, data):
     return bid
 
 
+COVER_CMD = ['qlmanage', '-t', '-s', '420', '-o']    # then the folder of the result and the PDF
+COVER_ALARM = 90    # seconds: the alarm stays after exec, so a cover job ends by itself when this server was killed
+_covers = set()     # the cover jobs that run now
+
+
+def stop_covers():
+    """Stop each cover job that runs. qlmanage does not end by itself on some PDFs: without this, each one
+    stayed for days after the server (or a test run) had ended."""
+    for p in list(_covers):
+        try:
+            p.kill()
+        except OSError:
+            pass
+
+
+atexit.register(stop_covers)
+
+
 def lib_cover(bid):
     """A cover picture of page 1, made by macOS Quick Look (qlmanage), kept in .covers/<id>.png."""
     out = os.path.join(COVERS, bid + '.png')
@@ -560,7 +578,18 @@ def lib_cover(bid):
     if not b:
         return None
     with tempfile.TemporaryDirectory() as tmp:
-        subprocess.run(['qlmanage', '-t', '-s', '420', '-o', tmp, os.path.join(LIB, b['file'])], capture_output=True, timeout=60)
+        cmd = COVER_CMD + [tmp, os.path.join(LIB, b['file'])]
+        if os.path.exists('/usr/bin/perl'):
+            cmd = ['/usr/bin/perl', '-e', 'alarm shift; exec @ARGV', str(COVER_ALARM)] + cmd
+        p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _covers.add(p)
+        try:
+            p.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
+        finally:
+            _covers.discard(p)
         made = [f for f in os.listdir(tmp) if f.endswith('.png')]
         if made:
             shutil.move(os.path.join(tmp, made[0]), out)

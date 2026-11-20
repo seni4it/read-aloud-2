@@ -1,7 +1,7 @@
 """Tests of the voice server without the voice model: the library, the cache, files and errors.
 Run:  ~/.local/share/uv/tools/mlx-audio/bin/python -m unittest discover -s tests -v
 """
-import functools, importlib.util, io, json, os, socket, sys, tempfile, threading, unittest, urllib.error, urllib.request
+import functools, importlib.util, io, json, os, shutil, socket, sys, tempfile, threading, time, unittest, urllib.error, urllib.request
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TMP = tempfile.mkdtemp(prefix='read-aloud-test-')
@@ -15,6 +15,11 @@ vs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(vs)
 BASE = f'http://127.0.0.1:{PORT}'
 PDF = b'%PDF-1.4\n' + bytes(range(256)) * 40
+
+
+def tearDownModule():
+    vs.stop_covers()    # no cover job stays after the tests
+    shutil.rmtree(TMP, ignore_errors=True)
 
 
 def get(path, headers=None, method='GET', data=None):
@@ -89,6 +94,24 @@ class Http(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.srv.shutdown()
+
+    def test_a_cover_job_does_not_outlive_the_server(self):
+        # 20 Nov 2026: each test run left about 21 qlmanage processes that never ended (342 after 3 days).
+        # The cover job is a child that the server stops at its exit, and an alarm ends it when the server is killed.
+        old = vs.COVER_CMD
+        vs.COVER_CMD = ['/bin/sh', '-c', 'sleep 300', 'sh']
+        try:
+            self.add('Cover.pdf', PDF + b'cover')
+            end = time.time() + 5
+            while not [c for c in vs._covers if 'sleep 300' in c.args] and time.time() < end:
+                time.sleep(0.02)
+            jobs = [c for c in vs._covers if 'sleep 300' in c.args]
+            self.assertEqual(len(jobs), 1)
+            self.assertEqual(jobs[0].args[:4], ['/usr/bin/perl', '-e', 'alarm shift; exec @ARGV', str(vs.COVER_ALARM)])
+            vs.stop_covers()
+            self.assertIsNotNone(jobs[0].wait(timeout=5))
+        finally:
+            vs.COVER_CMD = old
 
     def add(self, name='Book.pdf', data=PDF):
         code, _, body = get('/library/add?name=' + urllib.request.quote(name), self.origin, 'POST', data)
