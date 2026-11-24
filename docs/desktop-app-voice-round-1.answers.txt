@@ -1,0 +1,3 @@
+Page id desktop-app-voice-round-1. Desktop app voice, round 1: Desktop app: the same voice as in Chrome answers:
+1. Save this repair in git and push it to GitHub: yes
+2. Give the desktop app a report, as the add-on has: yes

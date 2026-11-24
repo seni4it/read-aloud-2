@@ -1,0 +1,2 @@
+Page id desktop-app-voice-round-2. Desktop app voice, round 2: Desktop app: the repair is pushed, the app has its report answers:
+1. Save the report of the desktop app in git and push it; and do this for each finished change in this conversation: yes

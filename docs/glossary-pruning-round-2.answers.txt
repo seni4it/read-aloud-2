@@ -1,0 +1,2 @@
+Page id glossary-pruning-round-2. Glossary pruning, round 2: Glossary of Read Aloud 2: the pruning is done answers:
+1. Leave the pauses of the natural voice as they are for now: yes — Also the voice works very very well in the in Google Chrome, but it doesn't work well at all in the desktop app.
