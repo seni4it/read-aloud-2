@@ -139,12 +139,12 @@ test('a one-column book: a table of 3 columns that fills the page is read row by
 
 test('a one-column book: with "Skip tables" on, what is read of a table of 3 columns comes row by row', async () => {
   // "Skip tables" leaves out the lines that it takes for a table of short cells; the other lines are read. They must
-  // come in the order of the rows, not column by column.
+  // come in the order of the rows, not column by column. Ticket 35: a table of cells that is a table in a quarter of its
+  // lines or more is left out whole, so no line of this table is read now; when lines are read, the order holds.
   const doc = tableBook();
   const text = textOf(await buildDocument(doc, DEFAULT_OPTIONS));
   const read = PARTS.flatMap(([, meaning, use], row) => [...meaning, ...use].map(t => ({ row, at: text.indexOf(t) })))
     .filter(r => r.at >= 0).sort((a, b) => a.at - b.at);
-  assert.ok(read.length >= 3, 'lines of the table are read');
   for (let k = 1; k < read.length; k++) assert.ok(read[k].row >= read[k - 1].row, 'a line of a later row is read after the lines of the rows above it');
   assert.ok(!text.includes(HEAD), 'the running head above the table is not read');
   assert.match(text, /the school kept a record/);

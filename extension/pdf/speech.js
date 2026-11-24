@@ -75,6 +75,9 @@ function sayDecimal(whole, frac) {
   return `${sayNumber(Number(whole))} point ${digits}`;
 }
 
+// Read Aloud 2 (ticket 35): a number that starts with a point: ".04" is "point zero four"
+const sayPoint = (frac) => `point ${[...frac].map(d => ONES[Number(d)]).join(' ')}`;
+
 // Ordered. Each rule gets the match and returns what should be said instead,
 // or null to leave it alone.
 const RULES = [
@@ -103,15 +106,25 @@ const RULES = [
 
   // "1.5 mm" is one thing to say, so it has to be matched before the decimal
   // rule claims the "1.5" and leaves "mm" behind as "em em".
-  [/(?<!\w|\d,)(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s?(mm|cm|µm|um|ml|kg|Hz)\b/g, (m, n, unit) => {
+  // Read Aloud 2 (ticket 35): also a number that starts with a point (".27 mm" is "point two seven millimetres")
+  [/(?<!\w|\d,)(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?|(?<=^|[\s(\["“‘'])\.\d+)\s?(mm|cm|µm|um|ml|kg|Hz)\b/g, (m, n, unit) => {
     const u = UNITS[unit.toLowerCase()];
     if (!u) return null;
-    const value = n.includes(',') ? n : n.includes('.') ? sayDecimal(...n.split('.')) : sayNumber(Number(n));
+    const value = n.includes(',') ? n : n.startsWith('.') ? sayPoint(n.slice(1)) : n.includes('.') ? sayDecimal(...n.split('.')) : sayNumber(Number(n));
     return `${value} ${u}${Number(n) === 1 ? '' : 's'}`;
   }],
 
   // 1.5, 5.2, 0.75
   [/(?<!\d,)\b(\d+)\.(\d+)\b/g, (m, w, f) => sayDecimal(w, f)],
+
+  // Read Aloud 2 (ticket 35): a file size with its taper, "25/.06" or "25-.06", is "twenty-five, point zero six"; a
+  // number that starts with a point, ".04", is "point zero four" (".25/.04" is "point two five, point zero four"). A
+  // point inside a word ("Fig.3", "e.g.5") is not a number.
+  [/(?<=^|[\s(\["“‘'])(\d{1,3}|\.\d+)[\/-]\.(\d+)\b/g, (m, n, f) => `${n.startsWith('.') ? sayPoint(n.slice(1)) : sayNumber(Number(n))}, ${sayPoint(f)}`],
+  [/(?<=^|[\s(\["“‘'])\.(\d+)\b(?![@#$%&*<>=\w])/g, (m, f) => sayPoint(f)],
+
+  // Read Aloud 2 (ticket 35): a lone "+" between two words or numbers in a formula ("plant width + (gap ...)") is "plus"
+  [/(?<=[\w)] )\+(?= [\w(])/g, () => 'plus'],
 
   // An all-capitals token that is not an English word is an initialism.
   // USA -> U S A, VDO -> V D O. ACE and STEP are words, and stay.

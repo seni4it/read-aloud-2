@@ -10,7 +10,8 @@ import { textLanguage } from './language.js';
 // "Method" — anchoring both ends stops mid-sentence text being promoted.
 const HEADING_WORDS = /^(?:\d+(?:\.\d+)*\.?\s*)?(abstract|introduction|background|related\s+work|materials?\s+and\s+methods?|methods?|methodology|results?|results?\s+and\s+discussion|discussion|conclusions?|acknowledg(?:e)?ments?|references|bibliography|literature\s+cited|appendix|supplementary(?:\s+material)?|declarations?|funding|conflicts?\s+of\s+interest)\s*:?\.?\s*$/i;
 
-const STOP_SECTION = /^(references|bibliography|literature\s+cited|works\s+cited)\s*:?\s*$/i;
+// Read Aloud 2 (ticket 35): "Reference" too: a lecture that cites one book ends with a part of that name.
+const STOP_SECTION = /^(references?|bibliography|literature\s+cited|works\s+cited)\s*:?\s*$/i;
 
 // Conference/copyright boilerplate that sits in a footnote block on page 1.
 const BOILERPLATE = /^(permission to make digital or hard copies|copyright\s*[©c]|acm\s+\d|isbn\b|doi\b|\d{3}-\d{1,5}-\d|to copy otherwise|this work is licensed|©\s*\d{4})/i;
@@ -41,7 +42,9 @@ const CAPTION_START = /^(fig(ure)?\.?|table|chart|scheme|plate|graph)\s*\.?\s*([
 
 // Runs of affiliation markers left between author names once the symbols are
 // dropped: "Orendorff, # # + +# + Jesse". Nothing readable survives in them.
-const MARKER_RUN = /(?:^|\s)[#+$@^~|\\/]{1,4}(?=\s|$)/g;
+// Read Aloud 2 (ticket 35): a lone "+" between two words or numbers is a sign of a formula ("plant width + (gap ...)"),
+// and the speech rewrite says it ("plus"). In a run of marks ("# # + +# +") a "+" has a mark beside it.
+const MARKER_RUN = /(?:^|\s)(?!(?<=[\w)]\s)\+(?=\s+[\w(]))[#+$@^~|\\/]{1,4}(?=\s|$)/g;
 
 const ABBREV = [
   'al', 'etc', 'vs', 'cf', 'ca', 'approx', 'fig', 'figs', 'tab', 'eq', 'ref',
@@ -54,6 +57,9 @@ const ABBREV = [
 // bracketed numerics first, then author-year, then leftovers.
 const NOISE = [
   /\s*\[\s*\d+(\s*[-–,;]\s*\d+)*\s*\]/g,
+  // Read Aloud 2 (ticket 35): a page reference in square brackets ("[p. 36]", "[pp. 7, 15]", "[p. 64, Fig. 67]") is a
+  // citation: the owner's answer of 24 Nov 2026 (A) skips it with "Skip citations" on and reads it with it off.
+  /\s*\[\s*pp?\.\s*\d[^\[\]]{0,60}\]/g,
   // Read Aloud 2: each name is one pattern with one way to match ("[A-Z]?[A-Za-z]*" had two for each name, and a
   // list of names with no closing bracket took seconds).
   /\s*\((?:see\s+|e\.g\.,?\s+|cf\.\s+)?[A-Z][A-Za-z'’-]+(?:\s+(?:et\s+al\.?|and|&|,)\s*[A-Za-z'’-]*)*,?\s*(?:19|20)\d{2}[a-z]?(?:\s*[;,]\s*[^()]{0,60}?(?:19|20)\d{2}[a-z]?)*\)/g,
@@ -369,6 +375,8 @@ export async function readPage(doc, pageNumber) {
   };
   const rowSize = ([, es]) => Math.max(...es.map(e => Math.abs(e.item.transform[0]) || 10));
   const textOf = (es) => es.map(e => e.item.str).join('').replace(/\s+/g, ' ').trim();
+  let tablesMade = 0;
+  const shortRows = new Set();  // ticket 35: the rows of the tables of short cells that withTables found
   const withTables = (rows) => {
     const out = [];
     // the top or bottom row with a page number at one end is the running head or foot, never a table row
@@ -411,7 +419,13 @@ export async function readPage(doc, pageNumber) {
       // a table that holds text has a cell line of 30 letters or more; the short labels of a diagram ("200 cattle",
       // "Treatment cost") are read as before
       const prose = cutsX.length && Array.from({ length: cutsX.length + 1 }, (_, c) => cells(c)).some(col => col.some(es => textOf(es).length >= 30));
-      if (cuts < 2 || !cutsX.length || contents || !prose) {
+      // Read Aloud 2 (ticket 35): a grid of short cells is a table too: 3 columns or more, and 3 rows or more with text in
+      // every column ("Pipe" "At the end" "4 m along" "9 m along", then a row for each pipe). Read as lines, the rows of
+      // such a table came out as one Sentence of 478 letters, with no stop between rows. With 4 columns or more, 2 such rows
+      // are enough: the end of a table on the next page (its head row again and one row).
+      const full = block.filter((_, k) => Array.from({ length: cutsX.length + 1 }, (_, c) => cells(c)[k]).every(es => textOf(es))).length;
+      const gridded = (cutsX.length >= 2 && full >= 3) || (cutsX.length >= 3 && full >= 2);
+      if (cuts < 2 || !cutsX.length || contents || !(prose || gridded)) {
         // not a table from this row: the row is read as it is, and the next row may start a table (a running head
         // with its page number far to the right is not a table, and the table below it must still be found)
         out.push(makeLine(...rows[i]));
@@ -419,6 +433,7 @@ export async function readPage(doc, pageNumber) {
         continue;
       }
       // the cells of each column
+      const tableNo = ++tablesMade;  // ticket 35: the cells of one table know their table
       const found = [];
       for (let c = 0; c <= cutsX.length; c++) {
         const col = cells(c);
@@ -446,6 +461,8 @@ export async function readPage(doc, pageNumber) {
           if (!cur || wide || !goesOn(a, k)) { cur = { c, ks: [k] }; found.push(cur); } else cur.ks.push(k);
         }
       }
+      // Read Aloud 2 (ticket 35): a table of short cells (3 cells in 4 have 1 or 2 lines) is not boxes of running text
+      if (found.filter(cell => cell.ks.length <= 2).length >= found.length * 0.75) for (const [y] of block) shortRows.add(y);
       // the rows of the table: cells that overlap in height, read column by column
       found.sort((p, q) => block[q.ks[0]][0] - block[p.ks[0]][0] || p.c - q.c);
       const tableRows = [];
@@ -459,7 +476,7 @@ export async function readPage(doc, pageNumber) {
         // the cells of one column in one row of the table are one paragraph: the voice stops between columns
         row.cells.forEach((cell, n) => {
           const col = cells(cell.c), first = n === 0 || row.cells[n - 1].c !== cell.c;
-          cell.ks.forEach((k, j) => out.push({ ...makeLine(block[k][0], col[k]), cell: true, cellStart: first && j === 0, columns: cutsX.length + 1 }));
+          cell.ks.forEach((k, j) => out.push({ ...makeLine(block[k][0], col[k]), cell: true, cellStart: first && j === 0, columns: cutsX.length + 1, tableNo }));
         });
       }
       i = end + 1;
@@ -620,23 +637,41 @@ export async function readPage(doc, pageNumber) {
   // A row holds everything at one height across the page, so the table's cells and a line of the other
   // column share a row: the cells are marked by where they sit (x), and a line is table only when it lies
   // within the cells' span.
+  const lines = order(ordered, 0, pageWidth, 0);
+  // a line of text, not a cell: 40 letters or more, or a sentence of 3 words or more with its end mark
+  const sentenceRow = t => t.length >= 40 || (/[.!?]["')\]]?$/.test(t) && t.trim().split(/\s+/).length >= 3);
   const tableSpans = new Map();  // y -> [[x0, x1], ...]
   const tableBoxes = [];  // the area of each table: its rows down to a line of text
   {
-    const cellsOf = (es) => {
+    const cellsOf = (es, y) => {
       const cells = [];
       for (const e of es) {
         const size = Math.abs(e.item.transform[0]) || 10;
         const last = cells[cells.length - 1];
         // Read Aloud 2: a bullet starts a cell; it sits a point above its text and now shares the text's row
-        if (last && e.x - last.end < size * 2.5 && !/^\s*[•▪●◦‣]/.test(e.item.str)) { last.end = Math.max(last.end, e.x + e.w); last.text += e.item.str; }
-        else cells.push({ start: e.x, end: e.x + e.w, text: e.item.str });
+        if (last && e.x - last.end < size * 2.5 && !/^\s*[•▪●◦‣]/.test(e.item.str)) {
+          // Read Aloud 2 (ticket 35): the pieces of the cell, cut at a gap of one type size (see below)
+          if (e.x - last.end >= Math.max(minGap, size)) last.pieces.push({ start: e.x, end: e.x + e.w, text: '' });
+          const piece = last.pieces[last.pieces.length - 1];
+          piece.end = Math.max(piece.end, e.x + e.w); piece.text += e.item.str;
+          last.end = Math.max(last.end, e.x + e.w); last.text += e.item.str;
+        } else cells.push({ start: e.x, end: e.x + e.w, text: e.item.str, pieces: [{ start: e.x, end: e.x + e.w, text: e.item.str }] });
       }
-      return cells.map(c => ({ ...c, text: c.text.trim() })).filter(c => c.text);
+      // Read Aloud 2 (ticket 35): a cell of 40 letters or more ends a run of table cells. The cells of a lecture table
+      // were 1.2 to 2.4 type sizes apart, and the gap of 2.5 type sizes joined 3 of them into one of 40 letters or
+      // more ("Lemon or lime" "Needs a warm" "Deep and slow too"), so the row was not a table row and "Skip tables"
+      // read it. Such a cell is cut at its gaps of one type size, but only in a row of a table of short cells that
+      // withTables found: in boxes of running text side by side ("that will create a" "objects rendered by a"), and in
+      // a table whose cells are paragraphs, the cut made short cells of a few lines, and only those lines were skipped.
+      const out = cells.flatMap(c => {
+        const pieces = c.pieces.map(q => ({ ...q, text: q.text.trim() })).filter(q => q.text);
+        return c.text.trim().length >= 40 && pieces.length > 1 && shortRows.has(y) ? pieces : [c];
+      });
+      return out.map(c => ({ start: c.start, end: c.end, text: c.text.trim() })).filter(c => c.text);
     };
     const spans = [];
     for (const [y, es] of ordered) {
-      const cells = cellsOf(es);
+      const cells = cellsOf(es, y);
       let run = [];
       const close = () => { if (run.length >= 3) spans.push({ y, cells: run.map(c => ({ ...c, key: Math.round(c.start / 4) })) }); run = []; };
       for (const c of cells) {
@@ -651,33 +686,61 @@ export async function readPage(doc, pageNumber) {
     // run, lines up with nothing and stays outside the span.
     const count = new Map();
     for (const sp of spans) for (const k of new Set(sp.cells.map(c => c.key))) count.set(k, (count.get(k) || 0) + 1);
-    const table = [];
-    for (const sp of spans) {
-      const lined = sp.cells.filter(c => (count.get(c.key) || 0) >= 3);
-      if (lined.length >= 2) table.push({ y: sp.y, a: Math.min(...lined.map(c => c.start)), b: Math.max(...lined.map(c => c.end)) });
-    }
-    if (table.length >= 3) {
+    const lineUp = (rows, cells) => {
+      const out = [];
+      for (const sp of spans) {
+        const lined = sp.cells.filter(c => (count.get(c.key) || 0) >= rows);
+        if (lined.length >= cells) out.push({ y: sp.y, a: Math.min(...lined.map(c => c.start)), b: Math.max(...lined.map(c => c.end)) });
+      }
+      return out;
+    };
+    let table = lineUp(3, 2);
+    // Read Aloud 2 (ticket 35): the end of a table on the next page can have 2 rows only (its head row again and one
+    // row). Two rows with 4 cells or more that line up are a table too; a text line has no 4 wide gaps that line up.
+    // Their span is added to the rows that line up in 3 rows (the second lines of the cells can line up in 3 rows
+    // in a few columns only).
+    const two = lineUp(2, 4);
+    if (table.length >= 3 || two.length >= 2) {
+      const byY = new Map();
+      for (const t of [...(table.length >= 3 ? table : []), ...(two.length >= 2 ? two : [])]) {
+        const had = byY.get(t.y);
+        byY.set(t.y, had ? { y: t.y, a: Math.min(had.a, t.a), b: Math.max(had.b, t.b) } : t);
+      }
+      table = [...byY.values()];
+    } else table = [];
+    if (table.length >= 2) {
       for (const { y, a, b } of table) tableSpans.set(y, [...(tableSpans.get(y) || []), [a, b]]);
       // One box for each table: a row of text between table rows (a sentence, or 40 letters or more) ends it.
       const inTable = new Map(table.map(t => [t.y, t]));
       let run = [];
       const close = () => {
-        if (run.length >= 2) tableBoxes.push({ top: run[0].y, bottom: run[run.length - 1].y, a: Math.min(...run.map(t => t.a)), b: Math.max(...run.map(t => t.b)) });
+        if (run.length >= 2) tableBoxes.push({ top: run[0].y, bottom: run[run.length - 1].tail ?? run[run.length - 1].y, a: Math.min(...run.map(t => t.a)), b: Math.max(...run.map(t => t.b)) });
         run = [];
       };
+      // Read Aloud 2 (ticket 35): a sentence has 3 words or more: a cell's second line "or shade?" is not one, and it
+      // ended the box after the head row. The short lines right below the last row (at the step of a cell's lines) are
+      // the second lines of its cells ("kind" / "only") and belong to the box.
+      let below = null;
       for (const [y, es] of ordered) {
-        if (inTable.has(y)) { run.push(inTable.get(y)); continue; }
+        if (inTable.has(y)) { run.push(inTable.get(y)); below = y; continue; }
         const t = es.map(e => e.item.str).join('').trim();
-        if (t.length >= 40 || /[.!?]["')\]]?$/.test(t)) close();
+        if (sentenceRow(t)) { close(); below = null; continue; }
+        if (run.length && below !== null && below - y <= rowSize([y, es]) * 1.6) { below = y; run[run.length - 1].tail = y; } else below = null;
       }
       close();
     }
   }
-  const lines = order(ordered, 0, pageWidth, 0);
   // Read Aloud 2: a short line inside the table's area is a cell's second line ("Cancer" / "Rsrch"), not text.
-  const inBox = l => l.text.length < 40 && !/[.!?]["')\]]?$/.test(l.text) && tableBoxes.some(box =>
+  const inBox = l => !sentenceRow(l.text) && tableBoxes.some(box =>
     l.y <= box.top + 1 && l.y >= box.bottom - 1 && l.x0 >= box.a - 2 && l.x1 <= box.b + 2);
   for (const l of lines) if ((tableSpans.get(l.y) || []).some(([a, b]) => l.x0 >= a - 2 && l.x1 <= b + 2) || inBox(l)) l.table = true;
+  // Read Aloud 2 (ticket 35): a table of cells (withTables) that is a table here in part is a table in whole. A cell of
+  // 40 letters or more ended the row of short cells, so "1. How tall is it, and" was read while its row was skipped.
+  // Only a table that is a table in a quarter of its lines or more: side-by-side boxes of running text are cells too,
+  // and a short line in them is no reason to skip the boxes.
+  const share = new Map();
+  for (const l of lines) if (l.tableNo) { const n = share.get(l.tableNo) || [0, 0]; n[0] += l.table ? 1 : 0; n[1]++; share.set(l.tableNo, n); }
+  for (const l of lines) if (l.tableNo && share.get(l.tableNo)[0] * 4 >= share.get(l.tableNo)[1]) l.table = true;
 
   // Deliberately NOT calling page.cleanup(): pdf.js hands the same page proxy
   // to the viewer, and cleaning it up mid-render makes render() hang forever.
@@ -1354,7 +1417,7 @@ class TracedText {
     let text = this.chars.join('');
     const dead = new Uint8Array(text.length);
 
-    const patterns = [...(stripCitations ? NOISE : NOISE.slice(3))];  // the first three are citations
+    const patterns = [...(stripCitations ? NOISE : NOISE.slice(4))];  // the first four are citations
     if (skipParens) patterns.push(/\s*\([^()]{1,300}\)/g, /\s*\[[^\[\]]{1,300}\]/g, /\s*\{[^{}]{1,300}\}/g);
     for (const re of patterns) {
       re.lastIndex = 0;
@@ -1378,7 +1441,8 @@ class TracedText {
         continue;
       }
       // Drop punctuation orphaned by a strip: " ," -> ","
-      if (/[,.;:]/.test(ch) && outChars[outChars.length - 1] === ' ') {
+      // Read Aloud 2 (ticket 35): not the point of a number that starts with a point ("a .04 slope" became "a.04 slope")
+      if (/[,.;:]/.test(ch) && outChars[outChars.length - 1] === ' ' && !(ch === '.' && /\d/.test(text[i + 1] || ''))) {
         outChars.pop();
         outOwners.pop();
       }
@@ -1677,7 +1741,9 @@ export class DocumentBuilder {
       const body = lines.filter(l => l.size >= this.bodySize * 0.95 && l.text.length > 20);
       if (body.length) {
         const lowest = Math.min(...body.map(l => l.y));
-        const small = lines.filter(l => l.size <= this.bodySize * 0.85 && l.y < lowest);
+        // Read Aloud 2 (ticket 35): a table in small type below the text is not a footnote (its cells were lost, also with
+        // "Skip tables" off)
+        const small = lines.filter(l => !l.table && l.size <= this.bodySize * 0.85 && l.y < lowest);
         // Footnotes stand off from the text by a clear space. Small type that follows the text at the normal
         // line spacing (a bold list at the foot of a column) is part of the text.
         const ys = [...new Set(lines.map(l => Math.round(l.y)))].sort((a, b) => b - a);
@@ -1742,6 +1808,13 @@ export class DocumentBuilder {
       });
     }
 
+    // Read Aloud 2 (ticket 35): the line step of the page, for the paragraph gap below: the steps between two lines of
+    // one type size that follow each other (a step of a type size at least), the lowest quarter (a title page has more
+    // gaps between its parts than steps between lines)
+    const steps = lines.slice(1).map((l, k) => [lines[k], l]).filter(([a, b]) => Math.abs(a.size - b.size) < 0.5 && a.y - b.y >= b.size * 0.8)
+      .map(([a, b]) => a.y - b.y).sort((a, b) => a - b);
+    const lineStep = steps.length ? steps[Math.floor(steps.length / 4)] : 0;
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const text = line.text;
@@ -1751,6 +1824,13 @@ export class DocumentBuilder {
       // Read Aloud 2: each table cell is its own paragraph, so the voice stops between the cells
       if (line.cellStart || (!line.cell && this.lastCell)) this.flush();
       this.lastCell = !!line.cell;
+      // Read Aloud 2 (ticket 35): a line with no end mark ends its paragraph when the next line starts a new one: below a
+      // gap of one and a half line steps, with a capital letter or a number (a subtitle, then the audience line, then a
+      // note, on a title page), or as the next item of a numbered list ("1. What we ask ..." "2. Five questions ...").
+      // A Sentence ends only at ". ! ?", so these lines ran together with no stop.
+      if (i > 0 && !line.cell && !lines[i - 1].cell && lineStep && lines[i - 1].y > line.y &&
+          !/[.!?]["'”’)\]]?$/.test(lines[i - 1].text) &&
+          ((lines[i - 1].y - line.y > lineStep * 1.5 && /^[A-Z0-9"“(]/.test(text)) || /^\d{1,2}[.)]\s/.test(text))) this.flush();
 
       if (this.repeated.has(key)) continue;
       if (isPageNumber(text)) continue;
@@ -1854,9 +1934,16 @@ export class DocumentBuilder {
       const shortForMeasure = this.lineLength === 0 ||
         text.length < this.lineLength * 0.6;
       const looksNumbered = /^\d+(\.\d+)*\.?\s*[A-Z][A-Za-z]/.test(text) &&
-        !/\s\d{1,4}$/.test(text) && shortForMeasure;
-      const isHeading = short &&
-        (bigType || HEADING_WORDS.test(text) || looksNumbered);
+        !/\s\d{1,4}$/.test(text) && (shortForMeasure || this.bodySize > 0 && line.size >= this.bodySize * 1.2);
+      // Read Aloud 2 (ticket 35): a numbered heading set larger than the body (1.2 times or more) is a heading at any
+      // length: in a lecture with many short table lines the measure was short, and "4. Which plant for which season
+      // of the garden year" (1.5 times the body) was not a section. A numbered line at body size that has a numbered
+      // line above or below it ("1. What we ask ..." "2. Five questions ...") is an item of a list, not a heading. A cell
+      // of a table is never a heading.
+      const listNumber = k => k >= 0 && k < lines.length && /^\d{1,2}[.)]\s/.test(lines[k].text);
+      const inList = listNumber(i) && (!this.bodySize || line.size < this.bodySize * 1.2) && (listNumber(i - 1) || listNumber(i + 1));
+      const isHeading = short && !line.cell && !line.table &&
+        (bigType || HEADING_WORDS.test(text) || (looksNumbered && !inList));
 
       // Read Aloud 2: a page header or footer ("Introduction 3", "4 Disciplined Entrepreneurship") is not a heading
       if (isHeading && (i === 0 || i === lines.length - 1) && /^\d{1,4}\s+\D|\D\s+\d{1,4}$/.test(text)) continue;
@@ -1868,14 +1955,22 @@ export class DocumentBuilder {
         // Absorb the lines that follow at the same size.
         let title = text;
         const headLines = [line];  // Read Aloud 2: the heading is read aloud too, as its own short paragraph
+        const cut = (a, b) => /[a-z][-\u00AD\u2010\u2011]$/.test(a) && /^[a-z]/.test(b);  // a word cut at the line end
         while (i + 1 < lines.length) {
           const next = lines[i + 1];
           if (Math.abs(next.size - line.size) > 0.5) break;
-          if (next.text.length >= 80 || /[.,;:]$/.test(next.text)) break;
-          // Read Aloud 2: a full-width line, or one ending in a hyphen, is body text. Scanned pages (text from
-          // Vision) set the heading and the body at one size, and "Abstract" swallowed the whole abstract.
-          if (/-$/.test(next.text) || (this.lineLength && next.text.length >= this.lineLength * 0.75)) break;
-          title += ' ' + next.text;
+          // Read Aloud 2 (ticket 35): a heading in larger type that stops mid-sentence goes on in the next line, which
+          // starts in lower case, also when that line is long ("12. What signs of the soil indi-" / "cate a good place
+          // for a bed of roots?"). Before, the heading ended at the cut and the word was read in two parts.
+          const last = headLines[headLines.length - 1].text;
+          const goesOn = this.bodySize > 0 && line.size >= this.bodySize * 1.2 && !/[.!?:]["'”’)\]]?$/.test(last) && /^[a-z]/.test(next.text);
+          if (!goesOn) {
+            if (next.text.length >= 80 || /[.,;:]$/.test(next.text)) break;
+            // Read Aloud 2: a full-width line, or one ending in a hyphen, is body text. Scanned pages (text from
+            // Vision) set the heading and the body at one size, and "Abstract" swallowed the whole abstract.
+            if (/-$/.test(next.text) || (this.lineLength && next.text.length >= this.lineLength * 0.75)) break;
+          }
+          title = cut(last, next.text) && !keepsHyphen(last, next.text) ? title.replace(/[-\u00AD\u2010\u2011]$/, '') + next.text : title + ' ' + next.text;
           headLines.push(next);
           i++;
         }
@@ -1886,7 +1981,11 @@ export class DocumentBuilder {
           page,
           level: 1
         });
-        for (const hl of headLines) { this.buffer.push(hl.tokens); this.buffer.space(); }
+        headLines.forEach((hl, k) => {
+          this.buffer.push(hl.tokens);
+          const after = headLines[k + 1];
+          if (after && cut(hl.text, after.text)) { if (keepsHyphen(hl.text, after.text)) this.buffer.trimSpaces(); else this.buffer.trimHyphen(); } else this.buffer.space();
+        });
         this.flush();
         continue;
       }

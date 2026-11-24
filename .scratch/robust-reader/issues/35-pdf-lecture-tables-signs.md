@@ -37,3 +37,34 @@ The diagnosis files (Sentences with page numbers, page pictures, scripts) are in
 ## Blocked by
 
 - 34 (pdf-small-losses-one-column-book): both change `extension/pdf/extract.js`.
+
+## Work report
+
+Builder of 24 Nov 2026, in a private copy made from main 899a9e9. Each item was a claim. The code confirmed all 10. The new tests are in `tests/node/pdf-lecture.test.mjs`, with made lines only. Each item test fails on the old code and passes now. Two more tests in that file are guards: they pass on the old code too.
+
+1. Done. A table of 6 columns in the reader:
+   - `cellsOf` cuts a cell of 40 letters or more at its gaps of one type size, when the row is in a table of short cells that `withTables` found. Example: "Lemon or lime" "Needs a warm" "Deep and slow too". In side-by-side boxes of running text, the cell stays whole.
+   - Two rows with 4 cells or more that line up are a table, for the end of a table on the next page.
+   - A short line that ends with "?" ("or shade?") does not end the table area. The second lines of the last row belong to it.
+   - When a quarter of the lines of a table are table lines, all its lines are table lines.
+   - Test: "item 1: a table of 6 columns with narrow gaps, and its end of 2 rows on the next page, is skipped".
+2. Done, by the same change. Test: "item 2: a table of 4 columns with a narrow first column is skipped".
+3. Done. A table line in small type below the body is not a footnote. A cell of a table is never a heading. Tests: "item 3: a table in small type below the body text is read" and "item 3: a cell of a table is not a heading in the contents list". The guard test "item 3: with "Skip tables" on, the table in small type is skipped" passes on the old code too.
+4. Done. A lone "+" between two words or numbers is not a mark run. The speech rewrite says "plus". A run of marks ("# # + +# +") is still not said. The formula line ends its Sentence by the rule of item 6. Test: "item 4: a formula line". Guard test: "item 4: a run of affiliation marks between names is still not said".
+5. Done. `finish()` keeps the space before a point that a digit follows. The speech rewrite says ".04" as "point zero four", ".27 mm" as "point two seven millimetres", and "25/.06" and "25-.06" as "twenty-five, point zero six". A price ("$.99") and a point inside a word stay. Test: "item 5: a number that starts with a point". The words "twenty-five, point zero six" are a choice of the builder. The owner can ask for another form.
+6. Done. A line with no end mark ends its paragraph in two cases. Case 1: the next line starts with a capital letter or a number, below a gap of 1.5 line steps. Case 2: the next line is a numbered list item. The line step is the lowest quarter of the steps between lines of one type size. Test: "item 6: a subtitle, an audience line and a note with no end marks are separate Sentences".
+7. Done, by the answer A. Page references in square brackets are a citation pattern: "Skip citations" on skips them, and off reads them. With it off, a page range is still said in words ("sixty-four to sixty-five") and a single page in digits. The voice says both as numbers. Test: "item 7: page references in square brackets".
+8. Done. A numbered line set 1.2 times the body or larger is a heading at any length. A numbered line at body size with a numbered line above or below it is a list item. A heading in larger type that stops mid-sentence takes its next line in lower case, and a word cut by a hyphen is joined. The old rule cut 4 question headings of McSpadden 2007 in two. Tests: "item 8: a numbered list is not a section, and a numbered heading in larger type is" and "item 8: a numbered heading in larger type over 2 lines keeps its cut word whole". The lecture now has 8 sections, one for each part.
+9. Done. `STOP_SECTION` takes "Reference" too. Test: "item 9: a part named "Reference" near the end is not read".
+10. Done. In `withTables`, a grid is a table too, also with no cell of 30 letters. A grid has 3 columns and 3 rows with text in every column, or 4 columns and 2 such rows. Each cell is its own Sentence. Test: "item 10: a table of short cells is read row by row with "Skip tables" off".
+
+Changed test of ticket 34: "with "Skip tables" on, what is read of a table of 3 columns comes row by row" (`tests/node/pdf-small-losses.test.mjs`). That test asked that 3 lines of the table be read. Now the table is skipped whole, by the rule of item 1. The test still checks the row order of the lines that are read.
+
+Comparison check (`node tests/pdf-text/compare.mjs`): the 5 public samples read as their references. The lecture reference is updated. These private samples differ from their references, and their references are not updated:
+
+- McSpadden 2007: no word is lost. The speech rewrite now says the numbers that start with a point (".04", "25/.06"). Some Sentences end at a paragraph gap or between list items. 4 question headings are now sections.
+- Aulet: 227 words of tables and diagram labels are skipped. Before, they were read as loose words. "+" is said as "plus" in 2 places.
+- The owner's book: about 4760 words of tables are skipped with "Skip tables" on. Before, parts of these tables were read and other parts were skipped. Some short leftovers of tables are still read, as before.
+- The JIT paper: one table row is skipped. "+" in a code line is said as "plus".
+
+Left: in tables where less than a quarter of the lines are table lines, the reader still reads parts and skips parts, as before. With "Skip citations" off, the speech rewrite says a page range in words and a single page in digits.
