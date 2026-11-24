@@ -1,6 +1,6 @@
 # 35. PDF text: the owner's lecture "Choosing the File" is not read well
 
-Status: ready-for-agent
+Status: done in code (commits 2c14044, 145f677), the second ticket review passed, 717 Node tests pass; the owner's check by ear in Chrome is open
 Type: AFK
 
 ## Parent
