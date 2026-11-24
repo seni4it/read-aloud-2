@@ -122,7 +122,10 @@ function stopOwner(except) {
 
 // One line of the report for a Sentence that was read to its end. heard: the speed that sounded (the length of the
 // sound divided by the time it took); a Sentence far from the asked speed is marked "speed-off".
-function said(o) {
+// e: what the sound page measured (19 Nov 2026). lag: the delay of the output in ms (a Bluetooth headset: 150 to 350).
+// heardMs: the time that the sound took in the ear, without that delay; heard comes from it, so the delay of the
+// output is not taken for a slow voice. join: the silence before this Sentence in ms. pre: its sound started early.
+function said(o, e = {}) {
   const ms = Date.now() - o.startAt - o.pausedMs;
   const line = { engine: o.engine === 'kokoro' ? 'natural' : 'mac', voice: o.m.voice || '', chars: String(o.m.text || '').length,
     wait: o.startAt - o.asked, ms, rate: o.m.rate, tries: o.tries + 1 };
@@ -130,8 +133,12 @@ function said(o) {
   let evt = 'say';
   if (o.engine === 'kokoro' && o.plan) {
     Object.assign(line, { play: +o.plan.rate.toFixed(3), speed: o.plan.speed, method: o.plan.method || 'B' });
-    if (o.d > 0 && ms > 0) {
-      line.d = +o.d.toFixed(2); line.heard = +(o.d * 1000 / ms).toFixed(2);
+    const took = e.heardMs > 0 ? e.heardMs : ms;
+    if (Number.isFinite(e.lag)) line.lag = e.lag;
+    if (Number.isFinite(e.join)) line.join = e.join;
+    if (e.pre) line.pre = 1;
+    if (o.d > 0 && took > 0) {
+      line.d = +o.d.toFixed(2); line.heard = +(o.d * 1000 / took).toFixed(2);
       if (!o.touched && o.d >= 2 && Math.abs(line.heard / o.plan.rate - 1) > 0.15) evt = 'speed-off';
     }
   }
@@ -222,12 +229,14 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     else if (m.cmd === 'note' && typeof m.evt === 'string') note(m.evt, { ...(m.data || {}), tab }, !!m.now);  // a line from a page of the add-on
     else if (m.cmd === 'problem') { problem(m.where || 'page', tab).then(reply); return true; }
   } else if (m.to === 'bg-evt') {  // from the offscreen page
+    // a line of the sound page for the report (a lost early start, two Sentences that sounded together)
+    if (m.evt === 'note') { if (typeof m.name === 'string') note(m.name, m.data || {}); return; }
     // the tab as well as the id: ids are counted per tab, so tab A's late 'end' can carry tab B's id
     const o = owner;
     if (!o || o.id !== m.id || o.tab !== m.tab) return;
     if (m.evt === 'start') { o.startAt = Date.now(); o.pausedMs = 0; if (o.pausedAt) o.pausedAt = o.startAt; if (m.d > 0) o.d = m.d; }
     else if (m.evt === 'tick' && m.d > 0) o.d = m.d;
-    else if (m.evt === 'end') { if (o.startAt) said(o); }
+    else if (m.evt === 'end') { if (o.startAt) said(o, m); }
     else if (m.evt === 'error') { failed(o, m.why || 'The voice did not play.'); return; }  // tried again first
     tell(m.tab, { evt: m.evt, id: m.id, t: m.t, d: m.d, why: m.why, starts: m.starts }, o.ext);
   }

@@ -469,3 +469,34 @@ test('report: while the voice server does not answer, the lines wait; they go wh
   assert.ok(posts.some((x) => x.evt === 'problem' && x.server === 0), 'the mark of before arrived');
   assert.ok(posts.some((x) => x.evt === 'test-line'));
 });
+
+// ---------- 19 Nov 2026: an output with a delay (a Bluetooth headset) ----------
+// The sound page measures the delay of the output and sends it with the end of a Sentence (tests/node/sound-join.test.mjs).
+
+test('report: the delay of the output is not taken for a slow voice; the line has the delay, the join and the early start', async () => {
+  const { b, posts } = withReport();
+  b.send({ to: 'bg', cmd: 'speak', engine: 'kokoro', id: 1, text: 'A sentence that is long enough.', voice: 'af_heart', rate: 1 }, b.webTab(7));
+  await settle();
+  b.send({ to: 'bg-evt', tab: 7, id: 1, evt: 'start', d: 3 }, b.offscreenSender);
+  await wait(30);
+  b.send({ to: 'bg-evt', tab: 7, id: 1, evt: 'end', lag: 300, heardMs: 3010, join: 62, pre: 1 }, b.offscreenSender);
+  await wait(40);
+  const say = posts.filter((x) => x.evt === 'say' || x.evt === 'speed-off');
+  assert.equal(say.length, 1);
+  assert.equal(say[0].evt, 'say', '3 s of sound took 3.01 s in the ear: the speed is right');
+  assert.equal(say[0].heard, 1);
+  assert.deepEqual([say[0].lag, say[0].join, say[0].pre], [300, 62, 1]);
+  const end = b.sentToTabs.filter(([t, m]) => t === 7 && m.evt === 'end');
+  assert.equal(end.length, 1, 'the tab gets its end');
+  assert.ok(!('lag' in end[0][1]) && !('join' in end[0][1]), 'the measurements go to the report only');
+});
+
+test('report: a line of the sound page (a lost early start) goes into the report, with no Sentence of a tab', async () => {
+  const { b, posts } = withReport();
+  b.send({ to: 'bg-evt', evt: 'note', name: 'early-start-lost', data: { why: 'other' } }, b.offscreenSender);
+  await wait(40);
+  const lost = posts.filter((x) => x.evt === 'early-start-lost');
+  assert.equal(lost.length, 1);
+  assert.equal(lost[0].why, 'other');
+  assert.equal(b.sentToTabs.length, 0, 'no tab hears of it');
+});
