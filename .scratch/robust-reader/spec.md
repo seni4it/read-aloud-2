@@ -145,3 +145,15 @@ Owner's answers of 9 Nov 2026 (answer page round 2): yes to each of the 7 points
 - The owner listens with this tool all day. A restart of the voice server and a reload of the add-on stop his reading for some seconds: do them only at an agreed time.
 - The repository is public. No patient data and no private path of a book goes into an issue, a test file or a commit.
 - Reference speed and memory before the work (9 Nov 2026, test copy of the server): first sentence 3.96 s after start, cached sentence 0.06 s, the test copy used 903 MB of memory after its first sentences, and the live server showed 160 MB.
+
+## The owner's answers before the ticket run of 24 Nov 2026
+
+Answer page `ticket-run-round-2` (the answers file is in `/Volumes/claude/handoff/relays/read-aloud-run-20261124-183021/`).
+
+1. The headset work of 19 Nov 2026 (version 2.13.3): A, "I check it with a ticket review, and then I keep it as build changes."
+2. The answered rounds of 12 to 14 Nov 2026 in `docs/`: A, "I keep them in git, as a record."
+3. Update the add-on copy and load the book tab again, by the coordinator, only when the reader does not play: yes.
+4. Push each finished ticket to GitHub, by the coordinator: yes.
+5. The checks in Chrome: A, "One list at the end of the run, with all checks."
+6. The key of a PDF opened in Chrome (from ticket 19): not answered. Nothing changes; no ticket.
+7. Page references in square brackets in the lecture (ticket 35, item 7): not answered. The run uses the recommended answer A, which can be undone: they are skipped when "Skip citations" is on, and read when it is off.
