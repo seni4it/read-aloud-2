@@ -151,6 +151,7 @@ Owner's answers of 9 Nov 2026 (answer page round 2): yes to each of the 7 points
 Answer page `ticket-run-round-2` (the answers file is in `/Volumes/claude/handoff/relays/read-aloud-run-20261124-183021/`).
 
 1. The headset work of 19 Nov 2026 (version 2.13.3): A, "I check it with a ticket review, and then I keep it as build changes."
+   Result (24 Nov 2026): kept in commits 611a719 (the work as it was), 4ebc57d (the repair of the 4 faults of the first ticket review) and c07132e (the true Mac speaker delays, version 2.13.4). The second ticket review passed. 692 Node tests pass. The owner's check by ear with the Bluetooth headset is open.
 2. The answered rounds of 12 to 14 Nov 2026 in `docs/`: A, "I keep them in git, as a record."
 3. Update the add-on copy and load the book tab again, by the coordinator, only when the reader does not play: yes.
 4. Push each finished ticket to GitHub, by the coordinator: yes.
