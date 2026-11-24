@@ -51,6 +51,14 @@ Without the voice server the add-on still works, with the voices built into the 
   parentheses or brackets.
   Changes from Paper Reader: the Mac voice engine (`tts.js`), scanned pages (`ocr.js`), a paper's title block no
   longer hides its columns, and a heading no longer swallows the lines after it (`extract.js`, marked "Read Aloud 2").
+- A book of one column with tables (24 Nov 2026). The reader learns from 14 sample pages whether a book has one
+  column of text: half or more of its lines of running text go across the middle of the text block. In such a book
+  a page splits into two columns only at a gap of its own that few lines of running text cross (an index in two
+  columns). Before, a book of 319 pages split 116 pages at the gap of a table: all the labels were read, then all
+  the meanings, and the text under the table came out of order. A table that holds text (a cell line of 30 letters
+  or more) is read row by row, each cell whole, and each column of a row is its own paragraph. Side-by-side boxes
+  of running text are read box by box. A table in small type at the top of a page is no longer dropped as a running
+  head. The short labels of a diagram are read as before. Tests: `tests/node/pdf-tables.test.mjs`.
 - Scanned PDFs (pages that are pictures): the text is read by Apple's Vision on this Mac (`ocr/ocr.swift`, built
   the first time it is needed), then read and highlighted like any PDF. About 5 seconds a page; pages ahead are
   read while you listen.

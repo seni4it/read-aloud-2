@@ -130,6 +130,43 @@ export async function readPage(doc, pageNumber) {
   const bw = blockX1 - blockX0, cx = (blockX0 + blockX1) / 2;
   const acrossMiddle = ([, es]) => es.some(e => e.x <= cx - bw * 0.15 && e.x + e.w >= cx + bw * 0.15);
   const colRows = ordered.filter(r => !acrossMiddle(r));
+  // Read Aloud 2: a line of running text: 30 letters or more, and no space in it wider than a word space (a word
+  // space is under half a letter high; the space between two columns or two table cells is more than one and a
+  // half). In a one-column book most such lines run across the middle of the text block; in a two-column book few
+  // do (a title, an abstract, a caption). buildDocument counts them to know a one-column book.
+  const runningLine = ([, es]) => {
+    if (es.map(e => e.item.str).join('').trim().length < 30) return false;
+    let reach = -Infinity;
+    for (const e of es) {
+      const size = Math.abs(e.item.transform[0]) || 10;
+      if (reach > -Infinity && e.x - reach >= Math.max(3, pageWidth * 0.015, size * 1.5)) return false;
+      reach = Math.max(reach, e.x + e.w);
+    }
+    return true;
+  };
+  const runsAcross = (r, a, b) => r[1].some(e => e.x < a) && r[1].some(e => e.x + e.w > b);
+  // Only rows in the page's body type count: a table or a caption is set smaller, and it says nothing of the columns.
+  const sizeWeight = new Map();
+  for (const [, es] of ordered) for (const e of es) {
+    const s = Math.round((Math.abs(e.item.transform[0]) || 10) * 2) / 2;
+    sizeWeight.set(s, (sizeWeight.get(s) || 0) + e.item.str.length);
+  }
+  const pageBody = [...sizeWeight].reduce((a, b) => (b[1] > a[1] ? b : a), [0, -1])[0];
+  const inBody = ([, es]) => {
+    const longest = es.reduce((a, e) => (e.item.str.length > a.item.str.length ? e : a), es[0]);
+    return Math.abs((Math.abs(longest.item.transform[0]) || 10) - pageBody) <= pageBody * 0.1;
+  };
+  const bodyText = ordered.filter(r => inBody(r) && r[1].map(e => e.item.str).join('').trim().length >= 30);
+  const textRows = bodyText.length;
+  const fullRows = bodyText.filter(r => runningLine(r) && runsAcross(r, cx - bw * 0.1, cx + bw * 0.1)).length;
+  // Read Aloud 2: in a one-column book (buildDocument sets doc.__oneColumn) a gap between two columns of a table is
+  // not a gap between two columns of text. A book of 319 pages with tables of two columns ("[Modern evidence]" beside
+  // its meaning) split 116 pages at a table: all the labels were read, then all the meanings, and the text below the
+  // table was read in the wrong order. There, a page splits only at a gap of its own that few lines of running text
+  // cross (an index in two columns at the end of the book), and never at another page's gap.
+  const oneColumn = !!doc.__oneColumn;
+  const fewCross = (j) => ordered.filter(r => runningLine(r) && runsAcross(r, j.x - 1, j.x + 1)).length
+    <= Math.max(2, j.split * 0.25);
   // Every way of finding the gap gives a candidate: the finder on the column rows, on all rows, on the sheet,
   // from the first one-sided row down (a paper's title block hides the columns below it), and the gaps the
   // book's other pages use (left-hand and right-hand pages have mirrored margins, so there are two). Each
@@ -228,7 +265,7 @@ export async function readPage(doc, pageNumber) {
   };
   const scores = [];
   let gutter = null;
-  for (const g of own) { const j = judge(g); scores.push(['own', Math.round(g), j.split, j.lined, j.cross]); if (j.ok) { gutter = j.x; break; } }
+  for (const g of own) { const j = judge(g); scores.push(['own', Math.round(g), j.split, j.lined, j.cross]); if (j.ok && (!oneColumn || fewCross(j))) { gutter = j.x; break; } }
   // The page's own finder found nothing sound: the gaps the book's other pages use are tried (left-hand and
   // right-hand pages have mirrored margins, so there are two), and the one with most lined-up rows is taken.
   if (gutter === null) {
@@ -237,7 +274,7 @@ export async function readPage(doc, pageNumber) {
       const j = judge(g); scores.push(['known', g, j.split, j.lined, j.cross]);
       // Read Aloud 2: another page's gap that 3 rows in 4 of this page run across is not a gap here (a
       // one-column page whose header row has the page number and the title far apart split at the title).
-      if (!j.ok || j.cross > ordered.length * 0.75) continue;
+      if (!j.ok || j.cross > ordered.length * 0.75 || (oneColumn && !fewCross(j))) continue;
       if (!best || j.lined > best.lined || (j.lined === best.lined && (j.cross < best.cross || (j.cross === best.cross && count > best.count)))) best = { ...j, count };
     }
     if (best) gutter = best.x;
@@ -303,11 +340,136 @@ export async function readPage(doc, pageNumber) {
     };
   };
 
+  // Read Aloud 2: a table on a page that has no columns ("Pressure from goal 1" beside "Pressure from goal 2", each
+  // cell three lines long). Read line by line, the lines of the two cells came out mixed ("Larger and more tapered
+  // preparations let Every extra 0.01 mm of taper ..."). A run of rows with a wide space (a cell gap: wider than a
+  // word space, which is under half a letter high) that keeps a strip clear from top to bottom is a table. Each
+  // column is cut into cells: a cell ends where the space down to the next line is wider than the column's own line
+  // step, or where the next line does not go on with the sentence. The cells that overlap in height make one row of
+  // the table, and a row is read column by column, each cell whole. So a table of labels and their meanings reads
+  // label, meaning, label, meaning; side-by-side boxes of running text ("Idea:" "Technology:" "Passion:") read box
+  // by box. A list of titles with their page numbers (a contents page) is not a table.
+  const cellGap = (e) => Math.max(minGap, (Math.abs(e.item.transform[0]) || 10) * 0.9);
+  const gapsOf = (es) => {
+    const out = [];
+    let reach = -Infinity;
+    for (const e of es) {
+      if (reach > -Infinity && e.x - reach >= cellGap(e)) out.push([reach, e.x]);
+      reach = Math.max(reach, e.x + e.w);
+    }
+    return out;
+  };
+  const clear = (strips, es) => {
+    let out = strips;
+    for (const e of es) {
+      const a = e.x, b = e.x + e.w;
+      out = out.flatMap(([s, t]) => (b <= s || a >= t) ? [[s, t]] : [[s, Math.min(t, a)], [Math.max(s, b), t]]);
+    }
+    return out.filter(([s, t]) => t - s >= minGap);
+  };
+  const rowSize = ([, es]) => Math.max(...es.map(e => Math.abs(e.item.transform[0]) || 10));
+  const textOf = (es) => es.map(e => e.item.str).join('').replace(/\s+/g, ' ').trim();
+  const withTables = (rows) => {
+    const out = [];
+    // the top or bottom row with a page number at one end is the running head or foot, never a table row
+    const folio = (k) => (k === 0 || k === rows.length - 1) && rows[k][1].length > 1 &&
+      [rows[k][1][0], rows[k][1][rows[k][1].length - 1]].some(e => new RegExp(`^(?:\\d{1,4}|${ROMAN})$`).test(e.item.str.trim()));
+    for (let i = 0; i < rows.length;) {
+      let strips = folio(i) ? [] : gapsOf(rows[i][1]);
+      if (!strips.length) { out.push(makeLine(...rows[i])); i++; continue; }
+      let last = i, cuts = 1, atLast = strips;
+      for (let k = i + 1; k < rows.length && k - last <= 3; k++) {
+        if (folio(k) || rows[k - 1][0] - rows[k][0] > rowSize(rows[k - 1]) * 3.5) break;
+        const left = clear(strips, rows[k][1]);
+        if (!left.length) break;
+        strips = left;
+        if (gapsOf(rows[k][1]).length) { last = k; cuts++; atLast = strips; }
+      }
+      strips = atLast;
+      let block = rows.slice(i, last + 1);
+      // the lines below the last row with a cell gap belong to the table only at the spacing of a cell's lines
+      const steps = block.slice(1).map((r, k) => block[k][0] - r[0]).filter(d => d > 1);
+      const step = steps.length ? Math.min(...steps) : 0;
+      let end = last;
+      for (let k = last + 1; k < rows.length && k <= last + 3 && step; k++) {
+        if (folio(k) || rows[k - 1][0] - rows[k][0] > step * 1.3 || !clear(strips, rows[k][1]).length) break;
+        strips = clear(strips, rows[k][1]);
+        end = k;
+      }
+      block = rows.slice(i, end + 1);
+      let cutsX = strips.filter(([s, t]) => block.filter(([, es]) => es.some(e => e.x + e.w <= s) && es.some(e => e.x >= t)).length >= 2)
+        .map(([s, t]) => (s + t) / 2);
+      const cells = (c) => block.map(([, es]) => es.filter(e => {
+        const m = e.x + e.w / 2;
+        return (c === 0 || m > cutsX[c - 1]) && (c === cutsX.length || m < cutsX[c]);
+      }));
+      // a column of numbers or marks only ("#", "1", "2", under any heading: "Step") goes with the cell beside it
+      const marks = (c) => { const t = cells(c).map(textOf).filter(Boolean); return t.length >= 3 && t.slice(1).every(v => v.length <= 3); };
+      cutsX = cutsX.filter((_, c) => !marks(c));
+      const lastCells = cells(cutsX.length).map(textOf).filter(Boolean);
+      const contents = lastCells.length && lastCells.every(t => new RegExp(`^(?:\\d{1,4}|${ROMAN})$`).test(t));
+      // a table that holds text has a cell line of 30 letters or more; the short labels of a diagram ("200 cattle",
+      // "Treatment cost") are read as before
+      const prose = cutsX.length && Array.from({ length: cutsX.length + 1 }, (_, c) => cells(c)).some(col => col.some(es => textOf(es).length >= 30));
+      if (cuts < 2 || !cutsX.length || contents || !prose) {
+        // not a table from this row: the row is read as it is, and the next row may start a table (a running head
+        // with its page number far to the right is not a table, and the table below it must still be found)
+        out.push(makeLine(...rows[i]));
+        i++;
+        continue;
+      }
+      // the cells of each column
+      const found = [];
+      for (let c = 0; c <= cutsX.length; c++) {
+        const col = cells(c);
+        const ks = col.map((es, k) => (es.length ? k : -1)).filter(k => k >= 0);
+        const ds = ks.slice(1).map((k, j) => block[ks[j]][0] - block[k][0]).filter(d => d > 1);
+        const colStep = ds.length ? Math.min(...ds) : 0;
+        // the line goes on with the sentence of the line above it: the line above ends with a comma, a hyphen or a dash,
+        // or this one starts in lower case; a lead-in ("Idea:") goes on with the line below it. (A line that fills the
+        // column is no sign: in a table of one-line rows, "4 Routinely follow a file ..." took the row below it.)
+        const goesOn = (a, b) => {
+          const above = textOf(col[a]), here = textOf(col[b]);
+          if (/[:,/‐–—-]["'”’)\]]?$/.test(above)) return true;
+          if (/[.!?;]["'”’)\]]?$/.test(above)) return false;
+          return /^[a-z(]/.test(here);
+        };
+        let cur = null;
+        for (let j = 0; j < ks.length; j++) {
+          const k = ks[j], a = ks[j - 1];
+          // a line step under the type size (small labels of a chart under the table) does not make the step of the
+          // table's own lines look like a wider space
+          const wide = j > 0 && block[a][0] - block[k][0] > Math.max(colStep, rowSize(block[k]) * 1.1) * 1.3;
+          if (!cur || wide || !goesOn(a, k)) { cur = { c, ks: [k] }; found.push(cur); } else cur.ks.push(k);
+        }
+      }
+      // the rows of the table: cells that overlap in height, read column by column
+      found.sort((p, q) => block[q.ks[0]][0] - block[p.ks[0]][0] || p.c - q.c);
+      const tableRows = [];
+      for (const cell of found) {
+        const top = block[cell.ks[0]][0], bottom = block[cell.ks[cell.ks.length - 1]][0];
+        const row = tableRows[tableRows.length - 1];
+        if (row && top >= row.bottom - 1) { row.cells.push(cell); row.bottom = Math.min(row.bottom, bottom); } else tableRows.push({ bottom, cells: [cell] });
+      }
+      for (const row of tableRows) {
+        row.cells.sort((p, q) => p.c - q.c || block[q.ks[0]][0] - block[p.ks[0]][0]);
+        // the cells of one column in one row of the table are one paragraph: the voice stops between columns
+        row.cells.forEach((cell, n) => {
+          const col = cells(cell.c), first = n === 0 || row.cells[n - 1].c !== cell.c;
+          cell.ks.forEach((k, j) => out.push({ ...makeLine(block[k][0], col[k]), cell: true, cellStart: first && j === 0 }));
+        });
+      }
+      i = end + 1;
+    }
+    return out;
+  };
+
   // Real papers mix full-width blocks (title, author list, wide figures) with columns. Split the page into
   // bands separated by the full-width rows, and read each band left column then right column. Read Aloud 2:
   // each side is split again when it has a gap of its own, so a three-column table reads column by column.
   const order = (rows, x0, x1, depth, g0) => {
     const g = g0 !== undefined ? g0 : depth === 0 ? gutter : gutterIn(rows, x0, x1);
+    if (g === null && depth === 0) return withTables(rows);
     if (g === null || depth > 2) return rows.map(([y, entries]) => makeLine(y, entries));
     const out = [];
     let left = [];
@@ -508,7 +670,7 @@ export async function readPage(doc, pageNumber) {
   // Deliberately NOT calling page.cleanup(): pdf.js hands the same page proxy
   // to the viewer, and cleaning it up mid-render makes render() hang forever.
   const split = dropPageFurniture(lines.filter(l => l.text));
-  return { page: pageNumber, lines: split.lines, furniture: split.furniture, gutter };
+  return { page: pageNumber, lines: split.lines, furniture: split.furniture, gutter, fullRows, textRows };
 }
 
 /**
@@ -649,13 +811,14 @@ function dropPageFurniture(lines) {
   // Everything above the first body line, and below the last, that is small
   // and short. A section heading survives: headings are set LARGER, not
   // smaller, so isBody() is true for them.
+  // Read Aloud 2: a table cell is text, not furniture: a table at the top of a page in small type lost its first rows.
   for (const l of byY) {
-    if (isBody(l) && !strandedAtTop(l)) break;
+    if (l.cell || (isBody(l) && !strandedAtTop(l))) break;
     if (l.text.length <= 90) furniture.add(l);
   }
   for (let i = byY.length - 1; i >= 0; i--) {
     const l = byY[i];
-    if (isBody(l) && !strandedAtFoot(l)) break;
+    if (l.cell || (isBody(l) && !strandedAtFoot(l))) break;
     // Read Aloud 2: small type that reads as text (a bold list at the foot of a column) is text, not a footer
     if (prose(l) && l.size >= bodySize * 0.7) break;
     if (l.text.length <= 90) furniture.add(l);
@@ -1482,7 +1645,7 @@ export class DocumentBuilder {
         .filter(Boolean).map(nameKey).filter(k => k.length >= 4));
       const runningHead = l => !this.bodySize || /^\d{1,4}$/.test(l.text.trim()) ||
         l.size < this.bodySize * 0.95 || apart(l) || names.has(nameKey(l.text));
-      lines = lines.filter(l => !((l.y >= top - 6 || l.y <= bottom + 6) && l.text.length < 80 &&
+      lines = lines.filter(l => !(!l.cell && (l.y >= top - 6 || l.y <= bottom + 6) && l.text.length < 80 &&
         RUNNING.test(l.text.trim()) && runningHead(l)));
     }
     // Read Aloud 2: a quote box between the columns, on request ("Skip boxed quotes")
@@ -1567,6 +1730,9 @@ export class DocumentBuilder {
       const key = text.replace(/\d+/g, '#').toLowerCase().trim();
       // Read Aloud 2: a quote box is its own paragraph: never glued to the column text before or after it
       if (!!line.inset !== !!this.lastInset) { this.flush(); this.lastInset = !!line.inset; }
+      // Read Aloud 2: each table cell is its own paragraph, so the voice stops between the cells
+      if (line.cellStart || (!line.cell && this.lastCell)) this.flush();
+      this.lastCell = !!line.cell;
 
       if (this.repeated.has(key)) continue;
       if (isPageNumber(text)) continue;
@@ -1828,6 +1994,19 @@ export async function buildDocument(doc, options = {}, onPage = null) {
     }
   };
   for (const n of [...new Set(want)]) cached.set(n, await tryRead(n));
+
+  // Read Aloud 2: a one-column book. Of the sample pages' lines of running text in body type, half or more run across
+  // the middle of the text block (one-column books measured 0.63 to 0.83; two-column books 0.02 and 0.36). Then a
+  // page splits only at a gap of its own (readPage), and the sample pages that split are read again by that rule.
+  {
+    const got = [...cached.values()].filter(Boolean);
+    const full = got.reduce((s, p) => s + (p.fullRows || 0), 0), text = got.reduce((s, p) => s + (p.textRows || 0), 0);
+    if (text >= 20 && full >= text * 0.5 && !doc.__oneColumn) {
+      doc.__oneColumn = true;
+      doc.__gutters = new Map();
+      for (const [n, p] of cached) if (p && p.gutter !== null) cached.set(n, await tryRead(n));
+    }
+  }
 
   const sample = [...cached.values()].filter(Boolean);
   builder.setRepeatedLines(learnRepeatedLines(sample));
