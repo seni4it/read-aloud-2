@@ -1,6 +1,6 @@
 # 32. Italian reading: a second Italian voice, and Italian text read in Italian
 
-Status: done in code, Node tests and Python tests. Not yet heard in Chrome; the voice server must restart to offer Nicola.
+Status: done in code, Node tests and Python tests. The voice server offers Nicola since its start of 22 Nov 2026. Not yet heard in Chrome.
 Type: AFK
 
 ## The owner's request
