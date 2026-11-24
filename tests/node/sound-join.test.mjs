@@ -36,12 +36,21 @@ function loadSoundPage(out = {}, seconds = {}) {
   let lastSound = 0;  // when a fake sound last sounded
   const sounds = () => made.some((a) => !a.paused && !a.ended);
   class FakeAudio {
-    constructor() { this.paused = true; this.ended = false; this.playbackRate = 1; this.duration = NaN; this.readyState = 0; this.at = 0; this.callAt = 0; this.lag = 0; this.timer = null; made.push(this); }
+    constructor() { this.paused = true; this.ended = false; this.rate = 1; this.duration = NaN; this.readyState = 0; this.at = 0; this.callAt = 0; this.lag = 0; this.timer = null; made.push(this); }
     set src(u) { this.url = String(u); this.text = new URL(this.url).searchParams.get('text'); this.duration = seconds[this.text] || 0.5; this.readyState = 4; }
     get src() { return this.url || ''; }
+    // a speed change while the sound plays: the clock goes on from where it is, and the end comes at the new speed
+    get playbackRate() { return this.rate; }
+    set playbackRate(v) {
+      if (this.paused || this.ended) { this.rate = v; return; }
+      const now = Date.now(), at = this.currentTime, lagLeft = Math.max(0, this.callAt + this.lag - now);
+      this.rate = v; this.at = at; this.callAt = now; this.lag = lagLeft;
+      clearTimeout(this.timer);
+      this.timer = softTimeout(() => { this.at = this.duration; this.ended = true; this.endedAt = lastSound = Date.now(); this.onended?.(); }, (this.duration - at) / v * 1000 + lagLeft);
+    }
     get currentTime() {
       if (this.paused || this.ended) return this.at;
-      return Math.min(this.duration, this.at + Math.max(0, Date.now() - this.callAt - this.lag) / 1000 * this.playbackRate);
+      return Math.min(this.duration, this.at + Math.max(0, Date.now() - this.callAt - this.lag) / 1000 * this.rate);
     }
     play() {
       if (!this.url) return Promise.reject(Object.assign(new Error('no sound'), { name: 'NotSupportedError' }));
@@ -64,7 +73,7 @@ function loadSoundPage(out = {}, seconds = {}) {
   });
   vm.runInContext(readFileSync(EXT + 'offscreen.js', 'utf8'), ctx, { filename: 'offscreen.js' });
   const texts = ['One.', 'Two.', 'Three.', 'Four.', 'Five.'];
-  const speak = (id, text = texts[id - 1], next = texts.slice(id, id + 2)) => onMessage.fire({ to: 'offscreen', cmd: 'speak', tab: 1, id, text, voice: 'af', rate: 1, speed: 1, method: '', keepPitch: true, next }, {}, () => {});
+  const speak = (id, text = texts[id - 1], next = texts.slice(id, id + 2), more = {}) => onMessage.fire({ to: 'offscreen', cmd: 'speak', tab: 1, id, text, voice: 'af', rate: 1, speed: 1, method: '', keepPitch: true, next, ...more }, {}, () => {});
   const cmd = (c, more = {}) => { let answer; onMessage.fire({ to: 'offscreen', cmd: c, ...more }, {}, (v) => { answer = v; }); return answer; };
   const evt = (name, id) => sent.find((m) => m.evt === name && m.id === id);
   const stopAll = () => { cmd('stop'); made.forEach((a) => { clearTimeout(a.timer); clearInterval(a.beat); }); };
@@ -87,14 +96,31 @@ test('a fast output: no sound starts early, and each Sentence gets its own sound
   o.stopAll();
 });
 
-test('a fast output that starts late after silence: one small early start, no two Sentences together, then none', async () => {
+// 24 Nov 2026, ticket review: on the Mac speakers a sound that starts after silence has a delay of 0.08 to 0.16 s
+// (the Report of 19 to 23 Nov 2026), and the add-on started the next Sentence 30 ms early there, also after a pause.
+// A headset has 0.24 s or more after silence. The README says that nothing changes for the Mac speakers.
+test('the Mac speakers that start late after silence: no early start, each Sentence gets its own sound', async () => {
   const o = loadSoundPage({ delay: 15, cold: 150 });
   await o.readTo(4);
   assert.equal(o.made.length, 4);
-  assert.equal(o.evt('end', 2).pre, 1, 'the first Sentence started late: a small early start measures the delay');
-  assert.ok(o.evt('end', 2).join > -40, 'it does not make two Sentences sound together: ' + o.evt('end', 2).join);
-  assert.ok(!o.evt('end', 3).pre && !o.evt('end', 4).pre, 'the measured delay is small: no more early starts');
+  for (const id of [2, 3, 4]) assert.ok(!o.evt('end', id).pre, 'Sentence ' + id + ' did not start early');
   assert.equal(o.notes('join-overlap').length, 0);
+  o.stopAll();
+});
+
+test('the Mac speakers as the Report shows them (0.095 s after silence): no early start, also after a pause', async () => {
+  const o = loadSoundPage({ delay: 75, idle: 20 }, { 'One.': 0.8, 'Two.': 0.15 });
+  o.speak(1);
+  await until(() => o.evt('start', 1));
+  await wait(200);
+  o.cmd('pause');
+  await wait(600);
+  assert.equal(o.cmd('resume'), true);
+  await until(() => o.evt('end', 1));
+  await wait(15);
+  await o.readTo(5, 2);
+  assert.equal(o.made.length, 5, 'one sound for each Sentence that the page asked for');
+  for (const id of [2, 3, 4, 5]) assert.ok(!o.evt('end', id).pre, 'Sentence ' + id + ' did not start early');
   o.stopAll();
 });
 
@@ -233,5 +259,92 @@ test('a short first Sentence on a headset: its clock stands still for the delay,
   for (const id of [2, 3]) assert.ok(o.evt('end', id).join > -40, 'the silence before Sentence ' + id + ': ' + o.evt('end', id).join);
   assert.equal(o.notes('join-overlap').length, 0, 'no two Sentences sounded together');
   assert.deepEqual([o.of('One.').length, o.of('Two.').length, o.of('Three.').length], [1, 1, 1], 'one sound for each Sentence');
+  o.stopAll();
+});
+
+// ---------- 24 Nov 2026: the repairs of the ticket review ----------
+
+test('an error of the Sentence of now stops the early sound of the next Sentence', async () => {
+  const o = loadSoundPage(headset(), { 'Two.': 0.6 });
+  await o.readTo(1);
+  o.speak(2);
+  await until(() => o.of('Three.').length === 1 && !o.of('Three.')[0].paused);
+  const two = o.of('Two.')[0], three = o.of('Three.')[0];
+  two.onerror();
+  assert.ok(o.evt('error', 2), 'the page hears of the error');
+  assert.ok(three.paused && three.freed, 'the early sound of Sentence 3 was stopped');
+  assert.equal(o.notes('early-start-lost').length, 1);
+  assert.equal(o.notes('early-start-lost')[0].data.why, 'error');
+  await wait(700);
+  assert.ok(!o.evt('start', 3), 'Sentence 3 does not sound by itself');
+  o.stopAll();
+});
+
+test('an early sound that fails: the Report has why error, and the page gets a new sound for that Sentence', async () => {
+  const o = loadSoundPage(headset(), { 'Two.': 0.6 });
+  await o.readTo(1);
+  o.speak(2);
+  await until(() => o.of('Three.').length === 1 && !o.of('Three.')[0].paused);
+  const three = o.of('Three.')[0];
+  three.onerror();
+  assert.ok(three.freed, 'the failed sound is stopped');
+  assert.equal(o.notes('early-start-lost').length, 1);
+  assert.equal(o.notes('early-start-lost')[0].data.why, 'error');
+  await until(() => o.evt('end', 2));
+  await wait(15);
+  o.speak(3);
+  await until(() => o.evt('end', 3));
+  assert.equal(o.of('Three.').length, 2, 'Sentence 3 got a new sound');
+  assert.ok(!o.evt('end', 3).pre && !o.evt('error', 3));
+  o.stopAll();
+});
+
+test('Next while a Sentence sounds: the Report gives no join for the Sentence after it (no early sound)', async () => {
+  const o = loadSoundPage({ delay: 15 }, { 'Two.': 1 });
+  await o.readTo(1);
+  o.speak(2);
+  await until(() => o.evt('start', 2));
+  await wait(200);
+  o.speak(3);  // Next: Sentence 2 did not end
+  await until(() => o.evt('end', 3));
+  assert.ok(!o.evt('end', 2), 'Sentence 2 did not end');
+  assert.equal(o.evt('end', 3).join, undefined, 'no join: the Sentence before was cut, it did not end: ' + o.evt('end', 3).join);
+  o.stopAll();
+});
+
+test('Next while the early sound of the next Sentence is made but not started: it is taken, and no join', async () => {
+  const o = loadSoundPage(headset(), { 'Two.': 1.2 });
+  await o.readTo(1);
+  o.speak(2);
+  await until(() => o.of('Three.').length === 1);
+  assert.ok(o.of('Three.')[0].paused, 'the sound of Sentence 3 is made, it does not sound yet');
+  o.speak(3);  // Next
+  await until(() => o.evt('end', 3));
+  assert.equal(o.of('Three.').length, 1, 'the sound that was made is taken');
+  assert.equal(o.evt('end', 3).join, undefined, 'no join: the Sentence before was cut: ' + o.evt('end', 3).join);
+  o.stopAll();
+});
+
+test('a speed change before the early start: the early start is planned again at the new speed', async () => {
+  const o = loadSoundPage(headset(), { 'Two.': 1.2 });
+  await o.readTo(1);
+  o.speak(2);
+  await until(() => o.of('Three.').length === 1);
+  const old = o.of('Three.')[0];
+  assert.ok(old.paused, 'the sound of Sentence 3 is made for speed 1, it does not sound yet');
+  o.cmd('rate', { rate: 1.5 });
+  assert.ok(old.freed, 'the sound made for the old speed is stopped');
+  await until(() => o.of('Three.').length === 2);
+  const neu = o.of('Three.')[1];
+  assert.equal(neu.playbackRate, 1.5, 'the new sound has the new speed');
+  await until(() => o.evt('end', 2));
+  assert.ok(!neu.paused || neu.ended, 'the new sound started before the end of Sentence 2');
+  await wait(15);
+  o.speak(3, 'Three.', ['Four.', 'Five.'], { rate: 1.5 });
+  await until(() => o.evt('end', 3));
+  assert.equal(o.of('Three.').length, 2, 'the early sound was taken');
+  assert.equal(o.evt('end', 3).pre, 1);
+  assert.ok(o.evt('end', 3).join > -40, 'no two Sentences sounded together: ' + o.evt('end', 3).join);
+  assert.equal(o.notes('join-overlap').length, 0);
   o.stopAll();
 });

@@ -44,6 +44,8 @@ const note = (name, data) => chrome.runtime.sendMessage({ to: 'bg-evt', evt: 'no
 // It starts the sound of the next Sentence (the first Read-ahead text) that much before the end, less JOIN. When the
 // page asks for that Sentence, its sound is taken as it is: the page gets the same events as before, at the true times.
 // A fast output (the Mac speakers, a USB headset) gets no early start: nothing changes there.
+// The Report of 19 to 23 Nov 2026: a sound that starts after silence sounds 0.08 to 0.16 s later on the Mac speakers,
+// and 0.24 to 0.8 s later on the Bluetooth headset (0.14 to 0.2 s for a few). PROBE_FROM is between the two.
 // Two delays (the test browser on a Bluetooth headset, 19 Nov 2026): a sound that starts after silence, also after
 // the 0.03 s between two Sentences, sounds 0.36 s later; a sound that starts while another one sounds, 0.18 s later.
 // An early start is of the second kind, so only an early sound tells the delay to use. Before one was measured, the
@@ -52,15 +54,17 @@ const JOIN = 60;        // ms of silence between two Sentences that an early sta
 const LEAD_MIN = 30;    // ms; a shorter early start is not made
 const LEAD_MAX = 600;   // ms; a measured delay above this is not used in full
 const PROBE = 30;       // ms; the early start while the delay of an early sound is not measured yet
+// ms; a sound that starts after silence with this delay or more gets the small early start (PROBE). The delay while
+// another sound sounds is about half of it (0.18 s against 0.36 s): below this, the early start would be below LEAD_MIN.
+const PROBE_FROM = 2 * (JOIN + LEAD_MIN);
 const PREPARE = 400;    // ms before its start, the sound of the next Sentence is made, so that it is loaded in time
 const LOOK = 25;        // ms between two looks at the sound
 const AWAKE = 500;      // ms; a Sentence that starts this soon after another one goes on with the same output
 const ORPHAN = 1500;    // ms after the end of a Sentence; an early sound that the page did not ask for by then is stopped
 const OVERLAP = -40;    // ms; a join below this means that two Sentences sounded together: the delay is measured again
 let delay = null;       // the delay in ms of a sound that starts while another one sounds; null: not measured yet
-let slow = false;       // the last sound that was measured had a delay that is worth an early start
+let slow = false;       // the last sound that started after silence had a delay of PROBE_FROM or more
 let lastSound = 0;      // when a sound last sounded or ended
-let endedAt = 0;        // when the Sentence before this one ended
 let nextSnd = null;     // the sound of the next Sentence, made early; the page did not ask for it yet
 let watch = null;       // the clock that measures the delay and looks ahead
 const median = (v) => [...v].sort((x, y) => x - y)[Math.floor(v.length / 2)];
@@ -99,7 +103,7 @@ function measure(s) {
   if (s.lags.length > 9) s.lags.shift();
   if (s.lags.length < 4) return;
   const lag = Math.max(0, median(s.lags));
-  if (s.lag0 === null) { s.lag0 = Math.round(lag); slow = lag >= JOIN + LEAD_MIN; }  // the delay at the start of this sound
+  if (s.lag0 === null) { s.lag0 = Math.round(lag); if (!s.early) slow = lag >= PROBE_FROM; }  // the delay at the start of this sound
   if (s.early) delay = lag;  // only a sound that started while another one sounded tells the delay of an early start
 }
 // How long until the sound of the next Sentence must start, in ms. null: no early start (or not known yet).
@@ -109,7 +113,10 @@ function untilEarlyStart(s) {
   if (s.noLead || a.paused || a.ended || !(a.duration > 0) || !(a.currentTime > 0.05)) return null;
   let lead = PROBE;
   if (delay !== null) { lead = Math.min(delay, LEAD_MAX) - JOIN; if (lead < LEAD_MIN) return null; }  // a fast output
-  else if (!slow) return null;
+  // A sound that started after silence tells by its own delay whether a small early start is worth it; not known yet:
+  // no early start (the verdict of an older sound can be of another output, or of the time before a pause).
+  // An early sound that is not measured yet goes on with the verdict of the sound that started it.
+  else if (s.early ? !slow : !(s.lag0 >= PROBE_FROM)) return null;
   return (a.duration - a.currentTime) / a.playbackRate * 1000 - lead;
 }
 // 40 times a second while a Sentence sounds: measure, make the sound of the next Sentence when its time is near, and
@@ -191,7 +198,7 @@ function attach(s, m) {
   a.onloadeddata = () => { if (cur === m) early(m.next, m.voice, 3, 0, m.speed, m.method); };  // then the next ones are prepared while this one plays
   a.onended = () => {
     if (snd === s) {
-      s.endAt = endedAt = lastSound = Date.now();
+      s.endAt = lastSound = Date.now();
       const n = nextSnd;
       if (n) {  // the early sound waits for the page; a page that does not ask must not be read to
         n.prevEnd = s.endAt;
@@ -200,7 +207,8 @@ function attach(s, m) {
     }
     end();
   };
-  a.onerror = () => { if (cur !== m) return; ticking(false); send(m, 'error', { why: 'The voice server on this Mac did not answer.' }); };
+  // the early sound of the next Sentence is stopped too: the background tries this Sentence again, or the page stops
+  a.onerror = () => { if (cur !== m) return; ticking(false); dropNext('error'); send(m, 'error', { why: 'The voice server on this Mac did not answer.' }); };
   // The start comes from the sound itself ('playing'), from play(), or from a resume: a pause while the sound loads
   // rejects this play() with an AbortError, and the start then comes when the owner resumes.
   const start = () => {
@@ -228,6 +236,8 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
   if (m.to !== 'offscreen') return;
   if (m.cmd === 'speak') {
     const n = nextSnd;
+    // the end of the Sentence before, for the join; none when it did not end (Next, Previous, a click in the page)
+    const prevEnd = snd && snd.endAt ? snd.endAt : 0;
     if (n && same(n.spec, m)) {  // its sound was made early: it is taken as it is
       nextSnd = null; clearTimeout(n.orphan); n.orphan = null;
       ticking(false);
@@ -239,16 +249,13 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
       if (n.a.readyState >= 2) early(m.next, m.voice, 3, 0, m.speed, m.method);  // it is loaded: the Read-ahead goes now
       times(m);
       if (n.timer) { clearTimeout(n.timer); n.timer = null; }
-      if (!n.called) { n.prevEnd = endedAt; play(n, m); }  // asked for before its early start (Next): it starts now, as each sound
-      else {
-        if (n.endAt) endedAt = n.endAt;  // a short sound that ended before the page asked for it
-        if (n.playAt) start();
-      }
+      if (!n.called) { n.prevEnd = prevEnd; play(n, m); }  // asked for before its early start (Next): it starts now, as each sound
+      else if (n.playAt) start();
     } else {
       if (n) dropNext('other');
       stop(); cur = m;
       const s = snd = sound(m);
-      s.prevEnd = endedAt;
+      s.prevEnd = prevEnd;
       attach(s, m);
       times(m);
       play(s, m);

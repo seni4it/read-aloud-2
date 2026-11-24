@@ -13,6 +13,9 @@ const BASE = `chrome-extension://${ID}/`;
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async (n = 5) => { for (let i = 0; i < n; i++) await tick(); };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// Waits until ok() is true (at most ms). A test that waits a fixed time for async work fails on a busy Mac
+// (24 Nov 2026: 1 failure in 8 runs, while the other test files ran at the same time).
+const until = async (ok, ms = 3000) => { const end = Date.now() + ms; while (!ok()) { if (Date.now() > end) throw new Error('waited too long'); await wait(2); } };
 
 function event() {
   const fns = [];
@@ -20,7 +23,9 @@ function event() {
 }
 
 // A fake browser for background.js. `opts.offscreen` decides what the sound page does with a message.
+// opts.slow: ms that each answer of the browser (the settings, the open pages) takes, as on a busy Mac.
 function loadBackground(opts = {}) {
+  const later = (v) => (opts.slow ? new Promise((r) => setTimeout(() => r(v), opts.slow)) : Promise.resolve(v));
   const sentToTabs = [];   // [tabId, msg]
   const broadcasts = [];   // runtime.sendMessage calls
   const reloads = [];
@@ -30,8 +35,8 @@ function loadBackground(opts = {}) {
       id: ID,
       getURL: (p) => BASE + p,
       getManifest: () => ({ version: '1.0.0' }),
-      getContexts: async (f) => contexts.filter((c) => !f.contextTypes || f.contextTypes.includes(c.contextType))
-        .filter((c) => !f.documentUrls || f.documentUrls.includes(c.documentUrl)),
+      getContexts: async (f) => later(contexts).then((cs) => cs.filter((c) => !f.contextTypes || f.contextTypes.includes(c.contextType))
+        .filter((c) => !f.documentUrls || f.documentUrls.includes(c.documentUrl))),
       sendMessage: (m) => {
         broadcasts.push(m);
         if (m.to === 'offscreen') return opts.offscreen ? opts.offscreen(m) : Promise.resolve(true);
@@ -43,7 +48,7 @@ function loadBackground(opts = {}) {
     offscreen: { createDocument: async () => {} },
     tabs: { sendMessage: (t, m) => { sentToTabs.push([t, m]); return Promise.resolve(); }, update: () => {}, create: () => {}, query: async () => [], onUpdated: event() },
     tts: { speak: () => {}, stop: () => {}, getVoices: async () => [{ voiceName: 'Milena', lang: 'ru-RU', remote: false }] },
-    storage: { sync: { get: async () => ({}) }, session: { set: async () => {} } },
+    storage: { sync: { get: async () => later({}) }, session: { set: async () => {} } },
     webRequest: { onHeadersReceived: event() },
     alarms: { create: () => {}, onAlarm: event() },
     contextMenus: { create: () => {}, onClicked: event() },
@@ -72,9 +77,10 @@ function loadBackground(opts = {}) {
 // --- finding 5: the sound page does not take the sentence -> the page gets an error, not a silent 'playing'.
 // Since 13 Nov 2026 the Sentence is tried 2 more times first (see the tests of the second try below).
 test('play with a sound page that does not answer gives an error event to the tab', async () => {
-  const b = loadBackground({ fast: true, offscreen: (m) => (m.cmd === 'speak' ? Promise.reject(new Error('Receiving end does not exist.')) : Promise.resolve(true)) });
+  const b = loadBackground({ fast: true, slow: 30, offscreen: (m) => (m.cmd === 'speak' ? Promise.reject(new Error('Receiving end does not exist.')) : Promise.resolve(true)) });
   b.send({ to: 'bg', cmd: 'speak', engine: 'kokoro', id: 3, text: 'Hello.', voice: 'af', rate: 1 }, b.webTab(7));
-  await wait(60);
+  await until(() => b.sentToTabs.some(([, m]) => m.evt === 'error'));
+  await wait(100);  // time for a wrong second error
   const errs = b.sentToTabs.filter(([t, m]) => t === 7 && m.evt === 'error' && m.id === 3);
   assert.equal(errs.length, 1, 'one error event reaches tab 7');
   assert.match(errs[0][1].why, /Audio player/);
@@ -325,53 +331,57 @@ const speaks = (b) => b.broadcasts.filter((m) => m.to === 'offscreen' && m.cmd =
 const errorsTo = (b, tab) => b.sentToTabs.filter(([t, m]) => t === tab && m.evt === 'error');
 
 test('second try: a Natural voice Sentence that does not sound is asked 3 times, then the tab gets one error', async () => {
-  const b = loadBackground({ fast: true, offscreen: (m) => (m.cmd === 'speak' ? Promise.resolve(false) : Promise.resolve(true)) });
+  const b = loadBackground({ fast: true, slow: 30, offscreen: (m) => (m.cmd === 'speak' ? Promise.resolve(false) : Promise.resolve(true)) });
   b.send({ to: 'bg', cmd: 'speak', engine: 'kokoro', id: 3, text: 'Hello.', voice: 'af', rate: 1 }, b.webTab(7));
   await settle();
   assert.equal(errorsTo(b, 7).length, 0, 'no error after the first failure');
-  await wait(60);
+  await until(() => errorsTo(b, 7).length > 0);
+  await wait(100);  // time for a wrong fourth ask
   assert.equal(speaks(b).length, 3, 'the first ask and 2 more tries');
   assert.equal(errorsTo(b, 7).length, 1);
 });
 
 test('second try: when the second ask sounds, the tab hears of no error', async () => {
   let n = 0;
-  const b = loadBackground({ fast: true, offscreen: (m) => (m.cmd === 'speak' ? Promise.resolve(++n > 1) : Promise.resolve(true)) });
+  const b = loadBackground({ fast: true, slow: 30, offscreen: (m) => (m.cmd === 'speak' ? Promise.resolve(++n > 1) : Promise.resolve(true)) });
   b.send({ to: 'bg', cmd: 'speak', engine: 'kokoro', id: 3, text: 'Hello.', voice: 'af', rate: 1 }, b.webTab(7));
-  await wait(60);
+  await until(() => speaks(b).length >= 2);
+  await wait(100);  // time for a wrong third ask
   assert.equal(speaks(b).length, 2);
   assert.equal(errorsTo(b, 7).length, 0);
 });
 
 test('second try: an error of the sound page before the start is tried again; an error after the start goes to the tab', async () => {
-  const b = loadBackground({ fast: true });
+  const b = loadBackground({ fast: true, slow: 30 });
   b.send({ to: 'bg', cmd: 'speak', engine: 'kokoro', id: 3, text: 'Hello.', voice: 'af', rate: 1 }, b.webTab(7));
   await settle();
   b.send({ to: 'bg-evt', tab: 7, id: 3, evt: 'error', why: 'The voice server on this Mac did not answer.' }, b.offscreenSender);
-  await wait(30);
+  await until(() => speaks(b).length >= 2);
   assert.equal(speaks(b).length, 2, 'asked again');
   assert.equal(errorsTo(b, 7).length, 0);
   b.send({ to: 'bg-evt', tab: 7, id: 3, evt: 'start', d: 2 }, b.offscreenSender);
   b.send({ to: 'bg-evt', tab: 7, id: 3, evt: 'error', why: 'The voice could not play.' }, b.offscreenSender);
-  await wait(30);
+  await until(() => errorsTo(b, 7).length > 0);
+  await wait(100);  // time for a wrong third ask
   assert.equal(speaks(b).length, 2, 'a Sentence that was heard in part is not said again from its start');
   assert.equal(errorsTo(b, 7).length, 1);
 });
 
 test('second try: a newer Sentence stops the tries of the older one', async () => {
-  const b = loadBackground({ fast: true, offscreen: (m) => (m.cmd === 'speak' ? Promise.resolve(m.id !== 3) : Promise.resolve(true)) });
+  const b = loadBackground({ fast: true, slow: 30, offscreen: (m) => (m.cmd === 'speak' ? Promise.resolve(m.id !== 3) : Promise.resolve(true)) });
   b.send({ to: 'bg', cmd: 'speak', engine: 'kokoro', id: 3, text: 'One.', voice: 'af', rate: 1 }, b.webTab(7));
   await settle(2);
   b.send({ to: 'bg', cmd: 'speak', engine: 'kokoro', id: 4, text: 'Two.', voice: 'af', rate: 1 }, b.webTab(7));
   const asked = speaks(b).filter((m) => m.id === 3).length;  // the asks for the older Sentence up to now
-  await wait(60);
+  await until(() => speaks(b).some((m) => m.id === 4));
+  await wait(150);  // time for a wrong ask of the older Sentence
   assert.equal(speaks(b).filter((m) => m.id === 3).length, asked, 'no more ask for the older Sentence');
   assert.equal(speaks(b).filter((m) => m.id === 4).length, 1);
   assert.equal(errorsTo(b, 7).length, 0);
 });
 
 test('second try: the Mac voice is not tried again (its error goes to the tab at once)', async () => {
-  const b = loadBackground({ fast: true });
+  const b = loadBackground({ fast: true, slow: 30 });
   let onEvent; b.chrome.tts.speak = (text, o) => { onEvent = o.onEvent; };
   b.send({ to: 'bg', cmd: 'speak', engine: 'system', id: 1, text: 'A.', rate: 1 }, b.webTab(1));
   onEvent({ type: 'error', errorMessage: 'no voice' });
@@ -399,7 +409,8 @@ test('report: a Sentence that was read gives one line with its wait, its time an
   b.send({ to: 'bg-evt', tab: 7, id: 3, evt: 'start', d: 2.4 }, b.offscreenSender);
   await wait(20);
   b.send({ to: 'bg-evt', tab: 7, id: 3, evt: 'end' }, b.offscreenSender);
-  await wait(40);
+  await until(() => posts.some((x) => x.evt === 'say' || x.evt === 'speed-off'));
+  await wait(20);  // time for a wrong second line
   const say = posts.filter((x) => x.evt === 'say' || x.evt === 'speed-off');
   assert.equal(say.length, 1);
   assert.equal(say[0].engine, 'natural'); assert.equal(say[0].voice, 'af_heart'); assert.equal(say[0].chars, 32);
@@ -418,7 +429,7 @@ test('report: a Sentence that sounded far from the asked speed is marked speed-o
     if (pause) { b.send({ to: 'bg', cmd: 'pause' }, b.webTab(7)); await wait(60); b.send({ to: 'bg', cmd: 'resume', id }, b.webTab(7)); await settle(); }
     await wait(50);
     b.send({ to: 'bg-evt', tab: 7, id, evt: 'end' }, b.offscreenSender);
-    await wait(30);
+    await until(() => posts.filter((x) => x.evt === 'say' || x.evt === 'speed-off').length >= id);
   };
   await read(1, 3);          // 3 s of sound in about 0.05 s: far too fast
   await read(2, 0.05);       // about right
@@ -431,12 +442,13 @@ test('report: a Sentence that sounded far from the asked speed is marked speed-o
 });
 
 test('report: a failed Sentence, its tries, and the change to the Mac voice are in the report', async () => {
-  const { b, posts } = withReport({ offscreen: (m) => (m.cmd === 'speak' ? Promise.resolve(false) : Promise.resolve(true)) });
+  const { b, posts } = withReport({ slow: 30, offscreen: (m) => (m.cmd === 'speak' ? Promise.resolve(false) : Promise.resolve(true)) });
   b.send({ to: 'bg', cmd: 'speak', engine: 'kokoro', id: 3, text: 'Hello.', voice: 'af_heart', rate: 1 }, b.webTab(7));
-  await wait(60);
+  await until(() => posts.filter((x) => x.evt === 'voice-error').length >= 3);
   b.send({ to: 'bg', cmd: 'speak', engine: 'system', id: 4, text: 'Hello.', voice: 'Samantha', rate: 1, fb: 1 }, b.webTab(7));
   b.send({ to: 'bg', cmd: 'speak', engine: 'system', id: 5, text: 'Again.', voice: 'Samantha', rate: 1, fb: 1 }, b.webTab(7));
-  await wait(40);
+  await until(() => posts.some((x) => x.evt === 'mac-voice'));
+  await wait(40);  // time for a wrong second line
   assert.deepEqual(posts.filter((x) => x.evt === 'voice-error').map((x) => x.try), [1, 2, 3]);
   assert.equal(posts.filter((x) => x.evt === 'mac-voice').length, 1, 'one line for the change, not one for each Sentence');
 });
@@ -449,7 +461,7 @@ test('report: "Report a problem" writes a mark with the state and sends it at on
   await settle();
   const r = b.send({ to: 'bg', cmd: 'problem', where: 'popup' }, {});
   assert.equal(r.kept, true, 'the answer comes later');
-  await wait(40);
+  await until(() => r.answer());
   const mark = posts.find((x) => x.evt === 'problem');
   assert.ok(mark, 'the mark is in the report');
   assert.equal(mark.where, 'popup'); assert.equal(mark.server, 1); assert.equal(mark.reading, 1); assert.equal(mark.voice, 'af_heart');
@@ -460,12 +472,12 @@ test('report: "Report a problem" writes a mark with the state and sends it at on
 test('report: while the voice server does not answer, the lines wait; they go when it answers again', async () => {
   const { b, posts, setUp } = withReport({ up: false });
   const r = b.send({ to: 'bg', cmd: 'problem', where: 'popup' }, {});
-  await wait(40);
+  await until(() => r.answer());
   assert.equal(posts.length, 0);
   assert.equal(JSON.stringify(r.answer()), '{"saved":true,"sent":false}');
   setUp(true);
   b.send({ to: 'bg', cmd: 'note', evt: 'test-line', now: true }, b.webTab(7));
-  await wait(40);
+  await until(() => posts.some((x) => x.evt === 'test-line'));
   assert.ok(posts.some((x) => x.evt === 'problem' && x.server === 0), 'the mark of before arrived');
   assert.ok(posts.some((x) => x.evt === 'test-line'));
 });
@@ -480,7 +492,8 @@ test('report: the delay of the output is not taken for a slow voice; the line ha
   b.send({ to: 'bg-evt', tab: 7, id: 1, evt: 'start', d: 3 }, b.offscreenSender);
   await wait(30);
   b.send({ to: 'bg-evt', tab: 7, id: 1, evt: 'end', lag: 300, heardMs: 3010, join: 62, pre: 1 }, b.offscreenSender);
-  await wait(40);
+  await until(() => posts.some((x) => x.evt === 'say' || x.evt === 'speed-off'));
+  await wait(20);  // time for a wrong second line
   const say = posts.filter((x) => x.evt === 'say' || x.evt === 'speed-off');
   assert.equal(say.length, 1);
   assert.equal(say[0].evt, 'say', '3 s of sound took 3.01 s in the ear: the speed is right');
@@ -494,7 +507,8 @@ test('report: the delay of the output is not taken for a slow voice; the line ha
 test('report: a line of the sound page (a lost early start) goes into the report, with no Sentence of a tab', async () => {
   const { b, posts } = withReport();
   b.send({ to: 'bg-evt', evt: 'note', name: 'early-start-lost', data: { why: 'other' } }, b.offscreenSender);
-  await wait(40);
+  await until(() => posts.some((x) => x.evt === 'early-start-lost'));
+  await wait(20);  // time for a wrong second line
   const lost = posts.filter((x) => x.evt === 'early-start-lost');
   assert.equal(lost.length, 1);
   assert.equal(lost[0].why, 'other');

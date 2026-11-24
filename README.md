@@ -144,18 +144,24 @@ the cover as album art, chapter titles as track names). Files go to `Documents/R
 - **The repair** (`extension/offscreen.js`). The sound page of the add-on measures the delay of the output while a
   Sentence sounds. It starts the sound of the next Sentence that much before the end, less 0.06 s. When the page asks
   for that Sentence, its sound plays already. The page and the Word highlight get the same events as before.
-- An output with no delay (the Mac speakers, a USB headset) gets no early start: nothing changes there.
+- An output with no delay (the Mac speakers, a USB headset) gets no early start: nothing changes there. Only a sound
+  that starts 0.18 s or more after silence gets the first early start. The Report of 19 to 23 Nov 2026 gives 0.08 to
+  0.16 s on the Mac speakers and 0.24 s or more on the Bluetooth headset (a few at 0.14 to 0.2 s: these get the early
+  start one Sentence later). Before the repair of 24 Nov 2026, the Mac speakers got a 0.03 s early start at the
+  start of a reading and after a pause (148 Sentences in the Report of 19 to 23 Nov 2026).
 - A sound that starts after silence has a longer delay than a sound that starts while another one sounds (0.36 s
   against 0.18 s in the test browser). So only an early sound tells the delay to use. The first early start of a
   reading is small (0.03 s): it can not make two Sentences sound together, and its sound tells the delay. From the
   next Sentence, the join is about 0.06 s.
 - After a pause, the Sentence that was paused gets no early start, and the delay is measured again. An early sound
-  that the page does not ask for is stopped (another Sentence, a pause, a stop, or no ask in 1.5 s).
+  that the page does not ask for is stopped (another Sentence, a pause, a stop, an error of the Sentence that sounds,
+  or no ask in 1.5 s). A speed change before the early start plans the early start again at the new speed.
 - Measured with the add-on in the test browser on the Jabra Evolve 75e with Bluetooth, at speed 1.5: the silence at
   a join was 0.39 s before the change; after it, 0.17 s at the first join and 0.05 to 0.11 s at each next join.
 - **The Report.** A `say` line of a web page now has `lag` (the delay of the output in ms), `join` (the silence
-  before this Sentence in ms) and `pre: 1` (its sound started early). `heard` no longer counts the delay of the
-  output, so a Bluetooth headset gives no `speed-off` lines. New lines: `early-start-lost` (`why`: `other`, `late`
+  before this Sentence in ms) and `pre: 1` (its sound started early). After Next or Previous the line has no `join`:
+  the Sentence before was cut, so there was no join. `heard` no longer counts the delay of the output, so a
+  Bluetooth headset gives no `speed-off` lines. New lines: `early-start-lost` (`why`: `other`, `late`
   or `error`) and `join-overlap` (two Sentences sounded together; the delay is measured again).
 - This is for web pages and the paste page. The reader (PDFs) plays its sound in another way and has no such change yet.
 - Tests: `tests/node/sound-join.test.mjs`.
