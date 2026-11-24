@@ -12,6 +12,13 @@
 .mark-box[data-color="green"] { background: var(--hl-green-fill); box-shadow: inset 0 -3px 0 var(--hl-green); }
 .mark-box[data-color="blue"] { background: var(--hl-blue-fill); box-shadow: inset 0 -3px 0 var(--hl-blue); }
 .mark-box[data-color="pink"] { background: var(--hl-pink-fill); box-shadow: inset 0 -3px 0 var(--hl-pink); }
+/* a crossed-out part (the cross-out pen): a thick dark line through the middle of the text */
+.mark-box[data-color="cut"] { mix-blend-mode: normal; background: linear-gradient(transparent calc(50% - 1.5px), var(--color-cut) calc(50% - 1.5px), var(--color-cut) calc(50% + 1.5px), transparent calc(50% + 1.5px)); }
+.pages.pen .text-layer, .pages.pen .text-layer span { cursor: crosshair; }
+.strike-icon { font-weight: 700; text-decoration: line-through; text-decoration-thickness: 2px; }
+.pen-btn.on, .pen-btn.on:hover { background: var(--color-cut); color: var(--neutral-0); border-color: var(--color-cut); }
+.icon-btn .strike-icon { font-size: var(--text-16); }
+.cut-line { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; justify-content: center; gap: var(--space-3); padding: var(--space-2) var(--space-4); background: var(--color-surface); border-bottom: 1px solid var(--color-line); font-size: var(--text-14); line-height: var(--leading-14); color: var(--color-text); }
 .dot { width: 12px; height: 12px; border-radius: 50%; flex: none; display: inline-block; }
 .dot.yellow { background: var(--hl-yellow); } .dot.green { background: var(--hl-green); } .dot.blue { background: var(--hl-blue); } .dot.pink { background: var(--hl-pink); }
 .selbar { position: fixed; z-index: 30; display: flex; gap: var(--space-1); padding: var(--space-1); background: var(--color-chrome); border-radius: var(--radius-round); box-shadow: var(--shadow-3); }

@@ -3,6 +3,7 @@
 // Run: node --test --test-timeout=120000 tests/node/reading-position.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spokenText } from '../../extension/pdf/crossout.js';  // app.js imports it (the cross-out pen)
 import { newerPosition } from '../../extension/pdf/position.js';
 
 test('the newer of the own copy and the voice server copy wins', () => {
@@ -115,6 +116,7 @@ function loadReader({ server = fakeServer(), storage = {}, shared = null } = {})
     buildDocument: () => new Promise((resolve) => parses.push(resolve)),
     SystemEngine: engine('system'), ServerEngine: engine('kokoro'),
     loadLexicon: async () => {}, repairStats: () => ({ repaired: 0 }), withOcr: async (doc) => doc,
+    spokenText,
     setupNotes: () => ({ reload() {}, markdown() { return ''; }, reset() {}, markAt: () => null }),
     setupAsk: () => ({ reload() {}, highlightsChanged() {}, stopReading() {} }),
     ...language,  // ticket 32

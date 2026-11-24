@@ -82,6 +82,7 @@
   --color-notice-text: var(--amber-900);
   --color-page: var(--neutral-0);           /* the paper of a PDF page: white in both modes (it is content) */
   --color-on-page: var(--neutral-500);
+  --color-cut: var(--navy-950);             /* the line through crossed-out text: on the white page in both modes */
   --color-scrim: rgba(16, 35, 63, 0.6);
   --color-scrim-strong: rgba(16, 35, 63, 0.85);
   --color-icon: var(--navy-900);            /* the brand mark */

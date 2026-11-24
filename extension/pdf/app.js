@@ -5,6 +5,7 @@ import { SystemEngine, ServerEngine } from './tts.js';
 import { loadLexicon, repairStats } from './lexicon.js';
 import { withOcr } from './ocr.js';
 import { setupNotes } from './notes.js';
+import { spokenText } from './crossout.js';
 import { setupAsk } from './ask.js';
 import { newerPosition } from './position.js';
 import { textLanguage, voiceForLanguage } from './language.js';
@@ -39,7 +40,7 @@ const els = {
   toc: $('toc'), sidebar: $('sidebar'), tocBtn: $('tocBtn'), closeSidebar: $('closeSidebar'),
   parseBar: $('parseBar'), parseFill: $('parseFill'), parseText: $('parseText'),
   optCitations: $('optCitations'), optCaptions: $('optCaptions'), optRefs: $('optRefs'),
-  optFrontMatter: $('optFrontMatter'), optInsets: $('optInsets'), optTables: $('optTables'), optParens: $('optParens'), timeLeft: $('timeLeft'), exportBtn: $('exportBtn'), exportStatus: $('exportStatus'),
+  optFrontMatter: $('optFrontMatter'), optInsets: $('optInsets'), optTables: $('optTables'), optParens: $('optParens'), optCut: $('optCut'), timeLeft: $('timeLeft'), exportBtn: $('exportBtn'), exportStatus: $('exportStatus'),
   reparseBtn: $('reparseBtn'), dropVeil: $('dropVeil'), reportBtn: $('reportBtn'), reportStatus: $('reportStatus'),
   engineSel: $('engineSel'), engineStatus: $('engineStatus'), previewBtn: $('previewBtn'),
   zoomIn: $('zoomIn'), zoomOut: $('zoomOut'), zoomLevel: $('zoomLevel')
@@ -300,13 +301,36 @@ function reportSentence(sentence, asked, first, rate) {
   if (chars >= 60) { paces.list.push(cps); if (paces.list.length > 40) paces.list.shift(); }
 }
 
+/**
+ * Sentence i as the voice says it. from: the first character (a click on a word starts there). When "Skip crossed-out
+ * text" is on, the parts crossed out with the cross-out pen (notes.js) are left out. map: the place in the sentence of
+ * each said letter (null: the said text starts at from and has no gap). A sentence crossed out whole has text ''.
+ */
+function spokenAt(i, from = 0) {
+  const full = state.sentences[i];
+  if (!full) return null;
+  const cuts = els.optCut?.checked === false ? [] : (notesUI.cutsOf?.(i) || []);
+  if (!cuts.length) return { sentence: from ? { ...full, text: full.text.slice(from) } : full, map: null };
+  const said = spokenText(full.text, cuts, from);
+  return { sentence: { ...full, text: said.text }, map: said.map };
+}
+const prefetchAt = (i, voice) => { const s = spokenAt(i); if (s && s.sentence.text) engine.prefetch?.(s.sentence, voice); };
+
 function speakCurrent() {
   const full = state.sentences[state.index];
   if (!full) { stop(); return; }
   // Read Aloud 2: a click on a word starts there, not at the top of its paragraph
   const from = state.from || 0;
   state.from = 0;
-  const sentence = from ? { ...full, text: full.text.slice(from) } : full;
+  const { sentence, map } = spokenAt(state.index, from);
+  const place = (c) => (map ? map[Math.min(c, map.length - 1)] ?? 0 : c + from);  // a said letter -> its place in the sentence
+  if (!sentence.text) {  // crossed out whole: the reader goes on to the next sentence
+    if (state.index + 1 >= state.sentences.length) { stop(); return; }
+    state.index++;
+    render();
+    speakCurrent();
+    return;
+  }
 
   if (engine.id !== 'system') { setStatus('Making the voice…'); setWaiting(true); }
   let spoke = false;
@@ -320,8 +344,9 @@ function speakCurrent() {
     onWord: (charIndex, charLength) => {
       if (!state.playing) return;
       if (!spoke) { spoke = true; first = Date.now(); setWaiting(false); setStatus(engineLabel(engine)); showMethods(); }  // ticket 06: the engine may have read the methods again  // now: the voice server may have fallen in this sentence
-      state.at = charIndex + from;  // Read Aloud 2: the word being read, so Pause then Play goes on from here
-      const parts = wordPartsAt(full, charIndex + from, charLength);
+      state.at = place(charIndex);  // Read Aloud 2: the word being read, so Pause then Play goes on from here
+      const at = place(charIndex);
+      const parts = wordPartsAt(full, at, charLength && map ? place(charIndex + charLength - 1) + 1 - at : charLength);
       if (parts.length) viewer.highlightWord(parts);
     },
     onEnd: () => {
@@ -364,8 +389,8 @@ function speakCurrent() {
   });
 
   // Render the next couple of sentences ahead so Kokoro doesn't leave gaps.
-  engine.prefetch?.(state.sentences[state.index + 1], readingVoice());
-  engine.prefetch?.(state.sentences[state.index + 2], readingVoice());
+  prefetchAt(state.index + 1, readingVoice());
+  prefetchAt(state.index + 2, readingVoice());
 }
 
 /**
@@ -458,8 +483,8 @@ function warmCurrent() {
   if (!engine.prefetch || engine.id === 'system') return;
   warmTimer = setTimeout(() => {
     const voice = readingVoice();
-    engine.prefetch(state.sentences[state.index], voice);
-    engine.prefetch(state.sentences[state.index + 1], voice);
+    prefetchAt(state.index, voice);
+    prefetchAt(state.index + 1, voice);
   }, 350);
 }
 
@@ -1097,7 +1122,7 @@ els.previewBtn.addEventListener('click', async () => {
 // Each skip setting is kept (ticket 22: the four first ones are kept too now, with their old defaults: on)
 for (const [el, key, dflt] of [[els.optCitations, 'ra2.skipCitations', '1'], [els.optCaptions, 'ra2.skipCaptions', '1'],
   [els.optRefs, 'ra2.stopAtRefs', '1'], [els.optFrontMatter, 'ra2.startAtAbstract', '1'],
-  [els.optInsets, 'ra2.skipInsets', '0'], [els.optTables, 'ra2.skipTables', '1'], [els.optParens, 'ra2.skipParens', '0']]) {
+  [els.optInsets, 'ra2.skipInsets', '0'], [els.optTables, 'ra2.skipTables', '1'], [els.optParens, 'ra2.skipParens', '0'], [els.optCut, 'ra2.skipCut', '1']]) {
   try { el.checked = (localStorage.getItem(key) ?? dflt) === '1'; } catch { /* storage blocked */ }
   el.addEventListener('change', () => { try { localStorage.setItem(key, el.checked ? '1' : '0'); } catch {} });
 }
@@ -1434,7 +1459,7 @@ async function pollExport() {
       const chapters = bounds.map((b, i) => {
         const end = bounds[i + 1] ?? state.sentences.length;
         const sec = secs.find(s => s.startSentence === b);
-        return { title: sec ? sec.title : (i === 0 ? 'Beginning' : `Part ${i + 1}`), text: state.sentences.slice(b, end).map(s => s.text) };
+        return { title: sec ? sec.title : (i === 0 ? 'Beginning' : `Part ${i + 1}`), text: state.sentences.slice(b, end).map((s, k) => spokenAt(b + k).sentence.text).filter(Boolean) };
       }).filter(c => c.text.length);
       const r = await fetch(`/library/${LIB_ID}/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: document.title.replace(/ · Read Aloud 2$/, ''), voice: readingVoice(), chapters }) });

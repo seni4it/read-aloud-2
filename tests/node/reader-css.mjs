@@ -2,6 +2,7 @@
 // Node has no browser, so the tests read the reader's HTML and CSS as text, resolve the design tokens of
 // extension/pdf/tokens.css in light and dark mode, and run app.js on a small fake page.
 import assert from 'node:assert/strict';
+import { spokenText } from '../../extension/pdf/crossout.js';  // app.js imports it (the cross-out pen)
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -207,6 +208,7 @@ export function loadApp({ engine = 'system', store = new Map(), withResizeObserv
     loadLexicon: async () => {},
     repairStats: () => ({ repaired: 0 }),
     withOcr: async (doc) => doc,
+    spokenText,
     setupNotes: () => ({ reload() {}, markdown() { return ''; }, reset() {}, markAt: () => null }),
     setupAsk: () => ({ reload() {}, highlightsChanged() {}, stopReading() {} }),
     ...language,  // ticket 32

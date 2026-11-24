@@ -19,9 +19,9 @@ function rowChildren(html) {
   return out;
 }
 
-test('the player bar has one row of controls in this order: contents, previous, play, next, position, speed, highlight, follow, settings', () => {
+test('the player bar has one row of controls in this order: contents, previous, play, next, position, speed, highlight, cross-out pen, follow, settings', () => {
   const ids = rowChildren(barHtml).map((c) => (/\sid="([^"]+)"/.exec(c.attrs) || /class="([^" ]+)/.exec(c.attrs))[1]);
-  assert.deepEqual(ids, ['tocBtn', 'prevBtn', 'playBtn', 'nextBtn', 'scrub', 'speed', 'markBtn', 'findBtn', 'settingsBtn']);
+  assert.deepEqual(ids, ['tocBtn', 'prevBtn', 'playBtn', 'nextBtn', 'scrub', 'speed', 'markBtn', 'penBtn', 'findBtn', 'settingsBtn']);
   assert.match(tagOf('playerControls').text, /role="toolbar"/);
   const row = declsFor('.controls');
   assert.equal(row['flex-wrap'], 'nowrap', 'the row never wraps to a second line');
@@ -37,6 +37,7 @@ test('at 360 px the row fits: the fixed controls and the gaps leave room for the
   const icon = px(LIGHT, d('.player .icon-btn').width), play = px(LIGHT, d('.play-btn').width);
   const gap = px(LIGHT, d('.controls').gap), pad = px(LIGHT, d('.player')['padding-left'] || d('.player').padding?.split(' ')[1] || '0');
   const speed = px(LIGHT, d('.speed select')['max-width']);
+  assert.equal(d('.player #penBtn').display, 'none', 'below 480 px the cross-out pen is not in the row');
   const fixed = 6 * icon + play + speed + 8 * gap + 2 * pad;   // 6 icon buttons, play, speed, 8 gaps, both sides
   assert.ok(icon >= 32 && play >= 32, 'controls stay 32 px or more');
   assert.ok(360 - fixed >= 48, `the slider keeps 48 px or more at 360 px (it has ${360 - fixed} px)`);
@@ -328,11 +329,13 @@ test('no label of the player bar goes past the window edges at 320, 400, 800 and
     const speed = px(LIGHT, d('.speed select')['max-width']);
     const settings = px(LIGHT, d('.player .settings-btn').width === 'auto' ? d('.player .settings-btn')['min-width'] : d('.player .settings-btn').width);
     const width = { playBtn: play, speed, settingsBtn: settings };
-    const w = kids.map((k) => width[k.id] ?? icon);
+    const off = (k) => d('.player #' + k.id).display === 'none';  // the cross-out pen is not shown below 480 px
+    const w = kids.map((k) => (off(k) ? 0 : width[k.id] ?? icon));
     const fixed = w.reduce((s, x, i) => (i === scrubAt ? s : s + x), 0);
-    w[scrubAt] = W - 2 * pad - fixed - gap * (kids.length - 1);
+    w[scrubAt] = W - 2 * pad - fixed - gap * (kids.filter((k) => !off(k)).length - 1);
     let x = pad;
     kids.forEach((k, i) => {
+      if (off(k)) return;
       const left = x, right = x + w[i];
       x = right + gap;
       if (!k.tip) return;

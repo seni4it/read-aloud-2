@@ -119,6 +119,14 @@ _Avoid_: category, tag, colour
 **Key point**:
 A highlight that is also copied to a folder outside the book, for other work with Claude.
 
+**Cross-out pen**:
+The button in the player bar that crosses out text. While it is on, selected text gets a dark line through it, and a click on crossed-out text brings it back.
+_Avoid_: eraser, strike tool
+
+**Crossed-out text**:
+A part of the page with a dark line through it, that the owner does not want to use. The reader leaves it out while the skip setting "Skip crossed-out text" is on. It is not a highlight.
+_Avoid_: deleted text, strikethrough
+
 **Ask Claude**:
 The feature that answers the owner's questions about a book.
 _Avoid_: chat, assistant

@@ -4,6 +4,10 @@
 // next to it (Documents/Read Aloud Library/.notes/<id>.json); a PDF opened in Chrome keeps them in the browser.
 const COLORS = ['yellow', 'green', 'blue', 'pink'];
 const DEFAULT_NAMES = { yellow: 'Important', green: 'Idea', blue: 'Question', pink: 'Review' };
+// A crossed-out part is kept in the same list as the highlights, with this colour. It is not a highlight: it is not
+// counted, listed or exported, and the reader leaves it out (crossout.js, app.js). The cross-out pen makes it.
+const CUT = 'cut';
+const isCut = (n) => n.color === CUT;
 
 // A read or a save of the highlights waits at most this long for the voice server, as its other requests do.
 const LIMIT = 30000;
@@ -31,6 +35,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
   let names = { ...DEFAULT_NAMES, ...(load('ra2.groups') || {}) };
   let lastColor = load('ra2.lastColor') || 'yellow';
   let showMarks = load('ra2.showMarks') !== false;  // the switch in the Highlights tab
+  let pen = false;  // the cross-out pen in the top bar: while it is on, a selection is crossed out at once
   const $ = (id) => document.getElementById(id);
   // Key points: highlights in one group go to a Claude conversation's folder (key-points/<book>.md) through the
   // voice server, as they are made or on request, and can be copied as a message. The server keeps the choice.
@@ -162,7 +167,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
     }
     ready = true;
     const seen = new Set();
-    notes = all.filter((n) => { const k = JSON.stringify(n.segs.map((g) => [g.si, g.a, g.b])); return !seen.has(k) && seen.add(k); });
+    notes = all.filter((n) => { const k = (isCut(n) ? 'x' : '') + JSON.stringify(n.segs.map((g) => [g.si, g.a, g.b])); return !seen.has(k) && seen.add(k); });
     if (notes.length !== all.length) write();
     draw();
   }
@@ -188,8 +193,32 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
       }
       marks.push({ id: n.id, color: n.color, parts });
     }
-    viewer.setMarks(showMarks ? marks : []);
+    viewer.setMarks(showMarks ? marks : marks.filter(isCut));  // a crossed-out part stays on the page
     list();
+    penShow();
+  }
+
+  // ---------- the cross-out pen and the count of crossed-out parts in the top bar ----------
+  function penShow() {
+    const cuts = notes.filter(isCut).length;
+    const btn = $('penBtn');
+    btn.classList.toggle('on', pen); btn.setAttribute('aria-pressed', String(pen));
+    els.pages.classList.toggle('pen', pen);
+    const skip = $('optCut')?.checked !== false;
+    $('cutCount').textContent = cuts ? `${cuts} part${cuts === 1 ? '' : 's'} crossed out${skip ? ', not read' : ', read (Skip crossed-out text is off)'}.` : '';
+    $('cutLine').hidden = !cuts;
+  }
+  $('optCut')?.addEventListener('change', penShow);
+  $('penBtn').addEventListener('click', () => { pen = !pen; bar.hidden = true; penShow(); });
+  $('cutsBack').addEventListener('click', () => {
+    if (!canChange() || !notes.some(isCut)) return;
+    notes = notes.filter((n) => !isCut(n)); write(); draw();
+  });
+  // the crossed-out parts of sentence si, [{ a, b }]; the reader leaves them out
+  function cutsOf(si) {
+    const out = [];
+    for (const n of notes) if (isCut(n)) for (const g of n.segs) if (where(g) === si) out.push({ a: g.a, b: g.b });
+    return out;
   }
 
   function add(segs, color) {
@@ -197,13 +226,13 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
     const text = segs.map((g) => state.sentences[g.si].text.slice(g.a, g.b)).join(' ').replace(/\s+/g, ' ').trim();
     if (!text) return;
     // the same text saved twice (the highlight button pressed twice on one sentence) is kept once
-    if (notes.some((n) => n.segs.length === segs.length && n.segs.every((g, i) => g.si === segs[i].si && g.a === segs[i].a && g.b === segs[i].b))) return;
+    if (notes.some((n) => isCut(n) === (color === CUT) && n.segs.length === segs.length && n.segs.every((g, i) => g.si === segs[i].si && g.a === segs[i].a && g.b === segs[i].b))) return;
     const first = state.sentences[segs[0].si];
     const own = first.charOwners && first.charOwners[segs[0].a];
     notes.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), color, text, page: own ? own.page : 0, t: Date.now(),
       segs: segs.map((g) => ({ ...g, fp: fp(state.sentences[g.si].text) })) });
     notes.sort((x, y) => (x.segs[0].si - y.segs[0].si) || (x.segs[0].a - y.segs[0].a));
-    lastColor = color; keep('ra2.lastColor', color);
+    if (color !== CUT) { lastColor = color; keep('ra2.lastColor', color); }
     write(); draw();
     const made = notes.find((n) => n.text === text && n.color === color && !n.sent);
     if (made && kp.ok && kp.setting.auto && kp.setting.cwd && color === kp.setting.group) kpSend([made]).then(list);
@@ -219,7 +248,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
     for (const m of t.slice(0, at).matchAll(/[.!?]["'”’)]?\s+/g)) a = m.index + m[0].length;
     const m = /[.!?]["'”’)]?(\s|$)/.exec(t.slice(at));
     const b = m ? at + m.index + m[0].trimEnd().length : t.length;
-    const same = notes.find((n) => n.segs.length === 1 && n.segs[0].si === state.index && n.segs[0].a === a && n.segs[0].b === b);
+    const same = notes.find((n) => !isCut(n) && n.segs.length === 1 && n.segs[0].si === state.index && n.segs[0].a === a && n.segs[0].b === b);
     if (same) { remove(same); flash('Highlight removed'); return; }  // pressed again: take it off
     add([{ si: state.index, a, b }], lastColor);
     flash('Highlighted');
@@ -245,7 +274,9 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
     if (!hit) { markBar.hidden = true; return; }
     const n = notes.find((x) => x.id === hit.dataset.id);
     if (!n) return;
-    markBar.innerHTML = `<button type="button" data-act="remove">✕ Remove underline</button>` +
+    if (isCut(n) && pen) { remove(n); return; }  // the pen on a crossed-out part brings it back
+    markBar.innerHTML = isCut(n) ? '<button type="button" data-act="remove">↺ Bring back</button>'
+      : `<button type="button" data-act="remove">✕ Remove underline</button>` +
       COLORS.filter((c) => c !== n.color).map((c) => `<button type="button" data-act="${c}"><span class="dot ${c}"></span>${esc(names[c])}</button>`).join('');
     markBar.dataset.id = n.id;
     markBar.hidden = false;
@@ -332,6 +363,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
   els.pages.addEventListener('mouseup', () => setTimeout(() => {
     const sel = getSelection();
     if (!sel.rangeCount || sel.isCollapsed || !String(sel).trim()) { bar.hidden = true; return; }
+    if (pen) { add(selectionSegs(), CUT); sel.removeAllRanges(); bar.hidden = true; return; }  // the pen crosses out at once
     const r = sel.getRangeAt(0).getBoundingClientRect();
     paintBar();
     bar.hidden = false;
@@ -348,7 +380,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
     } else if (b.dataset.c === 'remove') {  // every underline that touches the selected text goes, however roughly it was selected
       if (!canChange()) { getSelection().removeAllRanges(); bar.hidden = true; return; }
       const sel = selectionSegs();
-      const touches = (n) => n.segs.some((g) => { const si = where(g); return sel.some((s) => s.si === si && s.a < g.b && g.a < s.b); });
+      const touches = (n) => !isCut(n) && n.segs.some((g) => { const si = where(g); return sel.some((s) => s.si === si && s.a < g.b && g.a < s.b); });
       const before = notes.length;
       notes = notes.filter((n) => !touches(n));
       if (notes.length !== before) { write(); draw(); }
@@ -381,15 +413,16 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
   }
   function list() {
     const box = $('notes');
-    const shown = notes.filter((n) => filter === 'all' || n.color === filter);
-    $('notesTab').textContent = `Highlights (${notes.length})`;
+    const marked = notes.filter((n) => !isCut(n));
+    const shown = marked.filter((n) => filter === 'all' || n.color === filter);
+    $('notesTab').textContent = `Highlights (${marked.length})`;
     box.innerHTML = `<label class="show-marks"><input type="checkbox" id="showMarks" ${showMarks ? 'checked' : ''}> Show highlights on the page</label><div class="note-filter"><button type="button" data-f="all" class="${filter === 'all' ? 'on' : ''}">All</button>${
       COLORS.map((c) => `<button type="button" data-f="${c}" class="${filter === c ? 'on' : ''}"><span class="dot ${c}"></span>${esc(names[c])}</button>`).join('')
     }</div>`;
     if (problem) box.insertAdjacentHTML('beforeend', `<p class="notes-empty" role="alert">${esc(problem)}</p>`);
     if (unchecked && lib) box.insertAdjacentHTML('beforeend', `<p class="notes-empty" role="alert">${esc(OLD_SERVER)}</p>`);
     if (!shown.length) {
-      box.insertAdjacentHTML('beforeend', `<p class="notes-empty">${!ready ? esc(unread) : notes.length ? 'No highlights in this group.'
+      box.insertAdjacentHTML('beforeend', `<p class="notes-empty">${!ready ? esc(unread) : marked.length ? 'No highlights in this group.'
         : 'No highlights yet. Select text on the page and choose a group, or press the highlight button while it reads.'}</p>`);
     }
     rowButtons = [];
@@ -437,7 +470,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
   // the highlights as Markdown: by group, in book order, with page numbers; good to hand to Claude
   function markdown() {
     const book = (document.getElementById('docTitle')?.textContent || document.title.replace(/ · Read Aloud 2$/, '')).trim();
-    const lines = [`# Highlights from “${book}”`, '', `${notes.length} highlights, exported ${new Date().toLocaleDateString()} with Read Aloud 2.`, ''];
+    const lines = [`# Highlights from “${book}”`, '', `${notes.filter((n) => !isCut(n)).length} highlights, exported ${new Date().toLocaleDateString()} with Read Aloud 2.`, ''];
     for (const c of COLORS) {
       const group = notes.filter((n) => n.color === c);
       if (!group.length) continue;
@@ -499,6 +532,7 @@ export function setupNotes({ state, viewer, els, jumpTo, wordPartsAt, libId, onC
   return {
     markdown,
     markAt,
+    cutsOf,
     // A new book is opened: the old book's highlights go, a read that has not answered is dropped, and no change is
     // written until reload(). id: the library id when this is the library book of the page, else '' (its own key).
     // why: the text for the list and the mark button while no change is possible (default: wait for the read-in).

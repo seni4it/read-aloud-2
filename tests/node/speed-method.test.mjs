@@ -6,6 +6,7 @@
 // Run: node --test --test-timeout=120000 tests/node/speed-method.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spokenText } from '../../extension/pdf/crossout.js';  // app.js imports it (the cross-out pen)
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
@@ -574,6 +575,7 @@ function loadReaderApp({ methods, stored = 'C' }) {
     pdfjsLib: { GlobalWorkerOptions: {} }, PdfViewer: class { constructor() { this.pages = new Map(); this.follow = true; } async load() {} highlight() {} highlightWord() {} clearWord() {} setZoom() {} relayout() {} },
     buildDocument: () => new Promise(() => {}), SystemEngine: system, ServerEngine: kokoro,
     loadLexicon: async () => {}, repairStats: () => ({}), withOcr: async (d) => d,
+    spokenText,
     setupNotes: () => ({ reload() {}, markdown() { return ''; }, reset() {}, markAt: () => null }),
     setupAsk: () => ({ reload() {}, highlightsChanged() {}, stopReading() {} }), newerPosition: () => null,
     ...language,  // ticket 32

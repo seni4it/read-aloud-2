@@ -634,6 +634,8 @@ body {
   .engine-status:not(.fault) { display: none; }
   .scrub-meta:has(.engine-status.fault:not(:empty)) .pos { display: none; }
   .settings { right: var(--space-2); width: calc(100vw - var(--space-4)); padding: var(--space-4); }
+  /* the cross-out pen is for a wide window: on a phone width the slider keeps its room */
+  .player #penBtn { display: none; }
 }
 
 /* ---------- drop veil ---------- */

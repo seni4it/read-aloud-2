@@ -51,6 +51,8 @@
   </aside>
 
   <section class="viewer-wrap" id="scroller">
+    <!-- the count of crossed-out parts above the page, with one button that brings them all back (notes.js) -->
+    <div class="cut-line" id="cutLine" hidden><span id="cutCount" role="status"></span><button type="button" class="rename" id="cutsBack">Bring all back</button></div>
     <div class="pages" id="pages"></div>
 
     <div class="empty" id="empty">
@@ -111,6 +113,8 @@
     </label>
 
     <button type="button" class="icon-btn" id="markBtn" aria-label="Highlight the sentence being read" data-tip="Highlight the sentence being read"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M15.5 3.5l5 5L10 19H5v-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path class="hl-line" d="M3 22h18" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg></button>
+    <!-- the cross-out pen: while it is on, selected text is crossed out at once, and a click on crossed-out text brings it back -->
+    <button type="button" class="icon-btn pen-btn" id="penBtn" aria-pressed="false" aria-label="Cross-out pen" data-tip="Cross-out pen"><span class="strike-icon" aria-hidden="true">S</span></button>
     <button type="button" class="icon-btn" id="findBtn" aria-label="Follow: go to the word being read" data-tip="Follow: go to the word being read"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="2"/></svg></button>
     <button type="button" class="icon-btn settings-btn" id="settingsBtn" aria-label="Voice and settings" aria-haspopup="dialog" aria-expanded="false" aria-controls="settingsPanel" data-tip="Voice and settings"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="7" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="8" cy="17" r="2" fill="none" stroke="currentColor" stroke-width="2"/></svg><span class="settings-voice" id="settingsVoice"></span></button>
   </div>
@@ -151,6 +155,7 @@
       <label class="opt"><input type="checkbox" id="optInsets"><span>Skip boxed quotes</span></label>
       <label class="opt"><input type="checkbox" id="optTables" checked><span>Skip tables</span></label>
       <label class="opt"><input type="checkbox" id="optParens"><span>Skip text in parentheses</span></label>
+      <label class="opt"><input type="checkbox" id="optCut" checked><span>Skip crossed-out text</span></label>
       <div class="settings-actions">
         <button type="button" class="btn ghost" id="reparseBtn">Re-read book</button>
         <button type="button" class="btn ghost" id="exportBtn" hidden>Export audio (MP3)</button>

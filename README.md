@@ -83,6 +83,13 @@ server when needed and opens your library in its own window (Chrome, without tab
   list), or press the highlight button in the player bar while it reads to keep the sentence being read. The
   **Highlights** tab beside Contents lists them by group; click one to go to it. Library books keep them in
   `Documents/Read Aloud Library/.notes/<id>.json`; PDFs opened in Chrome keep them in the browser.
+- **Cross-out pen (24 Nov 2026):** the pen button in the player bar, beside the highlight button. While it is on,
+  text that you select gets a dark line through it at once, and a click on crossed-out text brings it back. The
+  reader leaves crossed-out text out while **Skip crossed-out text** (Settings, What to read) is on; the MP3 export
+  leaves it out too. A line above the page counts the crossed-out parts and has **Bring all back**. Crossed-out text
+  is kept with the highlights of the book, but it is not a highlight: it is not in the Highlights list, the
+  Markdown export, Ask Claude or the key points. The pen is not shown below 480 px. Code: `extension/pdf/crossout.js`
+  (the text that the voice says), `notes.js` (the pen), `app.js` (`spokenAt`).
 - **Ask Claude:** the **Ask** tab beside Highlights opens the conversation in a panel on the right side of the page (drag its left edge to make it wider) and a bar across the bottom of the page, above the player: the answer player (back, Play/Pause, Stop), the question box, Ask Claude, the model, the sources and the Hostile check switch. The bar is never redrawn, so dictation (Wispr Flow) is not cut off. Type a question about the book, or select words on the page
   and press **Ask Claude**. Claude answers from the book first, gives the pages (click one to go there), and marks
   what comes from outside the book. **Read aloud** under an answer reads it with the chosen voice: the button

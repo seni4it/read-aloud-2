@@ -5,6 +5,7 @@
 // All text is invented.
 // Run: node --test --test-timeout=120000 tests/node/highlights.test.mjs
 import { test } from 'node:test';
+import { spokenText } from '../../extension/pdf/crossout.js';  // app.js imports it (the cross-out pen)
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -656,6 +657,7 @@ function loadReader({ engine = 'system', search = '' } = {}) {
       if (fakes.ocrFails) throw new Error('scan failed');
       return doc;
     },
+    spokenText,
     setupNotes: () => ({ reload() {}, markdown() { return ''; }, reset(id, why) { notes.resets.push(id); notes.why.push(why); }, markAt: () => notes.markHit }),
     setupAsk: (o) => { notes.askArgs = o; return { reload() {}, highlightsChanged() {}, stopReading() {} }; },
     ...language,  // ticket 32
