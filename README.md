@@ -59,6 +59,9 @@ Without the voice server the add-on still works, with the voices built into the 
   or more) is read row by row, each cell whole, and each column of a row is its own paragraph. Side-by-side boxes
   of running text are read box by box. A table in small type at the top of a page is no longer dropped as a running
   head. The short labels of a diagram are read as before. Tests: `tests/node/pdf-tables.test.mjs`.
+  A table of 3 columns or more that fills the page is read row by row too (before, column by column), without the
+  running head above it. A title in big capitals and the second line of a cell ("/ IFU]") are read (ticket 34).
+  Tests: `tests/node/pdf-small-losses.test.mjs`.
 - Scanned PDFs (pages that are pictures): the text is read by Apple's Vision on this Mac (`ocr/ocr.swift`, built
   the first time it is needed), then read and highlighted like any PDF. About 5 seconds a page; pages ahead are
   read while you listen.

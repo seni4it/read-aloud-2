@@ -432,7 +432,10 @@ export async function readPage(doc, pageNumber) {
           const above = textOf(col[a]), here = textOf(col[b]);
           if (/[:,/‐–—-]["'”’)\]]?$/.test(above)) return true;
           if (/[.!?;]["'”’)\]]?$/.test(above)) return false;
-          return /^[a-z(]/.test(here);
+          // Read Aloud 2 (ticket 34): a bracket that is still open ("[Current recommendation") goes on below ("/ IFU]")
+          const open = (t, a, b) => t.split(a).length > t.split(b).length;
+          if (open(above, '[', ']') || open(above, '(', ')')) return true;
+          return /^[a-z(/]/.test(here);
         };
         let cur = null;
         for (let j = 0; j < ks.length; j++) {
@@ -456,7 +459,7 @@ export async function readPage(doc, pageNumber) {
         // the cells of one column in one row of the table are one paragraph: the voice stops between columns
         row.cells.forEach((cell, n) => {
           const col = cells(cell.c), first = n === 0 || row.cells[n - 1].c !== cell.c;
-          cell.ks.forEach((k, j) => out.push({ ...makeLine(block[k][0], col[k]), cell: true, cellStart: first && j === 0 }));
+          cell.ks.forEach((k, j) => out.push({ ...makeLine(block[k][0], col[k]), cell: true, cellStart: first && j === 0, columns: cutsX.length + 1 }));
         });
       }
       i = end + 1;
@@ -600,6 +603,15 @@ export async function readPage(doc, pageNumber) {
     flushBand();
     return out;
   };
+  // Read Aloud 2 (ticket 34): in a one-column book, a table of 3 columns or more that fills the page has a gap that
+  // no line of running text crosses, so the page split there and the table was read column by column ("Tip (D0)",
+  // "Taper", ... then all the definitions). When the rows that split at the gap are rows of such a table, the page is
+  // read with its tables, row by row, and the gap is not a column gap (nor a known gap for other pages).
+  if (oneColumn && gutter !== null) {
+    const split = ordered.filter(([, es]) => hasGutterGap(es, gutter) && es.some(e => e.x + e.w <= gutter + 1) && es.some(e => e.x >= gutter - 1));
+    const inTable = new Set(withTables(ordered).filter(l => l.cell && l.columns >= 3).map(l => l.y));
+    if (split.length >= 3 && split.filter(([y]) => inTable.has(y)).length >= split.length * 0.8) gutter = null;
+  }
   if (gutter !== null) known.set(Math.round(gutter), (known.get(Math.round(gutter)) || 0) + 1);
   // Read Aloud 2: a table is rows of three or more short cells with clear space between them (a word space is
   // under one letter wide; a cell gap is over two and a half). Read as text, a table is a string of loose words
@@ -783,7 +795,13 @@ function dropPageFurniture(lines) {
   const gaps = [];
   for (let i = 1; i < byY.length; i++) gaps.push(byY[i - 1].y - byY[i].y);
   gaps.sort((a, b) => a - b);
-  const leading = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0;
+  // Read Aloud 2 (ticket 34): the cells of a table read row by row share their heights, and on a page that is mostly
+  // such a table half the gaps are 0. With a leading of 0, a running head above a table that fills the page was read.
+  // Then the leading is the line step inside a cell: the lower quarter of the gaps between lines at different heights
+  // (the larger gaps are the spaces between the rows of the table).
+  const rowGaps = gaps.filter(d => d > 1);
+  const leading = gaps.length && gaps[Math.floor(gaps.length / 2)] > 1 ? gaps[Math.floor(gaps.length / 2)]
+    : rowGaps.length ? rowGaps[Math.floor(rowGaps.length / 4)] : 0;
 
   const isBody = l => l.size >= bodySize * 0.85;
 
@@ -1759,7 +1777,11 @@ export class DocumentBuilder {
       }
       this.lastSize = line.size;
 
-      if (this.options.stripCaptions && isImageLabel(text)) {
+      // Read Aloud 2 (ticket 34): a title in big type ("MASTERING ROTARY", 3.5 times the body) is a heading, and a line
+      // of a table cell ("/ IFU]") is text. Both were dropped as labels on a photograph, which are set at about the
+      // body size (1.4 times at most) and are never table cells.
+      const labelSize = !this.bodySize || line.size < this.bodySize * 1.6;
+      if (this.options.stripCaptions && !line.cell && labelSize && isImageLabel(text)) {
         this.flush();
         continue;
       }
