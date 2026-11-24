@@ -137,17 +137,60 @@ test('a one-column book: a table of 3 columns that fills the page is read row by
   assert.match(text, /The growth of the width for each step along the working part/);
 });
 
-test('a one-column book: with "Skip tables" on, what is read of a table of 3 columns comes row by row', async () => {
-  // "Skip tables" leaves out the lines that it takes for a table of short cells; the other lines are read. They must
-  // come in the order of the rows, not column by column. Ticket 35: a table of cells that is a table in a quarter of its
-  // lines or more is left out whole, so no line of this table is read now; when lines are read, the order holds.
+test('a one-column book: with "Skip tables" on, a table of 3 columns that fills the page is skipped whole', async () => {
+  // Ticket 35: a table of cells that is a table in a quarter of its lines or more is left out whole. Before, some of its
+  // lines were read and others were left out.
   const doc = tableBook();
   const text = textOf(await buildDocument(doc, DEFAULT_OPTIONS));
-  const read = PARTS.flatMap(([, meaning, use], row) => [...meaning, ...use].map(t => ({ row, at: text.indexOf(t) })))
-    .filter(r => r.at >= 0).sort((a, b) => a.at - b.at);
-  for (let k = 1; k < read.length; k++) assert.ok(read[k].row >= read[k - 1].row, 'a line of a later row is read after the lines of the rows above it');
+  for (const [part, meaning, use] of PARTS) {
+    for (const t of [part, ...meaning, ...use]) assert.ok(!new RegExp(`\\b${t}\\b`).test(text), `"${t}" (a cell of the table) is not read`);
+  }
   assert.ok(!text.includes(HEAD), 'the running head above the table is not read');
   assert.match(text, /the school kept a record/);
+  assert.match(text, /the clinic kept a record/);
+});
+
+// A table that is a table in less than a quarter of its lines: 2 rows of short cells, and 6 rows whose meaning is a
+// long sentence over 3 lines. "Skip tables" leaves out the 2 short rows; the other rows are read.
+const MIXED = [
+  ['Tip', ['Leads the tool'], ['Sets the cut']],
+  ['Taper', ['Grows the width'], ['Sets the shape']],
+  ['Blade', ['The sharp edge of the tool that meets the wood when the tool', 'turns in the hand of the worker, so that the chips come away', 'from the wall of the hole in long thin curls of wood.'], ['Cuts the chips']],
+  ['Land', ['A flat part between two of the grooves of the tool, which holds', 'the blade in its place and keeps it on the line that the hand', 'gives it, also in hard wood with many knots in it.'], ['Keeps the line']],
+  ['Groove', ['The channel in the side of the tool that takes the chips of the', 'wood away from the blade, so that they do not block the cut', 'and make the tool hot in the hole.'], ['Carries the chips']],
+  ['Core', ['The central part of the tool that is left inside all the grooves,', 'and that gives the tool the strength to turn in the hole', 'without a break when the wood is hard.'], ['Gives strength']],
+  ['Handle', ['The part that the hand holds when the tool is in use, made of', 'wood or of plastic, and long enough for a full hand of a', 'worker in the garden or the shop.'], ['Turns the tool']],
+  ['Shank', ['The part between the handle and the working part of the tool,', 'which is round and smooth so that it turns well in the', 'hole without a mark on the wall.'], ['Joins the parts']]
+];
+const mixedTable = () => {
+  const out = [item('Part', 72, 740, s), item('Meaning', 160, 740, s), item('Use', 470, 740, s)];
+  let y = 715;
+  for (const [part, meaning, use] of MIXED) {
+    out.push(item(part, 72, y, s));
+    meaning.forEach((t, k) => out.push(item(t, 160, y - k * 11.3, s)));
+    use.forEach((t, k) => out.push(item(t, 470, y - k * 11.3, s)));
+    y -= (Math.max(meaning.length, use.length) - 1) * 11.3 + 19.5;
+  }
+  return out;
+};
+
+test('a one-column book: with "Skip tables" on, what is read of a table of 3 columns comes row by row', async () => {
+  // "Skip tables" leaves out the lines that it takes for a table of short cells; the other lines are read. They must
+  // come in the order of the rows, not column by column.
+  const doc = fakeDoc([
+    [...body('school', 740), ...body('office', 656)],
+    mixedTable(),
+    [...body('clinic', 740), ...body('garden', 656)],
+    [...body('market', 740), ...body('harbour', 656)],
+    [...body('bakery', 740), ...body('station', 656)]
+  ].map(page => [item(HEAD, 330, 780.5, 8), ...page]));
+  const text = textOf(await buildDocument(doc, DEFAULT_OPTIONS));
+  const read = MIXED.flatMap(([, meaning, use], row) => [...meaning, ...use].map(t => ({ row, at: text.indexOf(t) })))
+    .filter(r => r.at >= 0).sort((a, b) => a.at - b.at);
+  assert.ok(read.length >= 3, `lines of the table are read: ${text}`);
+  assert.ok(read.length < MIXED.flatMap(([, m, u]) => [...m, ...u]).length, `some lines of the table are left out: ${text}`);
+  for (let k = 1; k < read.length; k++) assert.ok(read[k].row >= read[k - 1].row, 'a line of a later row is read after the lines of the rows above it');
+  assert.ok(!text.includes(HEAD), 'the running head above the table is not read');
 });
 
 test('a one-column book: a word list in two columns on its last page is read column by column', async () => {

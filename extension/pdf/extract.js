@@ -38,6 +38,12 @@ const SLUG = /^\S+\.(?:qxp|qxd|indd)\s+\d{1,2}\/\d{1,2}\/\d{2,4}\s+\d{1,2}:\d{2}
 // Read Aloud 2: a page number in small Roman numerals: two letters or more, a real numeral ("xiv", not "c" or "x").
 const ROMAN = '(?=[ivxlc]{2,}\\b)c{0,3}(?:xc|xl|l?x{0,3})(?:ix|iv|v?i{0,3})';
 
+// Read Aloud 2 (ticket 35): a line that ends a sentence, and a line that starts an item of a numbered list
+const END_MARK = /[.!?]["'”’)\]]?$/;
+const LIST_NUMBER = /^\d{1,2}[.)]\s/;
+// a line that the sentence goes on after: it ends with a comma, a hyphen or a dash, or with a small word
+const GOES_ON = /(?:[,\-‐–—]|\b(?:a|an|the|of|in|on|at|to|for|from|by|with|and|or|but|nor|as|that|than|is|are|was|were|be|its|their|this|these))$/i;
+
 const CAPTION_START = /^(fig(ure)?\.?|table|chart|scheme|plate|graph)\s*\.?\s*([0-9]+|[ivxlcIVXLC]+)\b/i;
 
 // Runs of affiliation markers left between author names once the symbols are
@@ -639,7 +645,7 @@ export async function readPage(doc, pageNumber) {
   // within the cells' span.
   const lines = order(ordered, 0, pageWidth, 0);
   // a line of text, not a cell: 40 letters or more, or a sentence of 3 words or more with its end mark
-  const sentenceRow = t => t.length >= 40 || (/[.!?]["')\]]?$/.test(t) && t.trim().split(/\s+/).length >= 3);
+  const sentenceRow = t => t.length >= 40 || (END_MARK.test(t) && t.trim().split(/\s+/).length >= 3);
   const tableSpans = new Map();  // y -> [[x0, x1], ...]
   const tableBoxes = [];  // the area of each table: its rows down to a line of text
   {
@@ -1828,9 +1834,21 @@ export class DocumentBuilder {
       // gap of one and a half line steps, with a capital letter or a number (a subtitle, then the audience line, then a
       // note, on a title page), or as the next item of a numbered list ("1. What we ask ..." "2. Five questions ...").
       // A Sentence ends only at ". ! ?", so these lines ran together with no stop.
-      if (i > 0 && !line.cell && !lines[i - 1].cell && lineStep && lines[i - 1].y > line.y &&
-          !/[.!?]["'”’)\]]?$/.test(lines[i - 1].text) &&
-          ((lines[i - 1].y - line.y > lineStep * 1.5 && /^[A-Z0-9"“(]/.test(text)) || /^\d{1,2}[.)]\s/.test(text))) this.flush();
+      // Not a real sentence that goes on: after a comma or a small word ("... can be sorted in"), before a figure letter
+      // (a capital alone, see below) or a number in brackets after a gap ("A two ways", "(1.) was to water"),
+      // and not before a number at a line start that only wraps ("... Ch. 7, 8, 10 and" / "21. The early list"): a list
+      // item follows a gap, a line that ends with ":", or another list item.
+      if (i > 0 && !line.cell && !lines[i - 1].cell && lineStep && lines[i - 1].y > line.y) {
+        const above = lines[i - 1].text.trim();
+        const gap = above && lines[i - 1].y - line.y > lineStep * 1.5;
+        // a figure letter: a capital alone on its line ("A" beside a picture), or a capital in a type size of its own at the
+        // start of a line ("A" at 12pt in a line of 10pt)
+        const figureLetter = /^[A-Z]$/.test(text.trim()) ||
+          (/^[A-Z]\s/.test(text) && Math.abs((line.first ?? line.size) - line.size) > line.size * 0.1);
+        const newPart = gap && /^[A-Z0-9"“(]/.test(text) && !figureLetter && !/^\(\d{1,2}\.?\)/.test(text);
+        const nextItem = LIST_NUMBER.test(text) && (gap || /:$/.test(above) || LIST_NUMBER.test(above));
+        if (!END_MARK.test(above) && !GOES_ON.test(above) && (newPart || nextItem)) this.flush();
+      }
 
       if (this.repeated.has(key)) continue;
       if (isPageNumber(text)) continue;
@@ -1940,7 +1958,7 @@ export class DocumentBuilder {
       // of the garden year" (1.5 times the body) was not a section. A numbered line at body size that has a numbered
       // line above or below it ("1. What we ask ..." "2. Five questions ...") is an item of a list, not a heading. A cell
       // of a table is never a heading.
-      const listNumber = k => k >= 0 && k < lines.length && /^\d{1,2}[.)]\s/.test(lines[k].text);
+      const listNumber = k => k >= 0 && k < lines.length && LIST_NUMBER.test(lines[k].text);
       const inList = listNumber(i) && (!this.bodySize || line.size < this.bodySize * 1.2) && (listNumber(i - 1) || listNumber(i + 1));
       const isHeading = short && !line.cell && !line.table &&
         (bigType || HEADING_WORDS.test(text) || (looksNumbered && !inList));

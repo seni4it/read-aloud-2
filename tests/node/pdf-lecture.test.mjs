@@ -240,6 +240,42 @@ test('item 6: a subtitle, an audience line and a note with no end marks are sepa
   before(textOf(b), 'demands conflict', 'Which plant for which soil');
 });
 
+// Item 6, the review of 24 Nov 2026: the rule must not cut a real sentence.
+const oneSentence = async (lines, a, c) => {
+  const b = await buildDocument(book([...body('clinic', 740), ...lines, ...body('garden', 540)]), DEFAULT_OPTIONS);
+  assert.ok(b.sentences.some(s => s.text.includes(a) && s.text.includes(c)), `"${a}" and "${c}" are one Sentence: ${textOf(b)}`);
+};
+
+test('item 6: a chapter number that wraps to the start of a line does not cut the sentence', async () => {
+  await oneSentence([
+    item('The care of the beds is in the chapters on soil, see Ch. 7, 8, 10 and', 72, 640),
+    item('21. The early list of the beds is short.', 72, 626)
+  ], 'Ch. 7, 8, 10 and', '21. The early list');
+});
+
+test('item 6: a lone figure letter after a gap does not cut the sentence', async () => {
+  await oneSentence([
+    item('The roots of the plants in the garden can be put in the smaller', 72, 640),
+    // the label "A" of a picture below the line, then the sentence goes on
+    item('A', 72, 610), item('box of the shed for the winter.', 72, 596)
+  ], 'in the smaller', 'box of the shed');
+  await oneSentence([
+    item('Of the steps that the team took to keep the beds wet, the first', 72, 640),
+    item('(1.) was to water them each morning before the sun was high.', 72, 610)
+  ], 'the first', 'was to water them');
+});
+
+test('item 6: a line that ends with a comma or a small word does not end its Sentence at a gap', async () => {
+  await oneSentence([
+    item('The closest area of', 72, 640),
+    item('General work in the garden is the soil of the beds.', 72, 610)
+  ], 'The closest area of', 'General work');
+  await oneSentence([
+    item('The long bed is two metres longer than the usual length,', 72, 640),
+    item('But the short bed is the same as the others.', 72, 610)
+  ], 'usual length,', 'But the short bed');
+});
+
 test('item 7: page references in square brackets are skipped with "Skip citations" on, and read with it off', async () => {
   const special = [
     ...body('clinic', 740),
