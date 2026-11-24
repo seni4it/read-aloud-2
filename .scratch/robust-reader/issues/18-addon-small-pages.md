@@ -1,7 +1,7 @@
 # 18. Add-on popup and paste page: labels and font
 
 GitHub issue: #19
-Status: ready-for-agent
+Status: done in code (commit 292fd97), tests pass; the Chrome check is open (see Work report)
 Type: AFK
 
 ## Parent

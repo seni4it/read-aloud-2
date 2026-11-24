@@ -1,7 +1,7 @@
 # 08. Reader look: focus marks, contrast, control size, dark mode, narrow window
 
 GitHub issue: #9
-Status: ready-for-agent
+Status: done in code (commit d3b7ff3), tests pass; Chrome check 10 Nov 2026: reflow and dark mode pass
 Type: AFK
 
 ## Parent

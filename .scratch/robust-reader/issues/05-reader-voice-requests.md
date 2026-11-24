@@ -1,7 +1,7 @@
 # 05. Reader: voice requests with a time limit, cancel and correct priority
 
 GitHub issue: #6
-Status: ready-for-agent
+Status: done in code (commit 3c50570), tests pass; the Chrome check by ear is open (see Work report)
 Type: AFK
 
 ## Parent

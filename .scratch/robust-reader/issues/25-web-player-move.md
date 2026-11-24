@@ -1,7 +1,7 @@
 # 25. Web-page player: the owner can move it
 
 GitHub issue: #26
-Status: ready-for-agent
+Status: done in code (commit ae127e5), tests pass; the Chrome check on two sites is open
 Type: AFK
 
 ## Parent

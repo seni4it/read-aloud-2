@@ -1,7 +1,7 @@
 # 11. PDF text: line size, rotated pages, rows, speed
 
 GitHub issue: #12
-Status: ready-for-agent
+Status: done (commit 2063eea), tests pass; GitHub issue #12 closed
 Type: AFK
 
 ## Parent

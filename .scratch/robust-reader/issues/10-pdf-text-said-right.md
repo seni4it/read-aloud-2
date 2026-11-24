@@ -1,7 +1,7 @@
 # 10. PDF text: characters, units and hyphens said correctly
 
 GitHub issue: #11
-Status: ready-for-agent
+Status: done (commit 1fcc2d9), tests pass; GitHub issue #11 closed
 Type: AFK
 
 ## Parent

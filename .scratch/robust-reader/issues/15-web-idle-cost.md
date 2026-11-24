@@ -1,7 +1,7 @@
 # 15. Web pages: almost no work before the owner listens
 
 GitHub issue: #16
-Status: ready-for-agent
+Status: done in code (commit b0d054e), tests pass; the Chrome check is open (see Work report)
 Type: AFK
 
 ## Parent

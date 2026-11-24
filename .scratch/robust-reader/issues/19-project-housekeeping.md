@@ -1,7 +1,7 @@
 # 19. Project housekeeping: clean tree, current README, version
 
 GitHub issue: #20
-Status: ready-for-human
+Status: done in code (commit 53e2b14); waits for the owner: the Book key change (proposal in the Work report)
 Type: HITL
 
 ## Parent

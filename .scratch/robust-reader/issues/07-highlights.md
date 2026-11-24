@@ -1,7 +1,7 @@
 # 07. Highlights: correct click, keyboard, save sequence
 
 GitHub issue: #8
-Status: ready-for-agent
+Status: done in code (commit 35e8724), tests pass; Chrome check 10 Nov 2026: steps 1, 4 and 10 pass, the rest is open
 Type: AFK
 
 ## Parent

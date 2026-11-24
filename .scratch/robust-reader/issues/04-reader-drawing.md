@@ -1,7 +1,7 @@
 # 04. Reader: correct marks and less memory when pages are drawn
 
 GitHub issue: #5
-Status: ready-for-agent
+Status: done in code (commit c63f7d5), tests pass; Chrome check 10 Nov 2026: steps 2 and 3 pass, the rest of the manual check is open
 Type: AFK
 
 ## Parent

@@ -1,7 +1,7 @@
 # 22. Reader top bar and side bar: contents first, settings out of the way
 
 GitHub issue: #23
-Status: ready-for-agent
+Status: done in code (commits d3b7ff3, 1b42ecc), tests pass; Chrome check 10 Nov 2026 passed after its repairs
 Type: AFK
 
 ## Parent

@@ -1,7 +1,7 @@
 # 20. One design token file for all screens
 
 GitHub issue: #21
-Status: ready-for-agent
+Status: done in code (commit 60bd5b5), tests pass; Chrome check 10 Nov 2026: light and dark mode pass
 Type: AFK
 
 ## Parent

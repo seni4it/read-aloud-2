@@ -1,7 +1,7 @@
 # 14. Web pages: Follow and the player work on every site
 
 GitHub issue: #15
-Status: ready-for-agent
+Status: done in code (commit 5e0e52c), tests pass; the Chrome check is open (see Work report)
 Type: AFK
 
 ## Parent

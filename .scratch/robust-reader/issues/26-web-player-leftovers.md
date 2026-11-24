@@ -1,7 +1,7 @@
 # 26. Web-page player: leftovers after the Chrome check
 
 GitHub issue: none yet
-Status: ready-for-agent
+Status: done in code (commit d4b633e), tests pass; Chrome check 10 Nov 2026 passed after its repair
 Type: AFK
 
 ## Parent

@@ -1,7 +1,7 @@
 # 24. Web-page player and add-on window: the same player, the same look
 
 GitHub issue: #25
-Status: ready-for-agent
+Status: done in code (commit ece2ccd), tests pass; the check by ear of Previous and Next is open
 Type: AFK
 
 ## Parent

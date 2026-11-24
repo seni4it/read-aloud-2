@@ -1,7 +1,7 @@
 # 06. Speed that keeps the pitch of the voice
 
 GitHub issue: #7
-Status: ready-for-human
+Status: done in code (commits 25c795c, 4137c81), tests pass; the owner's check by ear in Chrome is open
 Type: HITL
 
 ## Parent
