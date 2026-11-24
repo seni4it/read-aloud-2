@@ -44,7 +44,8 @@ const note = (name, data) => chrome.runtime.sendMessage({ to: 'bg-evt', evt: 'no
 // It starts the sound of the next Sentence (the first Read-ahead text) that much before the end, less JOIN. When the
 // page asks for that Sentence, its sound is taken as it is: the page gets the same events as before, at the true times.
 // A fast output (the Mac speakers, a USB headset) gets no early start: nothing changes there.
-// The Report of 19 to 23 Nov 2026: a sound that starts after silence sounds 0.08 to 0.16 s later on the Mac speakers,
+// The Report of 19 to 23 Nov 2026: a sound that starts after silence sounds 0.04 to 0.10 s later on the Mac speakers,
+// (one 0.16 s at the start of the add-on)
 // and 0.24 to 0.8 s later on the Bluetooth headset (0.14 to 0.2 s for a few). PROBE_FROM is between the two.
 // Two delays (the test browser on a Bluetooth headset, 19 Nov 2026): a sound that starts after silence, also after
 // the 0.03 s between two Sentences, sounds 0.36 s later; a sound that starts while another one sounds, 0.18 s later.

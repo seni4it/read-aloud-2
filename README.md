@@ -135,7 +135,7 @@ the cover as album art, chapter titles as track names). Files go to `Documents/R
 - The chat reader (`~/.claude/read-aloud`, port 8791) reads with the Natural voice: its page may read `/speak`,
   `/times` and `/voices` of the voice server.
 
-## A headset with a delay: no silence between Sentences (version 2.13.3, 19 Nov 2026)
+## A headset with a delay: no silence between Sentences (version 2.13.3, 19 Nov 2026; repaired in 2.13.4, 24 Nov 2026)
 
 - **The fault.** A Bluetooth headset sounds 0.15 to 0.35 s after the browser gave it the sound. The add-on plays one
   sound for each Sentence and asked for the next Sentence at the end of this one, so each Sentence had a silence as
@@ -145,8 +145,8 @@ the cover as album art, chapter titles as track names). Files go to `Documents/R
   Sentence sounds. It starts the sound of the next Sentence that much before the end, less 0.06 s. When the page asks
   for that Sentence, its sound plays already. The page and the Word highlight get the same events as before.
 - An output with no delay (the Mac speakers, a USB headset) gets no early start: nothing changes there. Only a sound
-  that starts 0.18 s or more after silence gets the first early start. The Report of 19 to 23 Nov 2026 gives 0.08 to
-  0.16 s on the Mac speakers and 0.24 s or more on the Bluetooth headset (a few at 0.14 to 0.2 s: these get the early
+  that starts 0.18 s or more after silence gets the first early start. The Report of 19 to 23 Nov 2026 gives 0.04 to
+  0.10 s on the Mac speakers (one 0.16 s at the start of the add-on) and 0.24 s or more on the Bluetooth headset (a few at 0.14 to 0.2 s: these get the early
   start one Sentence later). Before the repair of 24 Nov 2026, the Mac speakers got a 0.03 s early start at the
   start of a reading and after a pause (148 Sentences in the Report of 19 to 23 Nov 2026).
 - A sound that starts after silence has a longer delay than a sound that starts while another one sounds (0.36 s
